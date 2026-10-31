@@ -1,0 +1,74 @@
+/* Výkup: velký hologram planety (legenda v detailu) a odletová scéna rakety. */
+.holo {
+  height: min(62vh, 520px);
+  min-height: 300px;
+  background: radial-gradient(ellipse at 50% 55%, #0d2433, var(--space) 72%);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.holo__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.holo__dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  vertical-align: -1px;
+  border-radius: 2px;
+}
+
+.holo__dot--done { background: #46ff96; }
+.holo__dot--started { background: #ffd23c; }
+.holo__dot--fresh { background: #ff4848; }
+
+/* Odlet raketou: černé pruhy filmu, nápis a prolnutí do tmy; HUD se na chvíli schová */
+.cutscene-on .hud {
+  visibility: hidden;
+}
+
+.cutscene {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: end center;
+  padding-bottom: 14vh;
+  pointer-events: none;
+  background:
+    linear-gradient(#000 0 9vh, transparent 9vh calc(100% - 9vh), #000 calc(100% - 9vh));
+}
+
+.cutscene__fade {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  transition: opacity 1.6s ease;
+}
+
+.cutscene--dark .cutscene__fade {
+  opacity: 1;
+}
+
+.cutscene__text {
+  position: relative;
+  margin: 0;
+  font: 600 clamp(22px, 4vw, 44px) / 1.2 var(--font-display, "Chakra Petch", sans-serif);
+  color: #f4f2ec;
+  text-align: center;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+
+.cutscene--dark {
+  place-items: center;
+  padding-bottom: 0;
+}

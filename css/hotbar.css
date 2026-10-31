@@ -37,9 +37,40 @@
 }
 
 .hotbar__slot--locked {
+  width: 30px;
   cursor: default;
   opacity: 0.45;
   border-style: dashed;
+}
+
+/* × vpravo nahoře: vyprázdnit políčko (ukáže se při najetí myší, na dotyku pořád) */
+.hotbar__drop {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  font: 600 15px / 18px var(--font-body);
+  color: var(--muted);
+  text-align: center;
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.hotbar__slot:hover .hotbar__drop,
+.hotbar__slot:focus-visible .hotbar__drop {
+  opacity: 1;
+}
+
+.hotbar__drop:hover {
+  color: var(--regolith);
+  background: rgba(224, 101, 76, 0.75);
+}
+
+@media (hover: none) {
+  .hotbar__drop {
+    opacity: 0.8;
+  }
 }
 
 .hotbar__key {
