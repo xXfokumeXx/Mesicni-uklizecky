@@ -59,8 +59,18 @@
   border-color: var(--hivis);
 }
 
-.controls__fps {
-  align-self: center;
+/* Tlačítka kamery, mapy a menu jen na dotykových zařízeních (s klávesnicí se ovládá klávesami) */
+@media (hover: hover) and (pointer: fine) {
+  .controls {
+    display: none;
+  }
+}
+
+.fps {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2;
   min-width: 64px;
   padding: 6px 8px;
   font: 500 var(--step--1) / 1.2 var(--font-mono);

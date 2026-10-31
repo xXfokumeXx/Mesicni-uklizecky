@@ -52,7 +52,6 @@
     gap: 6px 16px;
   }
 
-  .stats__eyebrow,
   .stats__money {
     grid-column: 1 / -1;
   }
@@ -66,9 +65,32 @@
   }
 }
 
-.stats__arrow {
-  display: inline-block;
-  color: var(--depot);
-  font-weight: 600;
-  transition: transform 0.25s linear;
+/* „Tento hex“ je vidět jen při pohybu, po zastavení plynule zmizí */
+.stats__row--fade {
+  max-height: 60px;
+  overflow: hidden;
+  transition: opacity 0.6s ease, max-height 0.6s ease;
+}
+
+.stats__row--gone {
+  max-height: 0;
+  opacity: 0;
+}
+
+/* vzdálenost k základně pod 3D šipkou nahoře uprostřed */
+.base-nav {
+  justify-self: center;
+  align-self: start;
+  margin: 58px 0 0;
+  padding: 3px 10px;
+  font: 600 var(--step--1) / 1.2 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--regolith);
+  background: var(--panel);
+  border-radius: var(--radius);
+}
+
+.base-nav__label {
+  color: var(--muted);
+  font-weight: 500;
 }

@@ -4,6 +4,39 @@
   gap: 8px;
 }
 
+/* piktogram jetpacku vlevo od políček */
+.hotbar__jet {
+  align-self: center;
+  width: 34px;
+  height: 42px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+}
+
+.hotbar__jet svg {
+  width: 100%;
+  height: 100%;
+  fill: var(--muted);
+}
+
+.hotbar__jet .hotbar__flame {
+  fill: transparent;
+}
+
+.hotbar__jet--ready {
+  border-color: var(--hivis);
+}
+
+.hotbar__jet--ready svg {
+  fill: var(--regolith);
+}
+
+.hotbar__jet--ready .hotbar__flame {
+  fill: var(--hivis);
+}
+
 .hotbar--driving {
   opacity: 0.45;
 }

@@ -7,7 +7,7 @@
   grid-template-columns: minmax(0, 270px) 1fr minmax(0, 220px);
   grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   grid-template-areas:
-    "stats  .      players"
+    "stats  nav    players"
     "chat   chat   ."
     "prompt prompt prompt"
     "hotbar hotbar hotbar"
@@ -36,6 +36,10 @@
   grid-area: controls;
 }
 
+.hud__nav {
+  grid-area: nav;
+}
+
 .hud__hotbar {
   grid-area: hotbar;
   justify-self: center;
@@ -47,6 +51,7 @@
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "stats"
+      "nav"
       "players"
       "chat"
       "prompt"
