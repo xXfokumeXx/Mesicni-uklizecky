@@ -17,6 +17,8 @@ import { buildBot, buildDrone } from './models.js';
 import { buildVehicle } from './vehicles.js';
 import { buildDepot, buildWorkshop, buildToolshop, buildGarage, buildStation, buildSilo, buildBasePad } from './buildings.js';
 import { createBelts } from './belts.js';
+import { createHoloGlobe } from './hologram.js';
+import { createRocketSite } from './rocket.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
@@ -145,6 +147,14 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     orient(v.root, _up, _f.set(...b.facing));
     scene.add(prepare(v.root));
   }
+  // hologram planety nad Výkupem (stejná data jako velký hologram v okně Výkupu)
+  const holo = createHoloGlobe();
+  holo.root.position.y = 4.4;
+  holo.root.scale.setScalar(1.35);
+  views.depot.root.add(holo.root);
+
+  // raketa s lunárním modulem a vlajkou na odvrácené straně
+  const rocket = createRocketSite(scene, prepare, orient, surface);
 
   // ---------- astronaut ----------
   const astro = createAstronaut(look);
@@ -339,7 +349,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   }
 
   function updatePlacement() {
-    const depot = placing.active && placing.kind === 'depot';
+    const depot = placing.active && (placing.kind === 'depot' || placing.kind === 'dmove');
     ghost.root.visible = placing.active && !depot;
     siloGhost.root.visible = depot;
     areaLines.lines.visible = placing.active && !depot;
@@ -367,6 +377,12 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     syncDepots(viewRange);
     belts.update(time, viewRange, astro.root.position);
     updatePlacement();
+    holo.root.visible = views.depot.root.position.distanceTo(astro.root.position) < 90;
+    if (holo.root.visible) {
+      holo.spin.rotation.y = time * 0.25;
+      holo.update(time);
+    }
+    rocket.update(time, focusPoint());
 
     const eq = activeEquipment();
     const driving = s.driving >= 0;
@@ -422,6 +438,11 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     updateHexLine(dirToCell(s.p));
   }
 
+  function focusPoint() {
+    const i = game.s.driving >= 0 ? game.s.driving : riding()?.i ?? -1;
+    return i >= 0 ? vehicleViews[i]?.root.position || astro.root.position : astro.root.position;
+  }
+
   // Sedadlo vozidla i ve světě (pro astronauty jiných hráčů, kteří řídí).
   function seatTransform(i, obj) {
     const view = vehicleViews[i];
@@ -462,10 +483,9 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     ragdollPose: astro.ragdollPose,
     setLook: astro.setLook,
     // kam míří kamera: na vozidlo, nebo na astronauta
-    focusPosition: () => {
-      const i = game.s.driving >= 0 ? game.s.driving : riding()?.i ?? -1;
-      return i >= 0 ? vehicleViews[i]?.root.position || astro.root.position : astro.root.position;
-    },
+    focusPosition: focusPoint,
+    rocketPosition: rocket.rocketPosition,
+    rocketSite: rocket.position,
     feetPosition: () => surface(game.s.p, new THREE.Vector3()),
     toolTip: () => (game.s.driving >= 0 && lastTool ? surface(lastTool, new THREE.Vector3(), 0.3) : astro.toolTip()),
     setLamp: astro.setLamp,

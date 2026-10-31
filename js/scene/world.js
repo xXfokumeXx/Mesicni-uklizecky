@@ -1,5 +1,5 @@
 // Renderer, světla a obloha: Slunce a hvězdy obíhají, Země visí na místě (vázaná rotace).
-import { EARTH_DIR } from '../config.js';
+import { EARTH_DIR, PLANET } from '../config.js';
 import { sunAngle, sunDirection } from '../planet/sun.js';
 import { fbm } from '../planet/noise.js';
 import { dot } from '../planet/vec.js';
@@ -84,12 +84,15 @@ export function createWorld(canvas, { antialias, pixelRatio, shadows }) {
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x020306);
+  scene.background = new THREE.Color(PLANET.sky);
+  // Mars má řídkou prašnou atmosféru: ve dne je obloha karamelová, za soumraku do fialova
+  const nightSky = new THREE.Color(PLANET.sky), daySky = PLANET.skyDay ? new THREE.Color(PLANET.skyDay) : null;
+  const duskSky = new THREE.Color(0x40608a);         // marťanský západ slunce je namodralý
   const camera = new THREE.PerspectiveCamera(55, 1, 0.3, 9000);
 
   // Světla: Slunce, odraz od Země (earthshine) a slabé okolní světlo, aby noc nebyla úplně černá.
-  const ambient = new THREE.AmbientLight(0x1c2433, 1);
-  const sun = new THREE.DirectionalLight(0xfff2dc, 1.3);
+  const ambient = new THREE.AmbientLight(PLANET.ambient, 1);
+  const sun = new THREE.DirectionalLight(PLANET.sun, PLANET.sunPower);
   // stínová mapa jen v okolí hráče (posouvá se s ním) – levná i na integrované grafice
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
@@ -126,6 +129,7 @@ export function createWorld(canvas, { antialias, pixelRatio, shadows }) {
   );
   earth.position.set(EARTH_DIR[0] * SKY.earth, EARTH_DIR[1] * SKY.earth, EARTH_DIR[2] * SKY.earth);
   earth.rotation.z = 0.41;                         // sklon zemské osy
+  earth.visible = PLANET.earth;                    // z Marsu je Země jen hvězdička
   scene.add(earth);
 
   function resize() {
@@ -147,10 +151,15 @@ export function createWorld(canvas, { antialias, pixelRatio, shadows }) {
     const s = sunDirection(ms);
     sun.position.set(focus.x + s[0] * 90, focus.y + s[1] * 90, focus.z + s[2] * 90);
     sun.target.position.copy(focus);
-    sun.intensity = 1.3 * sunVis;
-    const earthIntensity = 0.32 * (1 - dot(s, EARTH_DIR)) / 2;  // „úplněk Země“ = silný earthshine
+    sun.intensity = PLANET.sunPower * sunVis;
+    const earthIntensity = PLANET.earth ? 0.32 * (1 - dot(s, EARTH_DIR)) / 2 : 0;  // „úplněk Země“ = silný earthshine
     earthLight.intensity = earthIntensity;
-    stars.mat.opacity = 1 - 0.65 * smooth(-0.05, 0.3, dot(up, s)); // ve dne oči méně vidí hvězdy
+    const day = smooth(-0.05, 0.3, dot(up, s));
+    stars.mat.opacity = 1 - (daySky ? 0.97 : 0.65) * day;           // ve dne oči méně vidí hvězdy
+    if (daySky) {
+      const dusk = smooth(-0.12, 0.02, dot(up, s)) * (1 - smooth(0.02, 0.25, dot(up, s)));
+      scene.background.copy(nightSky).lerp(daySky, day).lerp(duskSky, dusk * 0.6);
+    }
     earth.rotation.y += dt * 0.05;
     const TAU = Math.PI * 2;
     return { sunDir: s, sunAngle: ((angle % TAU) + TAU) % TAU, earthDir: EARTH_DIR, earthIntensity };

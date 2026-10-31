@@ -6,7 +6,7 @@
 // Hexové sektory: tenké obrysy na povrchu, hotové sektory jsou lehce namodralé.
 // Stíny kopců: pro každý kus se ve Web Workeru spočítá okno osvětlení (planet/sunwindow.js)
 // a uloží do atributu vrcholů; shader (terrainMaterial.js) pak jen porovná úhel Slunce.
-import { MOON, DUST, RELIEF } from '../config.js';
+import { MOON, DUST, RELIEF, PLANET } from '../config.js';
 import { FACES, faceOf, planar } from '../planet/icosa.js';
 import { heightAt } from '../planet/height.js';
 import { grid, dirToCell, HEX_SPACING } from '../planet/hexgrid.js';
@@ -26,8 +26,8 @@ const EDGE_STEPS = 6;                // na kolik úseků se dělí hrana hexu (a
 const SHADOW_STEP = 2;               // stíny se počítají v každém 2. vrcholu (~2,6 m) a interpolují
 const SHADOW_N = Q / SHADOW_STEP + 1;
 
-const BASE = [226, 216, 196];        // čistý písek (prach ho ztmaví v shaderu)
-const DONE = [196, 224, 240];        // hotový sektor – čistý, namodralý (jasně odlišený)
+const BASE = PLANET.clean;           // čistý povrch (prach ho v shaderu ztmaví / na Marsu zrezaví)
+const DONE = PLANET.done;            // hotový sektor – jasně odlišený (Měsíc namodralý, Mars světlejší)
 
 // ---------- rozdělení stěn na kusy ----------
 
@@ -136,7 +136,7 @@ export function createTerrain(scene, renderer, viewDistance) {
   let worker = null;
   let fallbackJob = null;                           // výpočet po řádcích v hlavním vlákně
   try {
-    worker = new Worker(new URL('../planet/shadowWorker.js', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL(`../planet/shadowWorker.js?planet=${PLANET.id}`, import.meta.url), { type: 'module' });
     worker.onmessage = e => { inFlight--; shadowDone(e.data.key, e.data.data); };
     worker.onerror = () => { worker = null; inFlight = 0; };
   } catch { worker = null; }

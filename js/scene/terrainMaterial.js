@@ -6,6 +6,7 @@
 //  • písková textura (zrno + čeřiny) promítnutá ze tří os; zametený povrch je hladší.
 // Osvětlení odpovídá MeshLambertMaterial (bez fyzikálně korektních světel), aby terén ladil s objekty.
 
+import { PLANET } from '../config.js';
 import { sandTexture } from './sandTexture.js';
 
 const THREE = window.THREE;
@@ -43,6 +44,7 @@ const fragmentShader = /* glsl */`
   uniform float sandScale;
   uniform float sandStrength;
   uniform float dirtScale;
+  uniform vec3 dirtTint;
   uniform vec3 sunDir;
   uniform vec3 sunColor;
   uniform vec3 ambient;
@@ -80,7 +82,7 @@ const fragmentShader = /* glsl */`
   void main() {
     vec3 n = normalize(vNormalW);
     float dirt = sqrt(clamp(texture2D(dustMap, vUv).r * dirtScale, 0.0, 1.0));
-    vec3 albedo = vColor * mix(vec3(1.0), vec3(0.44, 0.38, 0.31), dirt);
+    vec3 albedo = vColor * mix(vec3(1.0), dirtTint, dirt);
 
     // písek: vzorek ze tří os podle normály (bez natahování na svazích)
     vec3 bw = pow(abs(n), vec3(4.0));
@@ -110,10 +112,11 @@ export function createTerrainMaterial(dustTexture, dirtScale, renderer = null) {
     sandScale: { value: 1 / 8 },                 // dlaždice písku 8 m
     sandStrength: { value: 1 },
     dirtScale: { value: dirtScale },
+    dirtTint: { value: new THREE.Vector3(...PLANET.dirt) },   // barva prachu proti čistému povrchu
     sunAngle: { value: 0 },
     sunDir: { value: new THREE.Vector3(0, 1, 0) },
-    sunColor: { value: new THREE.Color(0xfff2dc).multiplyScalar(1.3) },
-    ambient: { value: new THREE.Color(0x1c2433) },
+    sunColor: { value: new THREE.Color(PLANET.sun).multiplyScalar(PLANET.sunPower) },
+    ambient: { value: new THREE.Color(PLANET.ambient) },
     earthDir: { value: new THREE.Vector3(0, 1, 0) },
     earthColor: { value: new THREE.Color(0x7f9cd0) },
     lampPos: { value: new THREE.Vector3() },

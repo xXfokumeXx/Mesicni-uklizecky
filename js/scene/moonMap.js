@@ -1,7 +1,7 @@
 // Mapa celého Měsíce (klávesa M): zjednodušený glóbus se stejnou texturou prachu jako terén,
 // takže jsou vidět vyčištěné pásy i hotové hexy. Tažením myši (prstem) nebo WSAD / šipkami se glóbus
 // otáčí, kolečkem, +/− nebo Q/E přibližuje. Glóbus se postaví až při prvním otevření (~25 000 vrcholů).
-import { MOON, BASE, DUST } from '../config.js';
+import { MOON, BASE, DUST, PLANET } from '../config.js';
 import { FACES } from '../planet/icosa.js';
 import { heightAt } from '../planet/height.js';
 import { dirToCell, cellDir } from '../planet/hexgrid.js';
@@ -9,19 +9,20 @@ import { atlasUv, hexes } from '../planet/dustmap.js';
 import { FLAT_WINDOW } from '../planet/sunwindow.js';
 import { game } from '../state.js';
 import { beltPath } from '../depots.js';
+import { ROCKET_SITE } from '../rocket.js';
 import { createTerrainMaterial } from './terrainMaterial.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
 const N = 48;                                   // dílků na hranu stěny ikosaedru (~5,5 m)
 const MIN_DIST = R * 1.35, MAX_DIST = R * 5, START_DIST = R * 3.1;
-const CLEAN = [226, 216, 196], DONE = [196, 224, 240];
+const CLEAN = PLANET.clean, DONE = PLANET.done;
 
 // opts.onPick(clientX, clientY) = klik (bez tažení) do mapy → hráč tam vyrazí.
 export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
   let globe = null, vertCell = null, colors = null, colorAttr = null;
   const { material, uniforms } = createTerrainMaterial(dustTexture, 255 / DUST.max, null);
-  uniforms.ambient.value.setHex(0x3a4560);        // noční strana trochu světlejší, ať je mapa čitelná
+  uniforms.ambient.value.setHex(PLANET.earth ? 0x3a4560 : 0x5a4038);   // noční strana trochu světlejší, ať je mapa čitelná
 
   const group = new THREE.Group();
   group.visible = false;
@@ -34,7 +35,8 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
   const ring = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.1, 32), new THREE.MeshBasicMaterial({
     color: 0xff8a3d, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
   }));
-  group.add(playerPin, basePin, ring);
+  const rocketPin = mk(0xffffff);                // raketa domů na odvrácené straně (bílá)
+  group.add(playerPin, basePin, ring, rocketPin);
   const stationMat = new THREE.MeshBasicMaterial({ color: 0x7fd38a });
   let stationPins = [];
   // cíl cesty (klik do mapy), depa (fialová) a jejich pásy
@@ -257,6 +259,7 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
     ring.lookAt(0, 0, 0);
     ring.scale.setScalar(size * (1 + 0.25 * Math.sin(performance.now() / 260)));
     placePin(basePin, BASE.dir, size * 1.1, size);
+    placePin(rocketPin, ROCKET_SITE.dir, size * 1.1, size * 1.5);
     for (const pin of stationPins) placePin(pin, pin.userData.dir, size * 0.8, size * 0.8);
     for (const pin of depotPins) placePin(pin, pin.userData.dir, size * 0.9, size * 0.9);
     if (target) placePin(targetPin, target, size * 0.9, size * 0.9);
