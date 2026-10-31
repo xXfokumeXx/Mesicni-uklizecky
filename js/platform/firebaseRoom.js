@@ -6,7 +6,9 @@
 // Uložení v databázi:
 //   lobby/<peer>                  presence v lobby (kdo je online, otevřené světy)
 //   rooms/<svet-kód>/peers/<peer> presence ve světě (poloha, tahy koštětem, chat…)
-//   docs/<cesta s ~ místo />      snímky mapy pro nově příchozí
+//   docs/<cesta s ~ místo />      (stará verze) snímky mapy
+//   w/<kód>/…                     svět v cloudu: meta, stav, snímek mapy, zámek hostitele (cloud.js)
+//   secrets/<kód>, members/<kód>  heslo ke světu a kdo ho zadal (hlídají pravidla database.rules.json)
 // <peer> = uid anonymního přihlášení + „_“ + náhodná přípona (každá karta prohlížeče je jiný hráč).
 // Po odpojení (zavřená karta, výpadek sítě) Firebase záznam hráče sám smaže (onDisconnect).
 //
@@ -81,6 +83,8 @@ export async function createFirebasePlatform(config) {
     const peerMap = new Map();              // peer → zmrazený objekt Peer
     let snapshot = Object.freeze([]);
     const listeners = new Set();
+    const cancelListeners = new Set();       // Firebase přestal posílat (ztráta práva číst, např. nové heslo)
+    const onCancel = () => { for (const fn of cancelListeners) { try { fn(); } catch (e) { console.error(e); } } };
     let pending = { joined: new Map(), left: new Map(), updated: new Map() }, scheduled = false;
 
     function peerObj(key, val, old) {
@@ -135,9 +139,9 @@ export async function createFirebasePlatform(config) {
         pending.updated.delete(snap.key);
         schedule();
       };
-      ref.on('child_added', onAdd);
-      ref.on('child_changed', onChange);
-      ref.on('child_removed', onRemove);
+      ref.on('child_added', onAdd, onCancel);
+      ref.on('child_changed', onChange, onCancel);
+      ref.on('child_removed', onRemove, onCancel);
     }
 
     // Zapíše jen změněná pole (u objektů jen změněné podklíče, u tahů jen nové tahy).
@@ -189,6 +193,7 @@ export async function createFirebasePlatform(config) {
         }, 0);
         return () => listeners.delete(fn);
       },
+      onCancel(fn) { cancelListeners.add(fn); return () => cancelListeners.delete(fn); },
       connected: () => online,
       onConnection(fn) {
         connListeners.add(fn);
@@ -225,7 +230,8 @@ export async function createFirebasePlatform(config) {
   };
 
   // ---------- dokumenty (snímky mapy) ----------
-  const docKey = path => 'docs/' + path.replace(/\//g, '~');
+  // cesty „w/…“ jsou skutečné cesty v databázi (pravidla podle kódu světa), ostatní po staru pod docs/
+  const docKey = path => (path.startsWith('w/') ? path : 'docs/' + path.replace(/\//g, '~'));
   const db = {
     doc(path) {
       const ref = database.ref(docKey(path));
@@ -239,5 +245,6 @@ export async function createFirebasePlatform(config) {
     },
   };
 
-  return { room, db, me, kind: 'firebase' };
+  // fb = přímý přístup k databázi (zámek hostitele, heslo – cloud.js), uid = anonymní účet prohlížeče
+  return { room, db, me, kind: 'firebase', fb: database, uid };
 }

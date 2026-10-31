@@ -160,10 +160,11 @@ export function createAstronaut(look = DEFAULT_LOOK) {
   const { tool, head: toolHead } = buildTool(M);
   hips.add(torso, legL.hip, legR.hip, tool);
 
-  // čelovka (intenzitu řídí main.js podle výšky Slunce)
-  const lamp = new THREE.PointLight(0xffeccc, 0, 20, 2);
-  lamp.position.set(0, 0.25, 0.4);
+  // čelovka: jen kotva na helmě (světlo je reflektor ze společné sady scene/lights.js, intenzitu řídí main.js)
+  const lamp = new THREE.Object3D();
+  lamp.position.set(0, 0.25, 0.12);
   head.add(lamp);
+  let lampK = 0;
 
   const shadowGeo = new THREE.CircleGeometry(0.42, 18);
   shadowGeo.rotateX(-Math.PI / 2);
@@ -406,9 +407,11 @@ export function createAstronaut(look = DEFAULT_LOOK) {
     get ragdolling() { return ragdolling; },
     setToolSize,
     setJetpack,
-    setLamp: k => { lamp.intensity = k * 1.4; },
-    lampIntensity: () => lamp.intensity,
+    setLamp: k => { lampK = k; },
+    lampIntensity: () => lampK,
     lampPosition: out => lamp.getWorldPosition(out),
+    // směr čelovky = kam se dívá helma (místní +z hlavy)
+    lampDirection: out => out.set(0, 0, 1).transformDirection(lamp.matrixWorld),
     blob: shadow,
     toolTip: () => toolHead.getWorldPosition(tip),
   };

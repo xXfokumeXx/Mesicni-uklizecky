@@ -7,8 +7,11 @@
 //  • db    = trvalé úložiště; hostitel do něj zapíše mapu prachu pro nově příchozí.
 //
 // Role:
-//  • HOSTITEL (kdo svět založil) je autorita: drží peníze, garáž, flotilu, stanice a roboty,
-//    ukládá svět do svého slotu. Sdílený stav vysílá ve své presence v lobby (pole H, 4× za s).
+//  • HOSTITEL je autorita: drží peníze, garáž, flotilu, stanice a roboty, ukládá svět do svého slotu
+//    a do cloudu (cloud.js). Celý sdílený stav vysílá ve své presence ve SVĚTĚ (pole H, 2× za s, jen
+//    změněná pole) – čtou ho jen hráči toho světa; do lobby dává jen krátký popis světa (kód, název, hráči).
+//  • Výdělky klientů hostitel ověřuje: připíše jen prach, který klient opravdu sebral (jeho tahy přehrané
+//    do hostitelovy mapy), a prodej jen u Výkupu (hostCredit). Když hostitel odejde, převezme svět další hráč.
 //  • HRÁČ posílá ve své presence ve světě: pozici a animaci, posledních 32 tahů koštětem,
 //    poslední zprávy chatu, kolik celkem vydělal (e), žádosti o nákup (b) a kam zaparkoval vozidlo (pk).
 //  • Všichni aplikují tahy ostatních na svou mapu prachu → vidí změny v reálném čase.
@@ -16,15 +19,16 @@
 //  • Čas: všichni počítají denní dobu z hodin počítače + posunu hostitele → stejná denní doba.
 //
 // Vše jde přes presence (ne přes události), takže hrát může i pozvaný hráč s právem jen ke čtení.
-import { MOON, HEX_BONUS, PLANET } from './config.js';
-import { game, newGame, addStat, dustPrice } from './state.js';
+import { MOON, HEX_BONUS, PLANET, DEPOT, UNITS_PER_KG } from './config.js';
+import { game, newGame, addStat, dustPrice, hexBonus } from './state.js';
 import { profile, sanitizeName, validLook } from './profile.js';
 import { strokes, exitVehicle, riding, remapRide, playerFx } from './player.js';
 import { hexes, sweepCapsule, clearHex } from './planet/dustmap.js';
 import { grid, cellDir } from './planet/hexgrid.js';
-import { norm, cross, anyTangent, dot, tangentTo } from './planet/vec.js';
+import { norm, cross, anyTangent, dot, tangentTo, angleBetween, madd } from './planet/vec.js';
 import { VEHICLES, STATION, DRONE } from './catalog.js';
-import { packDust, unpackDust, toBase64, fromBase64 } from './storage.js';
+import { unpackDust, fromBase64, savesLocked } from './storage.js';
+import { saveCloud, claimHost } from './cloud.js';
 import { buildGarage, buyVehicle, upgradeVehicle, callBackVehicle, sellVehicle, upgradeMarket, upgradeHexup } from './equipment.js';
 import { placeStation, moveStation } from './robots.js';
 import { placeDepot, moveDepot, buildBelt, depositToDepot, beltLoad } from './depots.js';
@@ -33,7 +37,9 @@ import { ensureHotbar } from './hotbar.js';
 import { connectPlatform } from './platform/platform.js';
 
 const R = MOON.radius;
-const PART = 200000;                       // znaků base64 v jednom dokumentu db (limit 256 KiB)
+const PRESENCE_HZ = 8;                     // moje presence ve světě (poloha, tahy…) – ostatní dopočítávají pohyb
+const HOST_HZ = 2;                         // sdílený stav světa od hostitele
+const CLOUD_STATE_S = 20, CLOUD_MAP_S = 60; // hostitel ukládá svět do cloudu (stav / i mapu prachu)
 const enc = v => [Math.round(v[0] * 1e6), Math.round(v[1] * 1e6), Math.round(v[2] * 1e6)];
 const encF = v => [Math.round(v[0] * 1e3), Math.round(v[1] * 1e3), Math.round(v[2] * 1e3)];
 const decU = (a, o = 0) => norm([a[o] / 1e6, a[o + 1] / 1e6, a[o + 2] / 1e6]);
@@ -60,6 +66,7 @@ export const net = {
   onHostLeft: null,
   onDepart: null,           // hostitel odlétá s celým světem na jinou planetu (planeta) → odletová scéna
   onDepartRequest: null,    // hostitel: klient u rakety chce odletět → true / false
+  onKicked: null,           // klient: Firebase mu přestal posílat svět (změnilo se heslo)
   onState: null,            // klient: přišel nový sdílený stav
 };
 
@@ -81,6 +88,8 @@ async function connect() {
   }
   net.room = p.room;
   net.db = p.db || null;
+  net.fb = p.fb || null;                   // Firebase databáze (cloud.js), v artefaktu null
+  net.uid = p.uid || null;
   net.kind = p.kind;
   if (p.me) net.me = p.me;
   net.room.onPeers(ch => {
@@ -136,6 +145,7 @@ export function openWorlds(includePrivate = false) {
       hostPeer: p.peer,
       hostName: sanitizeName(p.presence.n) || 'Hostitel',
       players: p.presence.H.pl | 0,
+      locked: p.presence.H.lk === 1,
       planet: p.presence.H.pn === 'mars' ? 'mars' : 'moon',
       me: p.isMe && p.sameTab,
     }));
@@ -147,7 +157,13 @@ export const findWorld = code => openWorlds(true).find(w => w.code === String(co
 // Odkaz pro kamarády: adresa hry + #kód světa.
 export const inviteLink = () => (net.code ? `${location.origin}${location.pathname}#${net.code}` : '');
 
-const hostPresence = () => net.room?.peers().find(p => p.peer === net.hostPeer)?.presence?.H || null;
+// Krátký popis světa od hostitele v lobby (kód, název, počet hráčů, verze snímku mapy)…
+const hostSummary = () => net.room?.peers().find(p => p.peer === net.hostPeer)?.presence?.H || null;
+// …a celý sdílený stav v jeho presence ve světě (f = 1 označuje úplný stav).
+const hostFull = () => {
+  const H = net.world?.peers().find(p => p.peer === net.hostPeer)?.presence?.H;
+  return H && H.f === 1 ? H : null;
+};
 
 // ---------- společné: světová presence ----------
 
@@ -159,7 +175,7 @@ const requests = [];                  // klient: [[id, druh, argumenty, cena]]
 const pending = new Map();            // id → { resolve, t }
 let parkReport = null;                // klient: [seq, i, ...pozice, ...směr, náplň]
 let parkSeq = 0;
-let ragdollEnc = null;
+let ragdollEnc = { g: null, gc: null };          // ragdoll: začátek letu + korekce (player.js ragdollNet)
 let kgTotal = 0;                      // klient: kolik kg prachu jsem celkem nasbíral (pro statistiky)
 const deposits = [];                  // klient: kolik kg jsem celkem vysypal do depa i
 
@@ -168,7 +184,7 @@ const uidOf = peer => String(peer || '').split('_')[0];
 export const myStatKey = () => `${net.me ? uidOf(net.me) : 'me'}|${profile.name}`;
 const statKeyOf = r => `${uidOf(r.peer)}|${r.name}`;
 
-export function setRagdollPresence(arr) { ragdollEnc = arr; }
+export function setRagdollPresence(r) { ragdollEnc = r; }
 
 function myWorldPresence(fx, vehicleSpeed) {
   const s = game.s;
@@ -192,9 +208,11 @@ function myWorldPresence(fx, vehicleSpeed) {
     dk: deposits.length ? Array.from(deposits, x => Math.round((x || 0) * 10) / 10) : null,
     b: requests,
     pk: parkReport,
-    g: ragdollEnc,
+    g: ragdollEnc.g,
+    gc: ragdollEnc.gc,
     rd: riding() ? [riding().i, riding().seat] : null,        // cestující v přepravníku [vozidlo, sedadlo]
     jp: s.jetpack ? (performance.now() - playerFx.jet < 700 ? 2 : 1) : 0,   // jetpack: 1 = na zádech, 2 = právě hoří
+    lo: net.lightsOff ? 1 : 0,                                       // světla vypnutá klávesou L
   };
 }
 
@@ -233,7 +251,7 @@ function readRemote(peer, pr) {
   if (!pr || pr.v !== 2) return r;
   r.name = sanitizeName(pr.n) || r.name;
   r.look = validLook({ color: pr.a?.[0], top: pr.a?.[1], face: pr.a?.[2] });
-  if (okVec(pr.p, 0)) r.p = decU(pr.p);
+  if (okVec(pr.p, 0)) { r.p = decU(pr.p); r.pAt = performance.now(); }
   if (isNum(pr.r)) r.r = Math.min(R + 400, Math.max(R - 60, pr.r / 100));
   if (okVec(pr.f, 0)) r.f = decF(pr.f);
   if (okVec(pr.m, 0, 5)) r.m = pr.m;
@@ -241,7 +259,9 @@ function readRemote(peer, pr) {
   r.vs = isNum(pr.vs) ? pr.vs / 10 : 0;
   r.tool = typeof pr.tl === 'string' ? pr.tl : r.tool;
   r.tw = isNum(pr.tw) ? pr.tw : r.tw;
-  r.rag = Array.isArray(pr.g) ? pr.g : null;
+  r.rag = pr.g && typeof pr.g === 'object' && !Array.isArray(pr.g) ? pr.g : null;   // začátek letu (ragdoll.js)
+  r.ragFix = Array.isArray(pr.gc) ? pr.gc : null;
+  r.lo = pr.lo === 1;
   r.rd = okVec(pr.rd, 0, 2) && Number.isInteger(pr.rd[0]) && Number.isInteger(pr.rd[1]) ? [pr.rd[0], pr.rd[1]] : null;
   r.jp = pr.jp | 0;
   if (!r.sp && r.p) { r.sp = r.p.slice(); r.sr = r.r; }
@@ -272,7 +292,11 @@ function sweepStroke(r, k) {
   const w = Math.min(8, Math.max(0.1, k[4] / 100));
   const pw = Math.min(200, Math.max(1, k[5] | 0));
   const from = k[6] && r.lastPt && r.lastSeqPt === k[0] - 1 ? r.lastPt : p;
-  sweepCapsule(from, p, w / 2, pw, 1e12);
+  const got = sweepCapsule(from, p, w / 2, pw, 1e12);
+  if (net.mode === 'host' && got) {
+    host.creditKg += got.got / UNITS_PER_KG;
+    host.creditBonus += (got.completed?.length || 0) * hexBonus();
+  }
   r.lastPt = p;
   r.lastSeqPt = k[0];
   r.lastSeq = Math.max(r.lastSeq, k[0]);
@@ -306,18 +330,28 @@ function onWorldPeers(ch) {
     net.remotes.delete(p.peer);
     if (p.peer === net.hostPeer && net.mode === 'client') net.onHostLeft?.();
   }
-  if (net.mode === 'host' && ch.joined.some(p => !(p.isMe && p.sameTab))) scheduleSnapshot();
+  if (net.mode === 'host' && ch.joined.some(p => !(p.isMe && p.sameTab))) {
+    scheduleSnapshot();
+    for (const p of ch.joined) if (!(p.isMe && p.sameTab)) host.creditKg += JOIN_GRACE_KG;   // co si přinesl v nástrojích
+  }
+  if (net.mode === 'client') watchHost();
 }
 
 // Vyhlazení pohybu vzdálených hráčů (volá se každý snímek).
+// Presence chodí jen PRESENCE_HZ× za sekundu → cíl se dopočítá z poslední rychlosti a směru
+// (nejvýš o ~1,5 intervalu dopředu), aby pohyb mezi zprávami plynul a nezastavoval se.
 function smoothRemotes(dt) {
-  const k = 1 - Math.exp(-dt * 12);
+  const k = 1 - Math.exp(-dt * 10);
+  const now = performance.now();
   for (const r of net.remotes.values()) {
     if (!r.p) continue;
     if (!r.sp) { r.sp = r.p.slice(); r.sr = r.r; continue; }
     const far = dot(r.sp, r.p) < Math.cos(15 / R);   // skok o víc než 15 m → přesunout hned
     if (far) { r.sp = r.p.slice(); r.sr = r.r; continue; }
-    r.sp = norm([r.sp[0] + (r.p[0] - r.sp[0]) * k, r.sp[1] + (r.p[1] - r.sp[1]) * k, r.sp[2] + (r.p[2] - r.sp[2]) * k]);
+    const ahead = Math.min((now - (r.pAt || now)) / 1000, 1.5 / PRESENCE_HZ);
+    const speed = r.d >= 0 ? r.vs : (r.m?.[0] || 0) / 10;
+    const goal = speed && r.f ? norm(madd(r.p, tangentTo(r.p, r.f), speed * ahead / R)) : r.p;
+    r.sp = norm([r.sp[0] + (goal[0] - r.sp[0]) * k, r.sp[1] + (goal[1] - r.sp[1]) * k, r.sp[2] + (goal[2] - r.sp[2]) * k]);
     r.sr += (r.r - r.sr) * k;
   }
 }
@@ -401,7 +435,14 @@ const host = {
   applied: {},                // peer → poslední aplikovaný tah (pro snímek)
   lastPk: {},
   timer: 0, snapTimer: null, snapping: false,
+  cloudTimer: CLOUD_STATE_S, mapTimer: CLOUD_MAP_S,
+  ts: 0, ps: [], psAt: 0,     // hodiny pro klienty a statistiky hráčů se posílají jen občas
+  creditKg: 0,                // kontrola: kolik kg prachu klienti opravdu sebrali a ještě neprodali
+  creditBonus: 0,             // …a kolik $ prémií za hexy, které jejich tahy dočistily
+  warned: 0,
 };
+const JOIN_GRACE_KG = 300;    // nový hráč může mít prach v nástrojích z minula (hostitel ho neviděl sbírat)
+const SLACK_KG = 3;           // tolerance zaokrouhlení
 
 export async function startHost() {
   const s = game.s;
@@ -419,9 +460,23 @@ export async function startHost() {
   net.world.onPeers(onWorldPeers);
   net.me = net.me || net.room.peers().find(p => p.isMe && p.sameTab)?.peer || null;
   net.hostPeer = net.me;
+  const lock = await claimHost(net.code);                     // hostitel může být jen jeden (i ze cloudu)
+  if (lock !== true) {
+    net.world.leave?.();
+    net.world = null;
+    net.mode = 'off';
+    return `taken:${lock}`;
+  }
   pushHostState();
   return true;
 }
+
+// Hostitel: uložit svět do cloudu hned (odchod do menu, skrytá karta).
+export function saveWorldNow(full = false) {
+  if (net.mode !== 'host' || savesLocked()) return Promise.resolve(false);
+  return saveCloud(net.code, { full, sv: host.sv, extra: snapExtra() });
+}
+const snapExtra = () => ({ seqs: { ...host.applied, [net.me]: strokes.seq }, rc: host.rcBase + host.rc.length - 1 });
 
 // Hostitel: robot dočistil hexy → oznámit ostatním.
 export function hostRobotCompleted(cells) {
@@ -438,9 +493,11 @@ function hostReadPeer(r, pr) {
     const before = host.ep[r.peer] || 0;
     if (pr.e > before) {
       const add = Math.min(pr.e - before, 1e7);
-      s.money += add;
-      addStat(key, r.name, 'e', add);
       host.ep[r.peer] = pr.e;
+      const okAdd = verifyEarning(r, add);
+      s.money += okAdd;
+      addStat(key, r.name, 'e', okAdd);
+      if (add - okAdd > 25) warnCheat(r, `výdělek $${Math.round(add - okAdd)}`);
     }
   }
   // nasbíraný prach (jen statistika)
@@ -453,9 +510,12 @@ function hostReadPeer(r, pr) {
     const seen = host.dk[r.peer] || (host.dk[r.peer] = []);
     pr.dk.forEach((kg, i) => {
       if (!isNum(kg) || kg <= (seen[i] || 0)) return;
-      const add = Math.min(kg - (seen[i] || 0), 1e7);
+      const want = Math.min(kg - (seen[i] || 0), 1e7);
       seen[i] = kg;
-      if (depositToDepot(i, add)) addStat(key, r.name, 'e', add * dustPrice());
+      const add = Math.min(want, host.creditKg + SLACK_KG);         // do depa jen prach, který opravdu sebral
+      host.creditKg = Math.max(0, host.creditKg - add);
+      if (want - add > 10) warnCheat(r, `${Math.round(want - add)} kg do depa`);
+      if (add > 0 && depositToDepot(i, add)) addStat(key, r.name, 'e', add * dustPrice());
     });
   }
   // žádosti o nákup
@@ -484,6 +544,33 @@ function hostReadPeer(r, pr) {
     }
   }
   host.applied[r.peer] = r.lastSeq;
+}
+
+// Kontrola výdělku klienta: prémie za hexy z jeho skutečně dočištěných hexů, prodej prachu jen u Výkupu
+// a jen do množství, které jeho tahy opravdu sebraly z mé mapy. Vrací, kolik $ uznat.
+function verifyEarning(r, add) {
+  const bonus = Math.min(add, host.creditBonus + hexBonus() * 2);
+  host.creditBonus = Math.max(0, host.creditBonus - bonus);
+  const rest = add - bonus;
+  if (rest <= 0.01) return add;
+  const atDepot = r.p && angleBetween(r.p, DEPOT.dir) * R < DEPOT.r + 4;
+  if (!atDepot) return bonus;
+  const price = dustPrice();
+  const kg = Math.min(rest / price, host.creditKg + SLACK_KG);
+  host.creditKg = Math.max(0, host.creditKg - kg);
+  return bonus + kg * price;
+}
+
+// Hostitel sám: jeho prach patří do stejné bilance (vozidlo, které naplnil on, může prodat klient a naopak).
+export function hostOwnDust(sweptKg, soldKg) {
+  if (net.mode !== 'host') return;
+  host.creditKg = Math.max(0, host.creditKg + (sweptKg || 0) - (soldKg || 0));
+}
+
+function warnCheat(r, what) {
+  if (performance.now() - host.warned < 30000) return;
+  host.warned = performance.now();
+  net.onChat?.({ system: true, text: `⚠ ${r.name}: hra neuznala ${what} – neodpovídá prachu, který opravdu nasbíral(a).` });
 }
 
 function hostRequest(kind, a, cost, r) {
@@ -522,26 +609,30 @@ function botEnc(st) {
 
 function hostState() {
   const s = game.s;
+  const now = Date.now();
+  if (now - host.ts > 5000) host.ts = now;                    // hodiny pro klienty stačí jednou za 5 s
+  if (now - host.psAt > 5000) { host.psAt = now; host.ps = presentStats(); }
   return {
+    f: 1,
     code: net.code,
     pub: s.netPublic === false ? 0 : 1,
     t: cleanText(s.title).slice(0, 40),
     pl: 1 + net.remotes.size,
-    m: Math.round(s.money * 100) / 100,
+    m: Math.round(s.money),
     wp: Math.round(s.warp || 0),
-    ts: Date.now(),
+    ts: host.ts,
     g: s.garage ? 1 : 0,
     won: s.won ? 1 : 0,
     pn: PLANET.id,
     go: s.go || 0,
     mk: s.market | 0,
     hu: s.hexup | 0,
-    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '', v.lv.boost | 0]),
+    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '', v.lv.boost | 0, v.lv.hopper | 0]),
     st: s.stations.map(st => st.hex),
     b: s.stations.map(botEnc),
     dr: s.drones.map(d => [...enc(d.p), d.mode === 'work' ? 1 : 0]),
     dp: s.depots.map(d => [d.hex, Math.round(d.store), d.belt ? 1 : 0, Math.round(beltLoad(d)), d.to ?? -1]),
-    ps: presentStats(),
+    ps: host.ps,
     rc: [host.rcBase, ...host.rc],
     ack: host.acks,
     ep: host.ep,
@@ -560,8 +651,13 @@ function presentStats() {
 }
 
 function pushHostState() {
-  setLobby({ scr: 'game', w: net.code, H: hostState() });
+  const H = hostState();
+  net.world?.presence({ H }).catch(() => {});                 // celý stav jen hráčům světa (posílají se jen změny)
+  setLobby({ scr: 'game', w: net.code, H: { code: H.code, pub: H.pub, t: H.t, pl: H.pl, pn: H.pn, sv: H.sv, lk: lockedWorld ? 1 : 0 } });
 }
+let lockedWorld = false;
+export function setWorldLocked(on) { lockedWorld = !!on; if (net.mode === 'host') pushHostState(); }
+export const worldLocked = () => lockedWorld;
 
 function scheduleSnapshot() {
   clearTimeout(host.snapTimer);
@@ -570,21 +666,15 @@ function scheduleSnapshot() {
 
 // Snímek mapy prachu do db pro nově příchozí hráče.
 async function writeSnapshot() {
-  if (!net.db || net.mode !== 'host') return;
+  if (!net.db || net.mode !== 'host' || savesLocked()) return;
   if (host.snapping) { scheduleSnapshot(); return; }
   host.snapping = true;
   try {
     const sv = host.sv + 1;
-    const seqs = { ...host.applied, [net.me]: strokes.seq };
-    const rc = host.rcBase + host.rc.length - 1;
-    const packed = await packDust();
-    const b64 = toBase64(packed.bytes);
-    const parts = Math.max(1, Math.ceil(b64.length / PART));
-    for (let i = 0; i < parts; i++) {
-      await net.db.doc(`worlds/${net.code}/parts/p${i}`).set({ sv, d: b64.slice(i * PART, (i + 1) * PART) });
-    }
-    await net.db.doc(`worlds/${net.code}`).set({ sv, parts, gz: packed.gz, seqs, rc, at: Date.now() });
+    if (!(await saveCloud(net.code, { full: true, sv, extra: snapExtra() }))) throw new Error('cloud');
     host.sv = sv;
+    host.mapTimer = CLOUD_MAP_S;
+    host.cloudTimer = CLOUD_STATE_S;
     pushHostState();
   } catch (e) {
     console.warn('Snímek mapy se nepodařilo zapsat', e);
@@ -597,6 +687,7 @@ async function writeSnapshot() {
 
 let lastH = null;
 let lastRc = 0;
+let lastTs = 0;
 let departing = false;
 const vehSig = [];                      // podpis polohy vozidel z H (aby se poloha přepsala jen při změně)
 const botPrev = [];
@@ -609,13 +700,14 @@ export async function joinWorld(w, onStatus) {
   net.code = w.code;
   net.hostPeer = w.hostPeer;
   net.lobbyStatus = 'game';
-  const joinSv = hostPresence()?.sv || 0;
+  const joinSv = hostSummary()?.sv || 0;
   try {
     net.world = await net.room.join('svet-' + w.code);
   } catch {
     return 'Do světa se nepodařilo připojit. Zkus to znovu.';
   }
   net.world.onPeers(onWorldPeers);
+  net.world.onCancel?.(() => net.onKicked?.());
   setLobby({ scr: 'game', w: w.code });
   newGame('Multiplayer');
   loadPersonal();
@@ -625,7 +717,7 @@ export async function joinWorld(w, onStatus) {
   const t0 = Date.now();
   let H = null;
   while (Date.now() - t0 < 20000) {
-    H = hostPresence();
+    H = hostSummary();
     if (!H && Date.now() - t0 > 5000) return 'Hostitel světa už není online.';
     if (H && H.sv > joinSv) break;
     await new Promise(r => setTimeout(r, 250));
@@ -634,11 +726,11 @@ export async function joinWorld(w, onStatus) {
   if (H && H.sv > joinSv && net.db) {
     onStatus?.('Stahuji mapu Měsíce…');
     try {
-      const head = (await net.db.doc(`worlds/${w.code}`).get()).data();
+      const head = (await net.db.doc(`w/${w.code}/head`).get()).data();
       if (head && head.sv >= H.sv) {
         let b64 = '';
         for (let i = 0; i < head.parts; i++) {
-          const part = (await net.db.doc(`worlds/${w.code}/parts/p${i}`).get()).data();
+          const part = (await net.db.doc(`w/${w.code}/parts/p${i}`).get()).data();
           if (!part || part.sv !== head.sv) throw new Error('part');
           b64 += part.d;
         }
@@ -658,12 +750,13 @@ export async function joinWorld(w, onStatus) {
   }
   lastRc = snap ? snap.rc : 0;
   net.ready = true;
-  if (H) applyHostState(H);
+  const full = hostFull();
+  if (full) applyHostState(full);
   return snap || !net.db ? null : 'nomap';
 }
 
 function watchHost() {
-  const H = hostPresence();
+  const H = hostFull();
   if (!H) return;
   if (H !== lastH && net.ready) applyHostState(H);
 }
@@ -673,7 +766,8 @@ function applyHostState(H) {
   const s = game.s;
   if (isNum(H.m)) s.money = H.m + Math.max(0, earned - (Number(H.ep?.[net.me]) || 0));
   if (isNum(H.wp)) s.warp = H.wp;
-  if (isNum(H.ts)) {
+  if (isNum(H.ts) && H.ts !== lastTs) {                       // hodiny hostitele chodí jednou za 5 s
+    lastTs = H.ts;
     const off = H.ts - Date.now();
     game.clockOffset = Math.abs(off - game.clockOffset) > 3000 ? off : game.clockOffset + (off - game.clockOffset) * 0.1;
   }
@@ -692,12 +786,12 @@ function applyHostState(H) {
       if (!okVec(e, 0, 11) || !VEHICLES[e[0]]) return;
       let v = s.vehicles[i];
       if (!v) {
-        v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2], boost: e[12] | 0 }, moved: true };
+        v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2], boost: e[12] | 0, hopper: e[13] | 0 }, moved: true };
         s.vehicles[i] = v;
         vehSig[i] = '';
       }
       v.type = VEHICLES[e[0]].id;
-      v.lv = { width: e[1] | 0, speed: e[2] | 0, boost: e[12] | 0 };
+      v.lv = { width: e[1] | 0, speed: e[2] | 0, boost: e[12] | 0, hopper: e[13] | 0 };
       v.spot = e[3];
       if (s.driving === i) return;                   // řídím ho já → poloha je moje
       const sig = e.slice(4, 11).join(',');
@@ -801,7 +895,7 @@ function syncFleet(s, list) {
     let v = uids[i] && old.get(uids[i]);
     if (!v) {
       if (!okVec(e, 0, 11) || !VEHICLES[e[0]]) return null;
-      v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2], boost: e[12] | 0 } };
+      v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2], boost: e[12] | 0, hopper: e[13] | 0 } };
     }
     v.uid = uids[i];
     v.moved = true;
@@ -886,12 +980,16 @@ export function netTick(dt, fx, vehicleSpeed) {
   smoothRemotes(dt);
   presenceTimer -= dt;
   if (presenceTimer <= 0) {
-    presenceTimer = 1 / 12;
+    presenceTimer = 1 / PRESENCE_HZ;
     pushWorldPresence(fx, vehicleSpeed);
   }
   if (net.mode === 'host') {
     host.timer -= dt;
-    if (host.timer <= 0) { host.timer = 0.25; pushHostState(); }
+    if (host.timer <= 0) { host.timer = 1 / HOST_HZ; pushHostState(); }
+    host.cloudTimer -= dt;
+    host.mapTimer -= dt;
+    if (host.mapTimer <= 0) scheduleSnapshot();                          // i mapa prachu do cloudu
+    else if (host.cloudTimer <= 0) { host.cloudTimer = CLOUD_STATE_S; saveWorldNow(false); }
   }
 }
 

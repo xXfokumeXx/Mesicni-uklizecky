@@ -4,11 +4,11 @@ const KEY = 'moonsweep_settings_v2';
 // scale = rozlišení vykreslování (1 = jeden pixel na pixel stránky)
 // view = dohled v metrech (jak daleko se kreslí krajina a roboti)
 // fpsCap = 0 znamená bez limitu
-// shadows = stíny objektů (stíny kopců a kráterů jsou vždy zapnuté)
+// shadows = stíny objektů (stíny kopců a kráterů jsou vždy zapnuté), lightShadows = stíny z mé čelovky / světlometů
 export const PRESETS = {
-  low:    { scale: 0.7,  view: 120,  fpsCap: 30, antialias: false, particles: false, shadows: false },
-  medium: { scale: 1,    view: 200,  fpsCap: 60, antialias: false, particles: true,  shadows: true },
-  high:   { scale: 1.25, view: 320, fpsCap: 0,  antialias: true,  particles: true,  shadows: true },
+  low:    { scale: 0.7,  view: 120,  fpsCap: 30, antialias: false, particles: false, shadows: false, lightShadows: false },
+  medium: { scale: 1,    view: 200,  fpsCap: 60, antialias: false, particles: true,  shadows: true,  lightShadows: false },
+  high:   { scale: 1.25, view: 320, fpsCap: 0,  antialias: true,  particles: true,  shadows: true,  lightShadows: true },
 };
 
 export const PRESET_LABELS = { low: 'Nízká', medium: 'Střední', high: 'Vysoká', custom: 'Vlastní' };

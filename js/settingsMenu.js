@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 const PRESET_HINTS = {
   low: 'Pro slabší notebooky: nižší rozlišení, kratší dohled, bez stínů objektů, 30 snímků za sekundu.',
   medium: 'Vyvážená kvalita. Výchozí volba.',
-  high: 'Ostrý obraz a daleký dohled. Pro výkonnější grafiku.',
+  high: 'Ostrý obraz, daleký dohled a stíny z čelovky a světlometů. Pro výkonnější grafiku.',
   custom: 'Vlastní kombinace nastavení.',
 };
 
@@ -22,6 +22,7 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
   const antialias = $('set-antialias');
   const particles = $('set-particles');
   const shadows = $('set-shadows');
+  const lightShadows = $('set-lightshadows');
   const showFps = $('set-showfps');
   let lastFocus = null;
 
@@ -40,6 +41,7 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
     antialias.checked = settings.antialias;
     particles.checked = settings.particles;
     shadows.checked = settings.shadows;
+    lightShadows.checked = settings.lightShadows;
     showFps.checked = settings.showFps;
     $('settings-reload').hidden = settings.antialias === antialiasAtStart;
   }
@@ -76,6 +78,7 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
   antialias.addEventListener('change', () => change({ antialias: antialias.checked }));
   particles.addEventListener('change', () => change({ particles: particles.checked }));
   shadows.addEventListener('change', () => change({ shadows: shadows.checked }));
+  lightShadows.addEventListener('change', () => change({ lightShadows: lightShadows.checked }));
   showFps.addEventListener('change', () => change({ showFps: showFps.checked }));
 
   $('settings-open').addEventListener('click', open);

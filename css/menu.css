@@ -317,6 +317,53 @@
   gap: 8px;
 }
 
+.pause__pass {
+  display: grid;
+  gap: 8px;
+}
+
+.pause__pass-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pause__help {
+  display: grid;
+  gap: 8px;
+}
+
+.keys {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font: 400 var(--step--1) / 1.4 var(--font-body);
+}
+
+.keys dt {
+  font-family: var(--font-mono);
+  color: var(--regolith);
+  white-space: nowrap;
+}
+
+.keys dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+.keys kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 1px 5px;
+  font: 600 var(--step--1) / 1.3 var(--font-mono);
+  text-align: center;
+  color: var(--regolith);
+  background: var(--surface-raised);
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+}
+
 .pause__slots-title {
   margin: 0;
   font: 600 var(--step--1) / 1.2 var(--font-display);

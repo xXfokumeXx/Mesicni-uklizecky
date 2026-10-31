@@ -27,7 +27,7 @@ export function vehicleStats(v) {
   return {
     width: base.width * (1 + VEHICLE_UPGRADES.width.step * v.lv.width),
     speed: base.speed * (1 + VEHICLE_UPGRADES.speed.step * v.lv.speed),
-    hopper: base.hopper,
+    hopper: base.hopper * (1 + VEHICLE_UPGRADES.hopper.step * (v.lv.hopper | 0)),
     power: base.power,
     boost: boostFactor(v.lv.boost | 0),
   };
@@ -176,7 +176,7 @@ export function buyVehicle(type) {
   game.s.money -= base.price;
   const k = freeSpot();
   const spot = parkingSpot(k);
-  game.s.vehicles.push({ uid: newUid(), type, spot: k, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: { width: 0, speed: 0, boost: 0 } });
+  game.s.vehicles.push({ uid: newUid(), type, spot: k, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: { width: 0, speed: 0, boost: 0, hopper: 0 } });
   return true;
 }
 

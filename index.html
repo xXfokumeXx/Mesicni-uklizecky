@@ -47,52 +47,29 @@
 
 <div class="hud">
   <section class="panel stats hud__stats" aria-label="Stav směny">
-    <p class="panel__eyebrow stats__eyebrow" id="stat-eyebrow">Měsíční úklidová služba</p>
     <div class="stats__money">
       <span class="stats__label">Peníze</span>
       <span class="stats__money-value" id="stat-money">$0</span>
-    </div>
-    <div class="stats__row">
-      <span class="stats__label">Vybavení</span>
-      <span class="stats__value" id="stat-gear">Zubní kartáček</span>
     </div>
     <div class="stats__row">
       <span class="stats__label">Zásobník</span>
       <span class="stats__value" id="stat-hopper">0 / 4 kg</span>
       <div class="meter"><div class="meter__fill" id="meter-hopper"></div></div>
     </div>
-    <div class="stats__row">
+    <div class="stats__row stats__row--fade" id="row-here">
       <span class="stats__label">Tento hex</span>
       <span class="stats__value" id="stat-here">0 %</span>
       <div class="meter"><div class="meter__fill meter__fill--progress" id="meter-here"></div></div>
-    </div>
-    <div class="stats__row">
-      <span class="stats__label">Hotové hexy · $100</span>
-      <span class="stats__value" id="stat-hexes">0 / 0</span>
-      <div class="meter"><div class="meter__fill meter__fill--progress" id="meter-hexes"></div></div>
     </div>
     <div class="stats__row" id="row-boost" hidden>
       <span class="stats__label">Boost · Shift</span>
       <span class="stats__value" id="stat-boost">100 %</span>
       <div class="meter"><div class="meter__fill meter__fill--progress" id="meter-boost"></div></div>
     </div>
-    <div class="stats__row" id="row-jet" hidden>
-      <span class="stats__label">Jetpack</span>
-      <span class="stats__value" id="stat-jet">nabitý</span>
-    </div>
-    <div class="stats__row">
-      <span class="stats__label">Stanice robotů · UFO drony</span>
-      <span class="stats__value" id="stat-stations">0</span>
-    </div>
-    <div class="stats__row">
-      <span class="stats__label">Slunce</span>
-      <span class="stats__value" id="stat-sun">—</span>
-    </div>
-    <div class="stats__row">
-      <span class="stats__label">K základně</span>
-      <span class="stats__value"><span class="stats__arrow" id="base-arrow" aria-hidden="true">↑</span> <span id="stat-base">0 m</span></span>
-    </div>
   </section>
+
+  <!-- navigace k základně: 3D šipka kreslí scene/compass.js, tady jen vzdálenost pod ní -->
+  <p class="base-nav hud__nav" id="base-nav" hidden><span class="base-nav__label">Základna</span> <span class="base-nav__dist" id="stat-base">0 m</span></p>
 
   <section class="panel players hud__players" id="players" aria-label="Hráči ve světě" hidden>
     <p class="panel__eyebrow players__code" id="players-code"></p>
@@ -131,11 +108,10 @@
       <button class="controls__button controls__button--wide" id="trophies-open" type="button" aria-haspopup="dialog" title="Úspěchy (U)">Úspěchy</button>
       <button class="controls__button controls__button--wide" id="settings-open" type="button" aria-haspopup="dialog">Grafika</button>
       <button class="controls__button controls__button--wide" id="menu-open" type="button" aria-haspopup="dialog" title="Menu (Esc)">Menu</button>
-      <span class="controls__fps" id="fps-counter" hidden>– FPS</span>
     </div>
-    <p class="controls__hint controls__hint--desktop">W/S = chůze / plyn · A/D = otáčení · mezerník = skok (ve vzduchu jetpack) · Shift = boost · 1–3 = hotbar · X = vyprázdnit políčko · E = akce · G = přesunout depo · klik = jdi sem · kolečko = zoom · M = mapa · U = úspěchy · T = čas · Enter = chat · Esc = menu</p>
     <p class="controls__hint controls__hint--touch">Klepni nebo táhni prstem = jdi sem · tlačítko nahoře = akce</p>
   </div>
+  <span class="fps" id="fps-counter" hidden>– FPS</span>
 </div>
 
 <div class="modal" id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
@@ -213,6 +189,17 @@
       </div>
 
       <div class="field">
+        <label class="toggle" for="set-lightshadows">
+          <span class="toggle__text">
+            <span class="field__label">Stíny světel</span>
+            <span class="field__hint">Čelovka a světlomety tvého vozidla vrhají stíny (v noci). Náročnější na grafiku.</span>
+          </span>
+          <input class="toggle__input" id="set-lightshadows" type="checkbox">
+          <span class="toggle__track" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <div class="field">
         <label class="toggle" for="set-particles">
           <span class="toggle__text">
             <span class="field__label">Poletující prach</span>
@@ -280,8 +267,37 @@
         <button class="button pause__button" id="pause-load" type="button">Načíst hru…</button>
         <button class="button pause__button" id="pause-invite" type="button" hidden>Kopírovat odkaz pro kamarády</button>
         <input class="field__input" id="pause-invite-link" type="text" readonly hidden aria-label="Odkaz do světa">
+        <button class="button pause__button" id="pause-pass" type="button" hidden aria-expanded="false" aria-controls="pause-pass-box">Heslo světa…</button>
+        <form class="pause__pass" id="pause-pass-box" hidden autocomplete="off">
+          <p class="field__hint" id="pause-pass-state">Bez hesla se připojí kdokoli, kdo zná kód světa.</p>
+          <input class="field__input" id="pause-pass-input" type="password" minlength="6" maxlength="40" placeholder="Nové heslo (aspoň 6 znaků)" aria-label="Nové heslo světa">
+          <div class="pause__pass-actions">
+            <button class="button button--primary" id="pause-pass-set" type="submit">Nastavit heslo</button>
+            <button class="button" id="pause-pass-clear" type="button">Zrušit heslo</button>
+          </div>
+        </form>
+        <button class="button pause__button" id="pause-help" type="button" aria-expanded="false" aria-controls="pause-help-box">Ovládání</button>
         <button class="button pause__button" id="pause-gfx" type="button">Nastavení grafiky</button>
         <button class="button pause__button" id="pause-menu" type="button">Uložit a odejít do hlavního menu</button>
+      </div>
+      <div class="pause__help" id="pause-help-box" hidden>
+        <h3 class="pause__slots-title">Ovládání</h3>
+        <dl class="keys">
+          <dt><kbd>W</kbd> <kbd>S</kbd></dt><dd>chůze / plyn a brzda</dd>
+          <dt><kbd>A</kbd> <kbd>D</kbd></dt><dd>otáčení</dd>
+          <dt>Klik</dt><dd>jdi (jeď) na místo · pravé tlačítko + tažení = otočit kameru · kolečko = přiblížení</dd>
+          <dt><kbd>Mezerník</kbd></dt><dd>skok, ve vzduchu jetpack</dd>
+          <dt><kbd>Shift</kbd></dt><dd>boost přepravníku</dd>
+          <dt><kbd>E</kbd></dt><dd>akce: budovy, Výkup (hologram, burza, statistiky), vozidla, stavby, raketa</dd>
+          <dt><kbd>1</kbd>–<kbd>3</kbd></dt><dd>políčko hotbaru · <kbd>X</kbd> = vyprázdnit políčko</dd>
+          <dt><kbd>R</kbd> · <kbd>G</kbd></dt><dd>jiný cíl pásu z depa · přesunout depo</dd>
+          <dt><kbd>L</kbd></dt><dd>světla vozidla a čelovka zapnout / vypnout</dd>
+          <dt><kbd>M</kbd></dt><dd>mapa (WSAD / šipky otáčí, Q / E přibližuje, klik = jdi tam)</dd>
+          <dt><kbd>U</kbd></dt><dd>úspěchy</dd>
+          <dt><kbd>T</kbd></dt><dd>zrychlit čas (v multiplayeru jen hostitel)</dd>
+          <dt><kbd>Enter</kbd></dt><dd>chat</dd>
+          <dt><kbd>Esc</kbd></dt><dd>menu, zrušit stavbu</dd>
+        </dl>
       </div>
       <div class="pause__slots" id="pause-slots" hidden>
         <h3 class="pause__slots-title" id="pause-slots-title">Sloty</h3>
@@ -349,12 +365,17 @@
             <button class="button button--primary" type="submit">Připojit</button>
           </form>
           <p class="lobby__code-error" id="lobby-code-error" hidden></p>
+          <form class="lobby__code" id="lobby-pass-form" autocomplete="off" hidden>
+            <input class="field__input lobby__code-input" id="lobby-pass" type="password" maxlength="40" placeholder="Heslo světa" aria-label="Heslo světa">
+            <button class="button button--primary" type="submit">Vstoupit</button>
+          </form>
+          <button class="button" id="lobby-cloud" type="button" hidden>Otevřít svět – budu hostitel</button>
           <h3 class="lobby__heading">Otevřené světy</h3>
           <ul class="lobby__list" id="lobby-worlds"></ul>
           <button class="button button--primary" id="lobby-host" type="button">Založit vlastní svět</button>
         </div>
       </div>
-      <p class="field__hint">Založ svět a pošli kamarádům odkaz nebo kód (najdeš ho v menu pauzy). Hostitel drží svět a ukládá ho; když odejde, svět se zavře.</p>
+      <p class="field__hint">Založ svět a pošli kamarádům odkaz nebo kód (najdeš ho v menu pauzy). Svět se ukládá i do cloudu: když hostitel odejde, převezme ho další hráč, a když nikdo nehostuje, může ho otevřít kdokoli z party (s heslem, pokud ho svět má).</p>
     </section>
 
     <section class="menu__panel" id="menu-loading" hidden>

@@ -1,51 +1,25 @@
-// HUD: statistiky, výzva k akci (E), šipka k základně, plovoucí „+$“ a oznámení (toast).
+// HUD: peníze a zásobník, výzva k akci (E), vzdálenost k základně (3D šipku kreslí scene/compass.js),
+// plovoucí „+$“ a oznámení (toast). Počty hexů, robotů a dronů jsou ve Výkupu (záložka Statistiky).
 import { BASE } from './config.js';
-import { game, hexPct, currentHexPct, baseDistance, gameTime } from './state.js';
+import { game, currentHexPct, baseDistance } from './state.js';
 import { activeEquipment } from './equipment.js';
-import { hexes } from './planet/dustmap.js';
-import { playerRight, boostCharge, jetCharged } from './player.js';
-import { sunElevationDeg } from './planet/sun.js';
-import { dot, tangentTo } from './planet/vec.js';
+import { playerFx, boostCharge } from './player.js';
 import { fmt } from './format.js';
 import { SUIT_COLORS } from './catalog.js';
 
 const $ = id => document.getElementById(id);
-const fmtInt = n => n.toLocaleString('cs-CZ');
 const kg = v => (v < 10 ? v.toFixed(1) : Math.round(v)) + ' kg';
 
-// Výška Slunce v místě hráče + slovní fáze dne.
-function sunLabel() {
-  const t = gameTime();
-  const elev = sunElevationDeg(game.s.p, t);
-  let phase;
-  if (elev > 6) phase = 'den';
-  else if (elev < -6) phase = 'noc';
-  else phase = sunElevationDeg(game.s.p, t + 5000) > elev ? 'svítání' : 'soumrak';
-  return `${Math.round(elev)}° · ${phase}`;
-}
-
-// Šipka k základně relativně ke směru pohledu (nahoru = rovně).
-function updateBaseArrow(dist) {
-  const arrow = $('base-arrow');
-  if (dist < BASE.clean) {
-    arrow.hidden = true;
-    return;
-  }
-  arrow.hidden = false;
-  const s = game.s;
-  const to = tangentTo(s.p, BASE.dir);
-  const deg = Math.atan2(dot(to, playerRight()), dot(to, s.f)) * 180 / Math.PI;
-  arrow.style.transform = `rotate(${deg.toFixed(0)}deg)`;
-}
+// „Tento hex“ ukázat jen při pohybu (a chvíli po něm), pak plynule schovat.
+const HERE_HOLD_MS = 1800;
+let movedAt = 0;
 
 export function updateUi() {
   const s = game.s;
-  $('stat-eyebrow').textContent = `${s.title || 'Měsíční úklidová služba'} · ${fmtInt(hexes.total)} sektorů`;
   const eq = activeEquipment();
   const dist = baseDistance();
 
   $('stat-money').textContent = '$' + fmt(s.money);
-  $('stat-gear').textContent = eq.name;
 
   const cap = eq.stats.hopper;
   const hopper = $('meter-hopper');
@@ -58,12 +32,11 @@ export function updateUi() {
     hopper.style.width = '0%';
   }
 
+  if (playerFx.moving) movedAt = performance.now();
   const here = currentHexPct();
+  $('row-here').classList.toggle('stats__row--gone', performance.now() - movedAt > HERE_HOLD_MS);
   $('stat-here').textContent = here >= 99 ? 'hotovo' : `${Math.floor(here)} %`;
   $('meter-here').style.width = `${here}%`;
-  $('stat-hexes').textContent = `${fmtInt(hexes.doneCount)} / ${fmtInt(hexes.total)}`;
-  $('meter-hexes').style.width = Math.max(hexPct(), hexes.doneCount ? 0.4 : 0) + '%';
-  $('stat-stations').textContent = `${s.stations.length} · ${(s.drones || []).length}`;
   const boost = s.driving >= 0 && eq.stats.boost > 1;
   $('row-boost').hidden = !boost;
   if (boost) {
@@ -71,11 +44,8 @@ export function updateUi() {
     $('stat-boost').textContent = `${Math.round(k * 100)} % · ×${eq.stats.boost}`;
     $('meter-boost').style.width = `${k * 100}%`;
   }
-  $('row-jet').hidden = !s.jetpack;
-  if (s.jetpack) $('stat-jet').textContent = jetCharged() ? 'připraven' : 'po dopadu';
-  $('stat-sun').textContent = sunLabel();
-  $('stat-base').textContent = dist < BASE.clean ? 'jsi doma' : Math.round(dist) + ' m';
-  updateBaseArrow(dist);
+  $('base-nav').hidden = dist < BASE.clean;
+  $('stat-base').textContent = Math.round(dist) + ' m';
 }
 
 // Výzva k akci nad ovládáním (klávesa E / klepnutí).
