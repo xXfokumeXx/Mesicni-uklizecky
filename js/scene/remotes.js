@@ -3,7 +3,8 @@
 import { MOON } from '../config.js';
 import { SUIT_COLORS } from '../catalog.js';
 import { net } from '../net.js';
-import { decodeRagdoll } from '../ragdoll.js';
+import { remoteRagdoll, advanceRemote, correctRemote, ragdollPoints } from '../ragdoll.js';
+import { game } from '../state.js';
 import { createAstronaut } from './astronaut.js';
 
 const THREE = window.THREE;
@@ -62,10 +63,16 @@ export function createRemotes(scene, camera, actors, layer) {
       const v = viewFor(r);
       const a = v.astro;
       a.root.visible = !hidden;
-      const pts = r.rag ? decodeRagdoll(r.rag) : null;
+      // ragdoll po srážce si počítám sám ze začátku letu, polohu pánve dotahuji podle korekcí
+      if (!r.rag) v.rag = null;
+      else if (!v.rag || v.rag.k !== r.rag.k) v.rag = remoteRagdoll(r.rag, (Date.now() + game.clockOffset - r.rag.a) / 1000);
+      if (v.rag) {
+        advanceRemote(v.rag, dt);
+        if (r.ragFix) correctRemote(v.rag, r.ragFix);
+      }
       let seated = false, pushing = false;
-      if (pts) {
-        a.applyRagdoll(pts);
+      if (v.rag) {
+        a.applyRagdoll(ragdollPoints(v.rag));
       } else {
         if (a.ragdolling) a.endRagdoll();
         const seat = r.d >= 0 ? actors.seatTransform(r.d, a.root)
@@ -101,5 +108,15 @@ export function createRemotes(scene, camera, actors, layer) {
     }
   }
 
-  return { update, clear: () => { for (const p of [...views.keys()]) remove(p); } };
+  // Čelovka ostatního hráče (poloha a vodorovný směr pohledu helmy) – pro reflektory (scene/lights.js).
+  function lampOf(peer, pos, dir) {
+    const v = views.get(peer);
+    if (!v || v.rag || !v.astro.root.visible) return false;
+    v.astro.root.updateMatrixWorld();
+    v.astro.lampPosition(pos);
+    v.astro.lampDirection(dir);
+    return true;
+  }
+
+  return { update, lampOf, clear: () => { for (const p of [...views.keys()]) remove(p); } };
 }

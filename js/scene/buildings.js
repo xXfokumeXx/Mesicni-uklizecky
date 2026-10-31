@@ -161,10 +161,12 @@ export function buildToolshop() {
 function garageBuilt() {
   const m = materials();
   const g = new THREE.Group();
-  const shell = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 10, 20, 1, false, -Math.PI / 2, Math.PI), m.wall);
-  shell.rotation.x = Math.PI / 2;
-  shell.rotation.z = Math.PI / 2;
-  shell.scale.set(1, 1, 0.75);
+  // půlválec (osa podél hloubky garáže z, oblouk nahoru); dřív byl otočený obloukem dolů pod zem
+  const shellMat = m.wall.clone();
+  shellMat.side = THREE.DoubleSide;                   // i zevnitř (kamera za vraty)
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 10, 20, 1, false, -Math.PI / 2, Math.PI), shellMat);
+  shell.rotation.x = -Math.PI / 2;
+  shell.scale.set(1, 1, 0.75);                        // místní z = výška oblouku po otočení
   g.add(shell);
   const front = new THREE.Mesh(new THREE.CircleGeometry(6, 20, 0, Math.PI), m.shade);
   front.position.set(0, 0, 5.01);

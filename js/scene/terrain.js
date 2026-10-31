@@ -473,7 +473,26 @@ export function createTerrain(scene, renderer, viewDistance) {
 
   function setLighting(l) {
     applyLight(uniforms, l, l.shadow);
-    for (const u of linked) applyLight(u, l, null);
+    applySpots(uniforms, l.spots, l.spotShadow);
+    for (const u of linked) applyLight(u, l, null);      // glóbus na mapě bez reflektorů
+  }
+
+  // Reflektory (scene/lights.js) do shaderu terénu.
+  function applySpots(u, spots, ss) {
+    if (!spots) return;
+    for (let i = 0; i < spots.pos.length; i++) {
+      u.spotPos.value[i].copy(spots.pos[i]);
+      u.spotDir.value[i].copy(spots.dir[i]);
+      u.spotColor.value[i].copy(spots.color[i]);
+      u.spotCone.value[i].copy(spots.cone[i]);
+      u.spotRange.value[i] = spots.range[i];
+    }
+    u.useSpotShadow.value = ss && ss.map ? 1 : 0;
+    if (ss && ss.map) {
+      u.spotShadowMap.value = ss.map.texture;
+      u.spotShadowMatrix.value.copy(ss.matrix);
+      u.spotShadowTexel.value = 1 / ss.mapSize.x;
+    }
   }
 
   return {

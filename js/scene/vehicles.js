@@ -1,6 +1,7 @@
 // Low-poly vozidla (bílá karoserie, oranžové rotační kartáče – styl úklidové techniky).
 // Model: „nahoru“ = +y, „dopředu“ = +z, kola na y = 0.
-// Vrací { root, brushes[], wheels[], seat: Vector3 | null, pusher: boolean, radius, passengers?: Vector3[] }.
+// Vrací { root, brushes[], wheels[], seat: Vector3 | null, pusher: boolean, radius, passengers?: Vector3[],
+//   headlight?: Vector3 (střed světlometů, odtud svítí reflektor – scene/lights.js) }.
 
 const THREE = window.THREE;
 let M = null;
@@ -106,7 +107,7 @@ function rideOn() {
   const wheels = [wheel(0.24, 0.16, -0.68, 0.65), wheel(0.24, 0.16, 0.68, 0.65), wheel(0.28, 0.2, -0.68, -0.6), wheel(0.28, 0.2, 0.68, -0.6)];
   const brushes = [brush(0.38, -0.72, 1.15), brush(0.38, 0.72, 1.15)];
   root.add(...wheels, ...brushes);
-  return { root, wheels, brushes, seat: new THREE.Vector3(0, 0.62, -0.38), pusher: false, radius: 1.3, wheelR: 0.26 };
+  return { root, wheels, brushes, seat: new THREE.Vector3(0, 0.62, -0.38), pusher: false, radius: 1.3, wheelR: 0.26, headlight: new THREE.Vector3(0, 0.95, 1.02) };
 }
 
 function lunarSweeper() {
@@ -131,7 +132,7 @@ function lunarSweeper() {
   const wheels = [wheel(0.48, 0.32, -1.05, 1.3), wheel(0.48, 0.32, 1.05, 1.3), wheel(0.48, 0.32, -1.05, -1.3), wheel(0.48, 0.32, 1.05, -1.3)];
   const brushes = [brush(0.5, -1.15, 2.45), brush(0.5, 1.15, 2.45), brush(0.42, -0.5, 2.3), brush(0.42, 0.5, 2.3)];
   root.add(...wheels, ...brushes);
-  return { root, wheels, brushes, seat: new THREE.Vector3(-0.45, 1.05, 1.3), pusher: false, radius: 2.6, wheelR: 0.48 };
+  return { root, wheels, brushes, seat: new THREE.Vector3(-0.45, 1.05, 1.3), pusher: false, radius: 2.6, wheelR: 0.48, headlight: new THREE.Vector3(0, 1.45, 2.22) };
 }
 
 function megaRover() {
@@ -159,7 +160,7 @@ function megaRover() {
   const wheels = [];
   for (const z of [1.3, -0.2, -1.7]) wheels.push(wheel(0.7, 0.45, -1.7, z), wheel(0.7, 0.45, 1.7, z));
   root.add(...wheels);
-  return { root, wheels, brushes: [], seat: new THREE.Vector3(0, 2.05, -1.55), pusher: false, radius: 3.6, wheelR: 0.7 };
+  return { root, wheels, brushes: [], seat: new THREE.Vector3(0, 2.05, -1.55), pusher: false, radius: 3.6, wheelR: 0.7, headlight: new THREE.Vector3(0, 1.8, 2.2) };
 }
 
 // Přepravník posádky: prosklená kabina, aby byli vidět řidič i cestující (5 sedadel vzadu a vedle řidiče).
@@ -180,7 +181,7 @@ function crewTransport() {
   root.add(...wheels);
   const at = (x, z) => new THREE.Vector3(x, 0.85, z);
   return {
-    root, wheels, brushes: [], seat: at(-0.45, 1.3), pusher: false, radius: 2.4, wheelR: 0.4,
+    root, wheels, brushes: [], seat: at(-0.45, 1.3), pusher: false, radius: 2.4, wheelR: 0.4, headlight: new THREE.Vector3(0, 1.15, 2.22),
     passengers: [at(0.45, 1.3), at(-0.45, 0.1), at(0.45, 0.1), at(-0.45, -1.1), at(0.45, -1.1)],
   };
 }

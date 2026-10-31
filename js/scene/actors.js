@@ -491,6 +491,16 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     setLamp: astro.setLamp,
     lampIntensity: astro.lampIntensity,
     lampPosition: astro.lampPosition,
+    lampDirection: astro.lampDirection,
+    // Světlomety vozidla i: střed světel a směr jízdy ve světě (false = vozidlo bez světel, např. ruční vozík).
+    vehicleHeadlight(i, pos, dir) {
+      const view = vehicleViews[i];
+      if (!view?.headlight || !view.root.visible) return false;
+      view.root.updateMatrixWorld();
+      pos.copy(view.headlight).applyMatrix4(view.root.matrixWorld);
+      dir.set(0, 0, 1).transformDirection(view.root.matrixWorld);
+      return true;
+    },
     setShadows,
   };
 }
