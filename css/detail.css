@@ -80,6 +80,30 @@
   cursor: default;
 }
 
+/* Druhá akce (prodej vozidla): méně výrazná, červená teprve při potvrzení */
+.detail__action--secondary {
+  padding: 10px 14px;
+  font-size: 0.95rem;
+  color: var(--regolith);
+  background: var(--surface-raised);
+  box-shadow: none;
+}
+
+.detail__action--secondary:active:not(:disabled) {
+  box-shadow: none;
+}
+
+.detail__action--danger:not(:disabled) {
+  color: var(--danger);
+  outline: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.detail__action--armed:not(:disabled) {
+  color: #fff;
+  background: var(--danger);
+  outline: 0;
+}
+
 /* Řádek parametru: název vlevo, hodnota vpravo */
 .spec {
   display: flex;
