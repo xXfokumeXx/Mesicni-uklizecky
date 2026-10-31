@@ -133,11 +133,18 @@ let warned = false;
 // Po odletu na jinou planetu se už nesmí uložit starý stav přes nový (main.js switchPlanet).
 let locked = false;
 export const lockSaves = () => { locked = true; };
+export const savesLocked = () => locked;
 
 // Planeta uložené hry ve slotu ('moon' / 'mars'), null = slot je prázdný.
 export async function savePlanet(slot) {
+  return (await peekSave(slot))?.planet || null;
+}
+
+// Krátký pohled do uložené hry bez načtení mapy: { planet, netCode, last } nebo null.
+export async function peekSave(slot) {
   const rec = await getRecord(slot);
-  return rec?.s ? (rec.s.planet === 'mars' ? 'mars' : 'moon') : null;
+  if (!rec?.s) return null;
+  return { planet: rec.s.planet === 'mars' ? 'mars' : 'moon', netCode: rec.s.netCode || null, last: rec.s.last || 0 };
 }
 
 // Uloží nový stav světa na jiné planetě bez mapy prachu (ta se po načtení vygeneruje čistá).

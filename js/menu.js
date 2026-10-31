@@ -4,6 +4,7 @@ import { SUIT_COLORS } from './catalog.js';
 import { profile, saveProfile, sanitizeName } from './profile.js';
 import { SLOTS, listSaves, deleteSave, lastSlot, hasV1Save } from './storage.js';
 import { net, initLobby, lobbyPeers, openWorlds, findWorld, setLobbyStatus, roomOnline } from './net.js';
+import { checkAccess, enterPassword, cloudMeta } from './cloud.js';
 import { fmt } from './format.js';
 
 const $ = id => document.getElementById(id);
@@ -145,7 +146,7 @@ function renderLobby() {
   $('lobby-worlds').innerHTML = worlds.length ? worlds.map((w, i) => `
     <li class="world">
       <div class="world__info">
-        <span class="world__title">${esc(w.title)}</span>
+        <span class="world__title">${w.locked ? '🔒 ' : ''}${esc(w.title)}</span>
         <span class="world__meta">Hostitel ${esc(w.hostName)} · ${w.players} ${w.players === 1 ? 'hráč' : w.players < 5 ? 'hráči' : 'hráčů'} · kód ${esc(w.code)}</span>
       </div>
       <button class="button button--primary" type="button" data-join="${i}" ${w.me ? 'disabled' : ''}>Připojit</button>
@@ -158,7 +159,28 @@ function bindLobby() {
     const t = e.target.closest('[data-join]');
     if (!t) return;
     const w = openWorlds()[Number(t.dataset.join)];
-    if (w) hooks.onLaunch({ mode: 'client', world: w });
+    if (w) enterWorld(w.code, () => hooks.onLaunch({ mode: 'client', world: w }));
+  });
+  $('lobby-pass-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!passFor) return;
+    const err = $('lobby-code-error');
+    if (await enterPassword(passFor.code, $('lobby-pass').value)) {
+      $('lobby-pass').value = '';
+      $('lobby-pass-form').hidden = true;
+      err.hidden = true;
+      const go = passFor.go;
+      passFor = null;
+      go();
+    } else {
+      err.hidden = false;
+      err.textContent = 'Špatné heslo.';
+    }
+  });
+  $('lobby-cloud').addEventListener('click', () => {
+    if (!cloudOffer) return;
+    const { code, meta } = cloudOffer;
+    enterWorld(code, () => hooks.onLaunch({ mode: 'host', cloud: code, planet: meta.pn === 'mars' ? 'mars' : 'moon', public: true }));
   });
   $('lobby-host').addEventListener('click', () => { slotMode = 'host'; show('menu-slots'); renderSlots(); });
   $('lobby-code-form').addEventListener('submit', e => {
@@ -167,7 +189,20 @@ function bindLobby() {
   });
 }
 
+// Svět s heslem: zeptat se na heslo (jednou na prohlížeč), pak pokračovat (go).
+let passFor = null, cloudOffer = null;
+async function enterWorld(code, go) {
+  if ((await checkAccess(code)) === 'ok') { go(); return; }
+  passFor = { code, go };
+  $('lobby-pass-form').hidden = false;
+  const err = $('lobby-code-error');
+  err.hidden = false;
+  err.textContent = `Svět ${code} je chráněný heslem.`;
+  $('lobby-pass').focus();
+}
+
 // Připojení kódem (z pole v lobby nebo z odkazu …#kód). Lobby se načítá chvilku → počkat až 30 s.
+// Když svět nikdo nehostuje, ale je uložený v cloudu, nabídne se jeho otevření (hostitelem budu já).
 async function joinByCode(raw) {
   const code = String(raw || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const err = $('lobby-code-error');
@@ -177,20 +212,28 @@ async function joinByCode(raw) {
   $('lobby-code').value = code;
   const t0 = Date.now();
   let w = findWorld(code);
-  while (!w && Date.now() - t0 < 30000) {          // po odletu na jinou planetu hostitel chvíli startuje
+  $('lobby-cloud').hidden = true;
+  const meta = w ? null : await cloudMeta(code);
+  while (!w && Date.now() - t0 < 30000) {          // po odletu / převzetí hostitel chvíli startuje
     err.hidden = false;
-    err.textContent = `Hledám svět ${code}…`;
+    err.textContent = meta ? `Hledám hostitele světa ${code}…` : `Hledám svět ${code}…`;
+    if (meta && Date.now() - t0 > 4000) {             // svět je v cloudu → nabídnout otevření (čekání běží dál)
+      cloudOffer = { code, meta };
+      $('lobby-cloud').hidden = false;
+      err.textContent = `Svět ${code} („${meta.t || 'Svět'}“) teď nikdo nehostuje. Můžeš ho otevřít ty – nebo počkej na hostitele.`;
+    }
     await new Promise(r => setTimeout(r, 400));
     w = findWorld(code);
   }
   if (!w) {
     err.hidden = false;
-    err.textContent = `Svět s kódem ${code} teď nikdo nehostuje. Zkontroluj kód, nebo počkej, až ho hostitel otevře.`;
+    if (!meta) err.textContent = `Svět s kódem ${code} teď nikdo nehostuje. Zkontroluj kód, nebo počkej, až ho hostitel otevře.`;
     return;
   }
   if (w.me) return;
   err.hidden = true;
-  hooks.onLaunch({ mode: 'client', world: w });
+  $('lobby-cloud').hidden = true;
+  enterWorld(w.code, () => hooks.onLaunch({ mode: 'client', world: w }));
 }
 
 // ---------- start ----------
@@ -239,6 +282,7 @@ export function initPause(h) {
   async function renderPauseSlots(kind) {
     const saves = await listSaves();
     $('pause-slots').hidden = false;
+    $('pause-help-box').hidden = true;
     $('pause-slots-title').textContent = kind === 'save' ? 'Uložit do slotu' : 'Načíst hru';
     $('pause-slot-list').innerHTML = SLOTS.map((id, i) => {
       const sv = saves.find(x => x.id === id);
@@ -260,7 +304,27 @@ export function initPause(h) {
   $('pause-save-as').addEventListener('click', () => renderPauseSlots('save'));
   $('pause-load').addEventListener('click', () => renderPauseSlots('load'));
   $('pause-gfx').addEventListener('click', () => { close(); h.openSettings(); });
+  $('pause-help').addEventListener('click', () => {                 // přehled ovládání (místo nápovědy dole na obrazovce)
+    const box = $('pause-help-box');
+    box.hidden = !box.hidden;
+    $('pause-help').setAttribute('aria-expanded', String(!box.hidden));
+    if (!box.hidden) $('pause-slots').hidden = true;
+  });
   $('pause-invite').addEventListener('click', () => h.copyInvite($('pause-invite-link')));
+  // heslo světa (jen hostitel): nastavit / zrušit – hlídají ho pravidla Firebase (cloud.js)
+  $('pause-pass').addEventListener('click', () => {
+    const box = $('pause-pass-box');
+    box.hidden = !box.hidden;
+    $('pause-pass').setAttribute('aria-expanded', String(!box.hidden));
+    if (!box.hidden) $('pause-pass-input').focus();
+  });
+  $('pause-pass-box').addEventListener('submit', async e => {
+    e.preventDefault();
+    const pw = $('pause-pass-input').value.trim();
+    if (pw.length < 6) { $('pause-pass-state').textContent = 'Heslo musí mít aspoň 6 znaků.'; return; }
+    if (await h.password.set(pw)) { $('pause-pass-input').value = ''; close(); }
+  });
+  $('pause-pass-clear').addEventListener('click', async () => { if (await h.password.set('')) close(); });
   $('pause-menu').addEventListener('click', () => h.toMenu());
   $('pause-slot-list').addEventListener('click', async e => {
     const t = e.target.closest('[data-save-slot],[data-load-slot]');
@@ -271,12 +335,18 @@ export function initPause(h) {
   return {
     open() {
       $('pause-slots').hidden = true;
+      $('pause-help-box').hidden = true;
+      $('pause-help').setAttribute('aria-expanded', 'false');
       const can = h.canSave();
       $('pause-save').hidden = !can;
-      $('pause-save-as').hidden = !can;
+      $('pause-save-as').hidden = !(h.canSaveAs ? h.canSaveAs() : can);
       $('pause-load').hidden = !h.canLoad();
       $('pause-info').textContent = h.info();
       $('pause-invite').hidden = !h.invite();
+      const pass = !!h.password?.available();
+      $('pause-pass').hidden = !pass;
+      $('pause-pass-box').hidden = true;
+      if (pass) $('pause-pass-state').textContent = h.password.locked() ? 'Svět má heslo. Nové heslo odhlásí všechny ostatní (zadají ho znovu).' : 'Bez hesla se připojí kdokoli, kdo zná kód světa.';
       $('pause-invite-link').hidden = true;
       modal.hidden = false;
       h.onOpen();

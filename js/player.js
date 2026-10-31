@@ -9,7 +9,7 @@ import { createBody, stepBody, jumpBody, altitude } from './physics.js';
 import { sweepCapsule } from './planet/dustmap.js';
 import { heightAt } from './planet/height.js';
 import { depotAt } from './depots.js';
-import { createRagdoll, stepRagdoll, ragdollPoints, encodeRagdoll, RG } from './ragdoll.js';
+import { createRagdoll, stepRagdoll, ragdollPoints, encodeRagdollStart, RAG_STEP, RG } from './ragdoll.js';
 import { cross, madd, norm, tangentTo, angleBetween, rotateAround, dot } from './planet/vec.js';
 
 const R = MOON.radius;
@@ -246,7 +246,17 @@ function drive(input, dt) {
 // ---------- srážka s vozidlem → ragdoll ----------
 
 export const ragdollState = () => ragPts;
-export const ragdollEncoded = () => (rag ? encodeRagdoll(rag) : null);
+// Pro ostatní hráče: začátek letu (jednou) a 4× za sekundu poloha pánve – zbytek si spočítají sami (ragdoll.js).
+let ragStart = null, ragSeq = 0;
+export const ragdollNet = () => {
+  if (!rag) return { g: null, gc: null };
+  const slot = Math.floor(rag.time * 4);
+  if (rag.fixSlot !== slot) {
+    rag.fixSlot = slot;
+    rag.fix = [Math.round(rag.time * 100), Math.round(rag.pos[0] * 100), Math.round(rag.pos[1] * 100), Math.round(rag.pos[2] * 100)];
+  }
+  return { g: ragStart, gc: rag.fix };
+};
 export const currentVehicleSpeed = () => vehicleSpeed;
 export const boostCharge = () => boostLeft / BOOST.duration;
 export const isRagdoll = () => !!rag;
@@ -255,7 +265,9 @@ export const isRagdoll = () => !!rag;
 export function knockOut(pose, vel, spin) {
   if (rag || game.s.driving >= 0) return false;
   rag = createRagdoll(pose, vel, spin);
+  rag.acc = 0;
   ragPts = ragdollPoints(rag);
+  ragStart = encodeRagdollStart(++ragSeq, Date.now() + game.clockOffset, pose, vel, spin);
   prevTool = null;
   return true;
 }
@@ -283,7 +295,13 @@ export function checkVehicleHits(movers, posePoints) {
 
 function flyRagdoll(dt) {
   const s = game.s;
-  const landed = stepRagdoll(rag, dt);
+  // pevný krok (stejně jako u ostatních hráčů, kteří let počítají sami)
+  let landed = 0;
+  rag.acc += Math.min(dt, 0.25);
+  while (rag.acc >= RAG_STEP && !rag.done) {
+    landed = Math.max(landed, stepRagdoll(rag, RAG_STEP));
+    rag.acc -= RAG_STEP;
+  }
   ragPts = ragdollPoints(rag);
   const pel = ragPts[RG.pelvis];
   s.p = norm(pel);

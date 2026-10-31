@@ -135,20 +135,81 @@ export function ragdollPoints(rd) {
   return out;
 }
 
-// Zakódování pro multiplayer: pánev v cm absolutně, ostatní body relativně v cm.
-export function encodeRagdoll(rd) {
-  const p = rd.pos;
-  const out = [Math.round(p[0] * 100), Math.round(p[1] * 100), Math.round(p[2] * 100)];
-  for (let i = 1; i < rd.n; i++) {
-    out.push(Math.round((p[i * 3] - p[0]) * 100), Math.round((p[i * 3 + 1] - p[1]) * 100), Math.round((p[i * 3 + 2] - p[2]) * 100));
-  }
-  return out;
-}
-
+// Dekódování pózy z multiplayeru: pánev v cm absolutně, ostatní body relativně v cm.
 export function decodeRagdoll(arr) {
   if (!Array.isArray(arr) || arr.length !== RG_COUNT * 3) return null;
   const px = arr[0] / 100, py = arr[1] / 100, pz = arr[2] / 100;
   const pts = [[px, py, pz]];
   for (let i = 1; i < RG_COUNT; i++) pts.push([px + arr[i * 3] / 100, py + arr[i * 3 + 1] / 100, pz + arr[i * 3 + 2] / 100]);
   return pts.every(p => p.every(Number.isFinite)) ? pts : null;
+}
+
+// ---------- multiplayer: ragdoll se počítá u každého hráče sám ----------
+// Letící hráč pošle jednou začátek letu (póza, rychlost, rotace, čas srážky na společných hodinách)
+// a pak 4× za sekundu polohu pánve (čas letu + bod). Ostatní si let simulují stejnou fyzikou
+// (terén je u všech stejný) pevným krokem a malé odchylky plynule dotahují → plynulé a skoro bez dat.
+
+export const RAG_STEP = 1 / 60;              // pevný krok simulace u všech hráčů (stejný výsledek)
+
+// Začátek letu pro presence: { k: pořadí, a: čas srážky (ms, společné hodiny), p: póza, v, w } (cm, cm/s, crad/s)
+export function encodeRagdollStart(k, at, pose, vel, spin) {
+  const pts = pose.flat();
+  const out = [Math.round(pts[0] * 100), Math.round(pts[1] * 100), Math.round(pts[2] * 100)];
+  for (let i = 1; i < pose.length; i++) {
+    out.push(Math.round((pts[i * 3] - pts[0]) * 100), Math.round((pts[i * 3 + 1] - pts[1]) * 100), Math.round((pts[i * 3 + 2] - pts[2]) * 100));
+  }
+  return { k, a: Math.round(at), p: out, v: vel.map(c => Math.round(c * 100)), w: spin.map(c => Math.round(c * 100)) };
+}
+
+const okNums = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite);
+
+// Ragdoll ostatního hráče ze začátku letu; elapsed = kolik sekund let už trvá (dohoní se hned).
+export function remoteRagdoll(start, elapsed) {
+  if (!start || !okNums(start.p, RG_COUNT * 3) || !okNums(start.v, 3) || !okNums(start.w, 3)) return null;
+  const pose = decodeRagdoll(start.p);
+  if (!pose) return null;
+  const rd = createRagdoll(pose, start.v.map(c => c / 100), start.w.map(c => c / 100));
+  rd.k = start.k;
+  rd.acc = 0;
+  rd.hist = [];                                // [čas letu, x, y, z] pánve po krocích (pro korekce)
+  rd.off = [0, 0, 0];                          // zbývající korekce polohy (dotahuje se plynule)
+  rd.lastFix = -1;
+  advanceRemote(rd, Math.min(3, Math.max(0, elapsed)));
+  return rd;
+}
+
+// Krok pevným krokem + plynulé dotažení korekce (posun celého těla, rychlost se nemění).
+export function advanceRemote(rd, dt) {
+  if (!rd.done) {
+    rd.acc += Math.min(dt, 3.5);
+    while (rd.acc >= RAG_STEP && !rd.done) {
+      stepRagdoll(rd, RAG_STEP);
+      rd.acc -= RAG_STEP;
+      rd.hist.push([rd.time, rd.pos[0], rd.pos[1], rd.pos[2]]);
+      if (rd.hist.length > 240) rd.hist.shift();
+    }
+  }
+  const k = 1 - Math.exp(-dt * 8);
+  const dx = rd.off[0] * k, dy = rd.off[1] * k, dz = rd.off[2] * k;
+  if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) < 1e-5) return;
+  rd.off[0] -= dx; rd.off[1] -= dy; rd.off[2] -= dz;
+  for (let i = 0; i < rd.n; i++) {
+    const o = i * 3;
+    rd.pos[o] += dx; rd.pos[o + 1] += dy; rd.pos[o + 2] += dz;
+    rd.prev[o] += dx; rd.prev[o + 1] += dy; rd.prev[o + 2] += dz;
+  }
+  for (const h of rd.hist) { h[1] += dx; h[2] += dy; h[3] += dz; }
+}
+
+// Korekce od letícího hráče: fix = [čas letu (cs), x, y, z (cm)] → odchylka proti mé simulaci ve stejném čase.
+export function correctRemote(rd, fix) {
+  if (!okNums(fix, 4) || fix[0] === rd.lastFix || !rd.hist.length) return;
+  rd.lastFix = fix[0];
+  const t = fix[0] / 100;
+  let best = rd.hist[0];
+  for (const h of rd.hist) if (Math.abs(h[0] - t) < Math.abs(best[0] - t)) best = h;
+  if (Math.abs(best[0] - t) > 0.2) return;     // tak starou historii už nemám
+  const ex = fix[1] / 100 - best[1], ey = fix[2] / 100 - best[2], ez = fix[3] / 100 - best[3];
+  if (Math.hypot(ex, ey, ez) > 25) return;      // nesmysl (jiný let) – nechat být
+  rd.off = [rd.off[0] + ex, rd.off[1] + ey, rd.off[2] + ez];
 }

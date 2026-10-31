@@ -4,12 +4,19 @@ import { BELT, toolById } from './catalog.js';
 import { game } from './state.js';
 import { toolStats } from './equipment.js';
 import { hotbarSlots, KIT_NAMES } from './hotbar.js';
+import { jetCharged } from './player.js';
 import { buildToolModel } from './scene/toolModels.js';
 import { buildStation, buildSilo } from './scene/buildings.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const MAX = BELT.levels[BELT.levels.length - 1].slots;
+
+// Piktogram jetpacku vlevo od hotbaru: dvě nádrže, plamen jen když je nabitý.
+const JET_SVG = '<svg viewBox="0 0 32 40" aria-hidden="true">'
+  + '<rect x="5" y="3" width="9" height="22" rx="4.5"/><rect x="18" y="3" width="9" height="22" rx="4.5"/>'
+  + '<rect x="12" y="8" width="8" height="10" rx="2"/>'
+  + '<path class="hotbar__flame" d="M9.5 27c-2.5 3-2.5 6 0 10 2.5-4 2.5-7 0-10zM22.5 27c-2.5 3-2.5 6 0 10 2.5-4 2.5-7 0-10z"/></svg>';
 
 let thumb = null;
 
@@ -64,8 +71,11 @@ export function updateHotbar() {
       ${v.fill !== undefined ? `<span class="hotbar__load"><span style="width:${Math.round(v.fill * 100)}%"></span></span>` : ''}
     </button>`;
   }).join('');
+  const jet = s.jetpack
+    ? `<span class="hotbar__jet${jetCharged() ? ' hotbar__jet--ready' : ''}" title="${jetCharged() ? 'Jetpack nabitý: mezerník ve vzduchu' : 'Jetpack se nabije po dopadu na zem'}">${JET_SVG}</span>`
+    : '';
   const el = $('hotbar');
   el.classList.toggle('hotbar--driving', s.driving >= 0);
-  if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  if (el.dataset.html !== jet + html) { el.dataset.html = jet + html; el.innerHTML = jet + html; }
 }
 

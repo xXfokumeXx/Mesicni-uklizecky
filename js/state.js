@@ -65,6 +65,7 @@ export function upgradeState(s = game.s) {
   for (const v of s.vehicles) {
     if (!v.uid) v.uid = newUid();
     v.lv.boost = v.lv.boost | 0;
+    v.lv.hopper = v.lv.hopper | 0;
   }
   s.belt = Math.min(2, Math.max(0, s.belt | 0));
   s.jetpack = s.jetpack ? 1 : 0;

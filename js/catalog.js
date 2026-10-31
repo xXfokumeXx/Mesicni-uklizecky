@@ -78,6 +78,7 @@ export const JETPACK = {
 export const VEHICLE_UPGRADES = {
   width: { name: 'Šířka sání',    max: 5, step: 0.1,  unit: 'm',   desc: '+10 % šířky sání za úroveň' },
   speed: { name: 'Rychlost vozu', max: 5, step: 0.12, unit: 'm/s', desc: '+12 % rychlosti za úroveň' },
+  hopper: { name: 'Kapacita zásobníku', max: 5, step: 0.25, unit: 'kg', desc: '+25 % kapacity zásobníku za úroveň', only: ['push', 'rideon', 'lunar', 'mega'] },
   boost: { name: 'Boost (Shift)', max: 3, step: 0.5,  unit: '×',   desc: 'Shift = skokově 200 % rychlosti, každá další úroveň +50 %', only: ['crew'] },
 };
 export const BOOST = { duration: 4, recharge: 10 };   // plný boost vydrží 4 s, z nuly se nabije za 10 s

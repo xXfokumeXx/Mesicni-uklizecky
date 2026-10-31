@@ -8,7 +8,7 @@ import { droneTick, dronesOffline } from './drones.js';
 import { depotTick, depotsOffline, depositToDepot } from './depots.js';
 import {
   initPlayer, movePlayer, collect, playerFx, rotateHeading, tryJump, tryJet, activeBody, vehicleBody,
-  checkVehicleHits, isRagdoll, ragdollEncoded, currentVehicleSpeed, riding, followRide, leaveRide, currentAltitude,
+  checkVehicleHits, isRagdoll, ragdollNet, currentVehicleSpeed, riding, followRide, leaveRide, currentAltitude,
 } from './player.js';
 import { currentAction, placing, startPlacing, cancelPlacing, updatePlacing, cycleBeltTarget, startDepotMove } from './interact.js';
 import { ensureHotbar, selectSlot, dropSlot } from './hotbar.js';
@@ -19,7 +19,8 @@ import { launchRocket, launchSeconds, ROCKET } from './rocket.js';
 import { initFacility, openFacility, facilityOpen, refreshFacility } from './facility.js';
 import { input, bindInput } from './input.js';
 import { updateUi, setPrompt, flashMoney, floatText, toast, updatePlayers, showAchievement } from './ui.js';
-import { saveGame, loadGame, importV1, lockSaves, savePlanet, saveFresh } from './storage.js';
+import { saveGame, loadGame, importV1, lockSaves, savePlanet, peekSave, saveFresh } from './storage.js';
+import { cloudMeta, loadCloud, hostOf, releaseHost, resetCloudMap, setWorldPassword, checkAccess } from './cloud.js';
 import { fmt } from './format.js';
 import { settings, loadSettings, matchPreset } from './settings.js';
 import { initSettingsMenu } from './settingsMenu.js';
@@ -27,7 +28,7 @@ import { loadProfile, profile } from './profile.js';
 import {
   net, initLobby, startHost, joinWorld, netTick, addEarned, sendChat, players, movingVehicles,
   vehicleOverride, hostRobotCompleted, setRagdollPresence, savePersonal, inviteLink,
-  addCollected, reportDeposit, myStatKey, passengersOf, request,
+  addCollected, reportDeposit, myStatKey, passengersOf, request, hostOwnDust, saveWorldNow, setWorldLocked, worldLocked, findWorld,
 } from './net.js';
 import { initChat, showChat, addMessage, openChat, chatOpen } from './chat.js';
 import { initMenu, initPause, showLoading, hideMenu, setMoonStatus } from './menu.js';
@@ -48,11 +49,13 @@ import { createMoonMap } from './scene/moonMap.js';
 import { createRemotes } from './scene/remotes.js';
 import { createWardrobe } from './scene/wardrobe.js';
 import { createHoloView } from './scene/hologram.js';
+import { createCompass } from './scene/compass.js';
+import { createSpots, SPOTS } from './scene/lights.js';
 
 const canvas = document.getElementById('scene-canvas');
 const fpsEl = document.getElementById('fps-counter');
 const BOOT_KEY = 'ms2_boot';
-let world, terrain, actors, particles, cam, map, remotes, pause, settingsUi;
+let world, terrain, actors, particles, cam, map, remotes, pause, settingsUi, compass, spots;
 let running = false;
 
 // ---------- příprava Měsíce (mapa prachu ve Web Workeru) ----------
@@ -95,6 +98,7 @@ function work(dt) {
   } else {
     addStat(myStatKey(), profile.name, 'e', gained);
     addStat(myStatKey(), profile.name, 'kg', swept);
+    hostOwnDust(swept, earned / dustPrice() + (playerFx.deposit ? playerFx.deposit.kg : 0));   // bilance pro kontrolu klientů
   }
   if (playerFx.deposit) {                                    // náklad vysypaný do depa
     const { i, kg } = playerFx.deposit;
@@ -225,6 +229,39 @@ function checkSharedAchievements() {
   if ((game.s.market | 0) >= MARKET.max) unlock('wallstreet');
 }
 
+// ---------- svět bez hostitele (cloud.js) ----------
+
+// Hostitel odešel: svět převezme hráč s nejnižším označením (všichni vidí stejný seznam, takže se shodnou
+// bez domlouvání). Ten načte svět z cloudu a hostuje; ostatní se za chvíli připojí znovu přes odkaz.
+function hostLeft() {
+  const code = net.code;
+  const peers = [net.me, ...[...net.remotes.keys()].filter(p => p !== net.hostPeer)].filter(Boolean).sort();
+  try { history.replaceState(null, '', `#${code}`); } catch { /* nic */ }
+  if (peers[0] === net.me) {
+    toast('Hostitel odešel – svět teď hostuješ ty (načítám ho z cloudu)…', 6000);
+    setTimeout(() => {
+      try { sessionStorage.setItem(BOOT_KEY, JSON.stringify({ mode: 'host', cloud: code, planet: PLANET.id, public: game.s.netPublic !== false })); } catch { /* nic */ }
+      lockSaves();
+      location.reload();
+    }, 2500);
+  } else {
+    toast('Hostitel odešel – svět přebírá jiný hráč, za chvíli tě připojím zpátky…', 8000);
+    setTimeout(() => { lockSaves(); location.reload(); }, 9000);
+  }
+}
+
+// Hostitel: nastavit / zrušit heslo světa (menu pauzy).
+async function worldPassword(pw) {
+  if (net.mode !== 'host') return false;
+  const uids = [...net.remotes.keys()].map(p => String(p).split('_')[0]);   // kdo je ve světě, zůstane
+  const ok = await setWorldPassword(net.code, pw, uids);
+  if (ok) {
+    setWorldLocked(!!pw);
+    toast(pw ? 'Svět má heslo. Kdo je teď ve světě, může hrát dál; ostatní ho zadají při připojení.' : 'Heslo zrušené – připojit se může kdokoli s kódem.', 7000);
+  } else toast('Heslo se nepodařilo uložit (jsou ve Firebase nová pravidla databáze?).', 7000);
+  return ok;
+}
+
 // ---------- odlet raketou (a z Měsíce na Mars) ----------
 
 // Kdo stiskne E u rakety: na Marsu jen start domů a úspěch; na Měsíci odletí celý svět na Mars.
@@ -257,8 +294,12 @@ function depart(planet) {
     s.arrived = 1;
     s.history = [...(Array.isArray(old.history) ? old.history : []), { planet: old.planet || 'moon', playMs: old.playMs || 0, money: Math.round(old.money), at: Date.now() }];
     lockSaves();
-    await saveFresh(game.slot, s);
-    switchPlanet(planet, { mode: net.mode === 'host' ? 'host' : 'sp', slot: game.slot, action: 'load', public: s.netPublic !== false });
+    if (game.slot) await saveFresh(game.slot, s);
+    if (net.mode === 'host') await resetCloudMap(net.code);   // svět v cloudu taky na novou planetu
+    const boot = game.slot
+      ? { mode: net.mode === 'host' ? 'host' : 'sp', slot: game.slot, action: 'load', public: s.netPublic !== false }
+      : { mode: 'host', cloud: net.code, planet, public: s.netPublic !== false };
+    switchPlanet(planet, boot);
   });
   return true;
 }
@@ -345,6 +386,54 @@ function dropFromHotbar(k) {
     : 'Stavební sada je pryč z hotbaru.', 5000);
 }
 
+// ---------- světla: čelovka a světlomety ----------
+
+let lightsOff = false;                                     // klávesa L
+const darkness = elev => Math.min(1, Math.max(0, (4 - elev) / 10));
+let spotSrc = null;
+
+function toggleLights() {
+  lightsOff = !lightsOff;
+  net.lightsOff = lightsOff;
+  toast(lightsOff ? 'Světla vypnutá (L = zapnout).' : 'Světla zapnutá – v noci svítí čelovka a světlomety samy.', 3000);
+}
+
+// Zdroje reflektorů podle důležitosti: moje světlo, pak nejbližší ostatní hráči (čelovka / světlomety).
+function collectSpots(dark, t) {
+  const T = window.THREE;
+  spotSrc ||= Array.from({ length: SPOTS + 6 }, () => ({ type: 'lamp', pos: new T.Vector3(), dir: new T.Vector3(), up: new T.Vector3(), k: 0, d: 0 }));
+  const s = game.s;
+  let n = 0;
+  const flat = src => { src.dir.addScaledVector(src.up, -src.dir.dot(src.up)).normalize(); };
+  // zdroj ze světlometů vozidla i, nebo z čelovky (lamp(pos, dir) → false = žádné světlo)
+  const fill = (src, vehicle, lamp) => {
+    if (vehicle >= 0 && actors.vehicleHeadlight(vehicle, src.pos, src.dir)) { src.type = 'car'; return true; }
+    if (!lamp(src.pos, src.dir)) return false;
+    src.type = 'lamp';
+    flat(src);
+    return true;
+  };
+  const me = spotSrc[n++];
+  me.up.set(s.p[0], s.p[1], s.p[2]);
+  me.k = lightsOff || isRagdoll() || riding() ? 0 : dark;
+  if (me.k > 0 && !fill(me, s.driving, (pos, dir) => { actors.lampPosition(pos); actors.lampDirection(dir); return true; })) me.k = 0;
+  const others = [];
+  if (net.mode !== 'off' && remotes) {
+    for (const r of net.remotes.values()) {
+      if (!r.sp || r.lo || r.rd || n >= spotSrc.length) continue;
+      const src = spotSrc[n];
+      src.up.set(r.sp[0], r.sp[1], r.sp[2]);
+      src.k = darkness(sunElevationDeg(r.sp, t));
+      if (src.k <= 0.01 || !fill(src, r.d, (pos, dir) => remotes.lampOf(r.peer, pos, dir))) continue;
+      src.d = src.pos.distanceToSquared(world.camera.position);
+      others.push(src);
+      n++;
+    }
+    others.sort((a, b) => a.d - b.d);
+  }
+  return [me, ...others.slice(0, SPOTS - 1)];
+}
+
 // ---------- měření výkonu ----------
 
 const perf = { frames: 0, since: 0, samples: [], warned: false };
@@ -425,7 +514,7 @@ function frame(now) {
     }
   }
   if (net.mode !== 'off') {
-    setRagdollPresence(ragdollEncoded());
+    setRagdollPresence(ragdollNet());
     netTick(dt, {
       speed: playerFx.speed, alt: playerFx.alt, vr: playerFx.vr, swept: playerFx.swept, airborne: playerFx.airborne,
       toolWidth: eq.stats.width, body: activeBody(),
@@ -446,7 +535,6 @@ function frame(now) {
 
   const t = gameTime();
   const elev = sunElevationDeg(s.p, t);
-  actors.setLamp(Math.min(1, Math.max(0, (4 - elev) / 10)));
 
   shadeTimer -= rdt;
   const focus = actors.focusPosition();
@@ -458,11 +546,17 @@ function frame(now) {
   }
   sunHere += (sunTarget - sunHere) * Math.min(1, rdt * 4);
   const light = world.updateSky(t, s.p, rdt, focus, sunHere);
+  // tma = Slunce pod obzorem nebo stín kopce → čelovka a světlomety (scene/lights.js)
+  const dark = Math.max(darkness(elev), (1 - sunHere) * 0.9);
+  actors.setLamp(dark);
+  spots.update(collectSpots(dark, t));
   terrain.setLighting({
     ...light,
     lampPos: actors.lampPosition(lampPos),
-    lampIntensity: actors.lampIntensity(),
+    lampIntensity: lightsOff || s.driving >= 0 ? 0 : dark * 0.35,
     shadow: world.shadowInfo(),
+    spots: spots.uniforms,
+    spotShadow: spots.shadowInfo(),
   });
 
   terrain.updateDust();
@@ -473,7 +567,8 @@ function frame(now) {
   particles.update(rdt);
   cam.setBaseDistance(s.driving >= 0 ? eq.base.camera : isRagdoll() || riding() ? 16 : CAMERA.distance);
   cam.update(rdt, actors.focusPosition(), s.p, s.f);
-  cutscene.update();
+  const director = cutscene.update();
+  compass.update(s.p, !director && !map.active && angleBetween(s.p, BASE.dir) * MOON.radius >= BASE.clean, now / 1000);
   actors.fadeOccluders(world.camera.position, actors.focusPosition());
   if (map.active) map.setTarget(input.target);
   map.update(rdt, focus);
@@ -495,8 +590,9 @@ function applySettings(next, before) {
   if (next.scale !== before.scale) world.setPixelRatio(next.scale);
   if (next.view !== before.view) terrain.setViewDistance(next.view);
   if (!next.particles && before.particles) particles.clear();
-  if (next.shadows !== before.shadows) {
-    world.setShadows(next.shadows);
+  if (next.shadows !== before.shadows || next.lightShadows !== before.lightShadows) {
+    spots.setShadows(next.shadows && next.lightShadows);
+    world.setShadows(next.shadows);                         // přepočítá materiály
     actors.setShadows(next.shadows);
   }
   fpsEl.hidden = !next.showFps;
@@ -543,6 +639,8 @@ const canSave = () => net.mode !== 'client' && !!game.slot;
 
 async function saveNow(slot) {
   if (net.mode === 'client') { savePersonal(); return true; }
+  if (net.mode === 'host') saveWorldNow(true);
+  if (!slot) { toast('Svět uložený do cloudu.', 2500); return true; }
   const ok = await saveGame(slot, toast);
   if (ok) toast(slot && slot !== game.slot ? 'Uloženo.' : `Uloženo do slotu ${String(game.slot).replace('slot', '')}.`, 2500);
   return ok;
@@ -551,6 +649,11 @@ async function saveNow(slot) {
 async function toMenu() {
   if (net.mode === 'client') savePersonal();
   else await saveGame(game.slot);
+  if (net.mode === 'host') {
+    showLoading('Ukládám svět do cloudu…');
+    await saveWorldNow(true);
+    await releaseHost(net.code);
+  }
   try { sessionStorage.removeItem(BOOT_KEY); history.replaceState(null, '', location.pathname); } catch { /* nic */ }
   location.reload();
 }
@@ -631,6 +734,7 @@ function bindVisibility() {
       hiddenAt = Date.now();
       if (net.mode === 'client') savePersonal();
       else saveGame(game.slot, toast);
+      if (net.mode === 'host') saveWorldNow(false);           // stav světa do cloudu (kdyby se karta zavřela)
     } else if (hiddenAt) {
       if (net.mode === 'sp') catchUp(hiddenAt);
       hiddenAt = 0;
@@ -649,6 +753,9 @@ function build() {
   terrain = createTerrain(world.scene, world.renderer, settings.view);
   actors = createActors(world.scene, settings.shadows, profile.look, { vehicleOverride: i => (net.mode === 'off' ? null : vehicleOverride(i)) });
   particles = createParticles(world.scene);
+  compass = createCompass(world.scene, world.camera);
+  spots = createSpots(world.scene);
+  spots.setShadows(settings.shadows && settings.lightShadows);
   cam = createFollowCamera(world.camera);
   const pickDir = createPicker(canvas, world.camera);
   map = createMoonMap(world.scene, world.camera, canvas, terrain.texture, { onPick: (x, y) => goTo(pickDir(x, y)) });
@@ -677,6 +784,7 @@ function build() {
       updateHotbar();
       toast('Depo je v hotbaru. Vyber nové místo mimo základnu: E = přesunout ($1 000), Esc = nechat na místě.', 7000);
     },
+    onLights: toggleLights,
   });
   const thumbs = createThumbs(world.renderer);
   const wardrobe = createWardrobe(thumbs);
@@ -702,6 +810,8 @@ function build() {
   });
   pause = initPause({
     canSave, canLoad: () => net.mode === 'sp',
+    canSaveAs: () => net.mode !== 'client',
+    password: { available: () => net.mode === 'host' && !!net.fb, locked: worldLocked, set: worldPassword },
     save: () => saveNow(game.slot),
     saveTo: slot => saveNow(slot),
     loadFrom,
@@ -712,7 +822,7 @@ function build() {
     onOpen: pauseInput,
     onClose: resumeInput,
     info: () => {
-      if (net.mode === 'host') return `Hostuješ svět ${net.code} · hráčů ${1 + net.remotes.size}. Svět se ukládá do tvého slotu.`;
+      if (net.mode === 'host') return `Hostuješ svět ${net.code} · hráčů ${1 + net.remotes.size}. Svět se ukládá ${game.slot ? 'do tvého slotu a ' : ''}do cloudu – hrát se dá i bez tebe.`;
       if (net.mode === 'client') return `Hraješ ve světě ${net.code}. Svět ukládá hostitel, tvé vybavení zůstává v tomto prohlížeči.`;
       return game.slot ? `Hraješ ve slotu ${game.slot.replace('slot', '')} · hra se ukládá každých 30 s.` : '';
     },
@@ -740,7 +850,7 @@ async function launch(spec) {
   if (launching) return;
   launching = true;
   // Hra z jiné planety (nebo nová hra na Měsíci, když stránka běží s Marsem) → znovu načíst s ní
-  const want = spec.mode === 'client' ? (spec.world?.planet || 'moon')
+  const want = spec.mode === 'client' ? (spec.world?.planet || 'moon') : spec.cloud ? (spec.planet || 'moon')
     : spec.action === 'load' ? (await savePlanet(spec.slot)) || 'moon' : 'moon';
   if (want !== PLANET.id) {
     showLoading(`Přelétám ${want === 'mars' ? 'na Mars' : 'na Měsíc'}…`);
@@ -761,10 +871,31 @@ async function launch(spec) {
     try { history.replaceState(null, '', `#${spec.world.code}`); } catch { /* nic */ }
     if (err === 'nomap') setTimeout(() => toast('Mapu od hostitele se nepodařilo stáhnout – vyčištěná místa se ukážou, jak je kdo projede.', 8000), 1500);
     game.slot = null;
+  } else if (spec.cloud) {
+    // svět z cloudu: hostitel teď není online, hostovat ho budu já
+    showLoading('Načítám svět z cloudu…');
+    if (!(await initLobby())) { launchError('Multiplayer tu nejde připojit.'); return; }
+    if (!(await loadCloud(spec.cloud))) { launchError('Svět se z cloudu nepodařilo načíst.'); return; }
+    game.slot = null;
+    game.s.netPublic = spec.public !== false && game.s.netPublic !== false;
   } else {
     if (spec.action === 'load') {
       showLoading('Načítám uloženou hru…');
-      if (!(await loadGame(spec.slot))) { launchError('Uloženou hru se nepodařilo načíst.'); return; }
+      // hostování ze slotu: když mezitím hráli kamarádi bez tebe (svět v cloudu je novější), vezme se cloud;
+      // když svět právě hostuje někdo jiný, připojíš se k němu
+      const peek = spec.mode === 'host' ? await peekSave(spec.slot) : null;
+      if (peek?.netCode && (await initLobby())) {
+        const other = await hostOf(peek.netCode);
+        if (other && other.u !== net.uid) {
+          const w = findWorld(peek.netCode);
+          if (w) { launching = false; launch({ mode: 'client', world: w }); return; }
+        }
+        const meta = await cloudMeta(peek.netCode);
+        if (meta?.at > peek.last + 5000 && (meta.pn || 'moon') === PLANET.id && (await loadCloud(peek.netCode))) {
+          game.slot = spec.slot;
+          setTimeout(() => toast('Kamarádi mezitím hráli bez tebe – načetl jsem novější stav světa z cloudu.', 9000), 2500);
+        } else if (!(await loadGame(spec.slot))) { launchError('Uloženou hru se nepodařilo načíst.'); return; }
+      } else if (!(await loadGame(spec.slot))) { launchError('Uloženou hru se nepodařilo načíst.'); return; }
     } else {
       if (spec.action === 'v1') importV1(spec.title);
       else newGame(spec.title);
@@ -784,7 +915,15 @@ async function launch(spec) {
 
   if (spec.mode === 'host') {
     const ok = (await initLobby()) && (await startHost());
+    if (typeof ok === 'string' && ok.startsWith('taken:')) {
+      // svět mezitím otevřel někdo jiný → připojit se k němu jako hráč
+      toast(`Svět právě hostuje ${ok.slice(6)} – připojuji tě jako hráče…`, 5000);
+      setTimeout(() => { try { history.replaceState(null, '', `#${game.s.netCode}`); } catch { /* nic */ } lockSaves(); location.reload(); }, 2500);
+      return;
+    }
     if (ok) {
+      const meta = await cloudMeta(net.code);
+      setWorldLocked(!!meta?.lk);
       try { history.replaceState(null, '', `#${net.code}`); } catch { /* nic */ }
       toast(`Svět je otevřený, kód ${net.code}. Odkaz pro kamarády zkopíruješ tlačítkem Pozvat vpravo nahoře.`, 9000);
     }
@@ -805,11 +944,15 @@ async function launch(spec) {
   if (net.mode !== 'off') {
     showChat(true);
     net.onChat = addMessage;
+    net.onKicked = () => {                                   // svět dostal nové heslo → zadat ho znovu v lobby
+      savePersonal();
+      toast('Svět má nové heslo – vracím tě do lobby, kde ho zadáš.', 6000);
+      setTimeout(() => { lockSaves(); location.reload(); }, 3500);
+    };
     net.onHostLeft = () => {
       if (cutscene.active) return;                          // hostitel odlétá na jinou planetu – letíme s ním
       savePersonal();
-      toast('Hostitel svět zavřel. Vracím tě do menu…', 6000);
-      setTimeout(() => { try { history.replaceState(null, '', location.pathname); } catch { /* nic */ } location.reload(); }, 3500);
+      hostLeft();
     };
     addMessage({ system: true, text: 'Chat: Enter = napsat zprávu, Esc = zavřít.' });
   }
@@ -842,6 +985,7 @@ async function launch(spec) {
   addEventListener('beforeunload', () => {
     if (net.mode === 'client') savePersonal();
     else saveGame(game.slot);
+    if (net.mode === 'host') saveWorldNow(false);             // stav světa do cloudu (stihne-li se odeslat)
   });
 
   prev = perf.since = performance.now();
@@ -869,7 +1013,7 @@ function start() {
 
   let boot = null;
   try { boot = JSON.parse(sessionStorage.getItem(BOOT_KEY)); sessionStorage.removeItem(BOOT_KEY); } catch { /* nic */ }
-  if (boot?.slot) launch(boot);
+  if (boot?.slot || boot?.cloud) launch(boot);
 }
 
 start();

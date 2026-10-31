@@ -272,6 +272,7 @@ function upgradeSummary(veh) {
   const parts = [];
   if (v.width) parts.push(`šířka ${veh.lv.width}/5`);
   parts.push(`rychlost ${veh.lv.speed}/5`);
+  if (upgradeFits(veh.type, 'hopper')) parts.push(`zásobník ${veh.lv.hopper | 0}/${VEHICLE_UPGRADES.hopper.max}`);
   if (upgradeFits(veh.type, 'boost')) parts.push(`boost ${veh.lv.boost | 0}/${VEHICLE_UPGRADES.boost.max}`);
   return parts.join(' · ');
 }
@@ -286,9 +287,11 @@ function vehiclesUpgradeTab() {
         const lv = veh.lv[key] | 0;
         const cost = vehicleUpgradeCost(i, key);
         const pct = k => `${Math.round((1.5 + u.step * k) * 100)} %`;
-        const now = key === 'width' ? m(st.width) : key === 'boost' ? (lv ? pct(lv) : 'bez boostu') : `${st.speed.toFixed(1)} m/s`;
+        const now = key === 'width' ? m(st.width) : key === 'boost' ? (lv ? pct(lv) : 'bez boostu')
+          : key === 'hopper' ? kg(st.hopper) : `${st.speed.toFixed(1)} m/s`;
         const after = key === 'width' ? m(v.width * (1 + u.step * (lv + 1)))
-          : key === 'boost' ? pct(lv + 1) : `${(v.speed * (1 + u.step * (lv + 1))).toFixed(1)} m/s`;
+          : key === 'boost' ? pct(lv + 1) : key === 'hopper' ? kg(v.hopper * (1 + u.step * (lv + 1)))
+            : `${(v.speed * (1 + u.step * (lv + 1))).toFixed(1)} m/s`;
         return { name: u.name, lv, max: u.max, effect: cost === null ? now : `${now} → ${after}`, cost, run: () => purchase('vup', [i, key], cost, () => upgradeVehicle(i, key)) };
       });
     return {
@@ -297,7 +300,7 @@ function vehiclesUpgradeTab() {
       detail: {
         eyebrow: 'Vozidlo', title: vehicleName(i),
         desc: upgradeFits(veh.type, 'boost') ? `${v.desc} Boost: podrž Shift a přepravník skokově zrychlí (vydrží 4 s, pak se dobíjí).` : v.desc,
-        stats: [['Šířka sání', v.width ? m(st.width) : '–'], ['Max. rychlost', `${st.speed.toFixed(1)} m/s`], ...(st.boost > 1 ? [['S boostem', `${(st.speed * st.boost).toFixed(1)} m/s`]] : [])],
+        stats: [['Šířka sání', v.width ? m(st.width) : '–'], ...(v.hopper ? [['Zásobník', kg(st.hopper)]] : []), ['Max. rychlost', `${st.speed.toFixed(1)} m/s`], ...(st.boost > 1 ? [['S boostem', `${(st.speed * st.boost).toFixed(1)} m/s`]] : [])],
         upgrades: ups,
       },
     };
@@ -446,15 +449,52 @@ function holoDetailHtml() {
         <h3 class="detail__title">${esc(PLANET.name)} z hexů</h3>
       </div>
     </div>
-    <p class="detail__desc">Každý hex planety ve skutečném stavu úklidu. Bílá tečka je raketa domů, modrá Výkup, blikající oranžová jsi ty.</p>
+    <p class="detail__desc">${esc(game.s.title || 'Svět')} · ${fmtInt(c.total)} sektorů. Bílá tečka je raketa domů, modrá Výkup, blikající oranžová jsi ty.</p>
     <div class="detail__specs">
       ${row('done', 'Vyčištěné', c.done)}
       ${row('started', 'Rozpracované', c.started)}
       ${row('fresh', 'Nedotčené (0 %)', c.fresh)}
       <div class="spec"><span class="spec__label">Hotovo celkem</span><span class="spec__value">${cleanPercent().toLocaleString('cs-CZ')} %</span></div>
+      <div class="spec"><span class="spec__label">Roboti · UFO drony</span><span class="spec__value">${game.s.stations.length} · ${(game.s.drones || []).length}</span></div>
       <div class="spec"><span class="spec__label">Výkupní cena</span><span class="spec__value">$${dustPrice().toFixed(2)} / kg · $${hexBonus()} za hex</span></div>
     </div>
-    <p class="wardrobe__hint">Táhni myší = otočit · kolečko = přiblížit</p>`;
+    <p class="wardrobe__hint">Táhni myší = otočit · kolečko = přiblížit · víc čísel v záložce Statistiky</p>`;
+}
+
+// Statistiky světa (Výkup → Statistiky): úklid, automatizace, ekonomika a hráči.
+function statsHtml() {
+  const s = game.s;
+  const c = holoCounts();
+  const spec = (k, v) => `<div class="spec"><span class="spec__label">${esc(k)}</span><span class="spec__value">${esc(v)}</span></div>`;
+  const group = (title, rows) => `<h3 class="wardrobe__heading">${esc(title)}</h3><div class="detail__specs">${rows.join('')}</div>`;
+  const hours = ms => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
+  const played = (s.playMs || 0) + (game.started ? Date.now() - game.started : 0);
+  const belts = s.depots.filter(d => d.belt).length;
+  const players = Object.values(s.pstats || {}).sort((a, b) => (b.kg || 0) - (a.kg || 0));
+  const prev = (s.history || []).map(h => `${h.planet === 'mars' ? 'Mars' : 'Měsíc'} (${hours(h.playMs || 0)})`).join(', ');
+  return `
+    <div class="wardrobe">
+      ${group('Svět', [
+        spec('Název', s.title || 'Svět'),
+        spec('Planeta', PLANET.name + (prev ? ` · předtím ${prev}` : '')),
+        spec('Sektorů (hexů)', fmtInt(c.total)),
+        spec('Hotové hexy', `${fmtInt(c.done)} / ${fmtInt(c.total)} · ${cleanPercent().toLocaleString('cs-CZ')} %`),
+        spec('Rozpracované · nedotčené', `${fmtInt(c.started)} · ${fmtInt(c.fresh)}`),
+        spec('Odehráno', hours(played)),
+      ])}
+      ${group('Automatizace', [
+        spec('Stanice robotů', `${s.stations.length}`),
+        spec('UFO drony', `${(s.drones || []).length}`),
+        spec('Depa · s pásem', `${s.depots.length} · ${belts}`),
+        spec('Vozidla ve flotile', `${s.vehicles.length}`),
+      ])}
+      ${group('Ekonomika', [
+        spec('Peníze', money(s.money)),
+        spec('Výkupní cena', `$${dustPrice().toFixed(2)} / kg (burza ${marketLevel()}/${MARKET.max})`),
+        spec('Prémie za hex', `$${hexBonus()} (úroveň ${hexupLevel()}/${HEXUP.max})`),
+      ])}
+      ${players.length ? group('Hráči', players.map(p => spec(p.n || 'Astronaut', `${fmtInt(Math.round(p.kg || 0))} kg · vydělal(a) ${money(p.e || 0)} · utratil(a) ${money(p.sp || 0)}`))) : ''}
+    </div>`;
 }
 
 // ---------- úspěchy ----------
@@ -506,7 +546,7 @@ function tabsFor(id) {
     ];
   }
   if (id === 'trophies') return [['all', `Úspěchy (${achCount()}/${ACHIEVEMENTS.length})`, trophiesTab]];
-  if (id === 'depot') return [['holo', 'Hologram', null], ['market', 'Burza', marketTab]];
+  if (id === 'depot') return [['holo', 'Hologram', null], ['market', 'Burza', marketTab], ['stats', 'Statistiky', null]];
   if (id === 'garage') {
     return game.s.garage
       ? [['vehicles', 'Vozidla', vehiclesShopTab], ['fleet', `Flotila (${game.s.vehicles.length})`, fleetTab]]
@@ -608,6 +648,13 @@ function render() {
     return;
   }
   hooks.holo.unmount();
+  if (view.tab === 'stats') {
+    current = null;
+    $('facility-grid').classList.add('facility__grid--plain');
+    $('facility-grid').innerHTML = statsHtml();
+    $('facility-detail').innerHTML = holoDetailHtml();
+    return;
+  }
   $('facility-grid').classList.remove('facility__grid--plain');
 
   const items = tabs.find(t => t[0] === view.tab)[2]();
@@ -762,9 +809,10 @@ export function refreshFacility() {
   if (!facilityOpen()) return;
   $('facility-money').textContent = money(game.s.money);
   if (view.tab === 'fleet') $('facility-summary').textContent = fleetSummary();
-  if (view.tab === 'holo' && performance.now() - holoAt > 1500) {           // počty hexů se mění, jak se uklízí
+  if ((view.tab === 'holo' || view.tab === 'stats') && performance.now() - holoAt > 1500) {   // počty se mění, jak se uklízí
     holoAt = performance.now();
     $('facility-detail').innerHTML = holoDetailHtml();
+    if (view.tab === 'stats') $('facility-grid').innerHTML = statsHtml();
   }
 }
 let holoAt = 0;
