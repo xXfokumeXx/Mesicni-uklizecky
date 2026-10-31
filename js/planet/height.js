@@ -1,7 +1,7 @@
 // Reliéf Měsíce (verze 2 – výraznější vertikalita): vysočiny a pánve, hřebeny, velká pole dun
 // a krátery se strmou vnitřní stěnou, zvednutým valem, vyvrženinou a u velkých kráterů
 // s plochým dnem a centrálním vrcholem. Vrací výšku v metrech nad poloměrem.
-import { MOON, BASE } from '../config.js';
+import { MOON, BASE, PLANET } from '../config.js';
 import { fbm, mulberry32 } from './noise.js';
 import { dot, angleBetween } from './vec.js';
 import { FACES, faceOf } from './icosa.js';
@@ -17,8 +17,8 @@ const smooth = (a, b, x) => {
 // kind: 0 = malý mísovitý, 1 = střední, 2 = velký „komplexní“ (ploché dno + centrální vrchol)
 const CRATERS = [];
 {
-  const rand = mulberry32(1969);
-  for (let k = 0; k < 300; k++) {
+  const rand = mulberry32(PLANET.seed);
+  for (let k = 0; k < PLANET.craters; k++) {
     const z = rand() * 2 - 1, th = rand() * Math.PI * 2, rr = Math.sqrt(1 - z * z);
     const c = [rr * Math.cos(th), z, rr * Math.sin(th)];
     const roll = rand();
@@ -59,8 +59,10 @@ function duneProfile(ph) {
   return t < 0.72 ? smooth(0, 0.72, t) : 1 - smooth(0.72, 1, t);
 }
 
+const OFF = PLANET.noise;                           // jiná planeta = jiný výřez šumu
+
 export function heightAt(d) {
-  const x = d[0] * R, y = d[1] * R, z = d[2] * R;
+  const x = d[0] * R + OFF, y = d[1] * R, z = d[2] * R - OFF;
 
   // velké vlny terénu (pánve a vysočiny)
   let h = fbm(x * 0.0048, y * 0.0048, z * 0.0048, 3) * 34;
