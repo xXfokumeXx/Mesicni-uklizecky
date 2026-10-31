@@ -1,0 +1,29 @@
+/* Layout: 3D scéna přes celou obrazovku, HUD nad ní:
+   statistiky vlevo nahoře, obchod vpravo, ovládání kamery dole.
+   Vědomě jeden tmavý vzhled (vesmír + reflexní žlutá úklidové čety). */
+:root {
+  --space: #05060a;
+  --panel: rgba(18, 20, 26, 0.86);
+  --panel-line: rgba(228, 226, 218, 0.1);
+  --surface: #1d2029;
+  --surface-raised: #262a36;
+  --regolith: #e4e2da;
+  --muted: #8d92a0;
+  --hivis: #f2b33d;
+  --hivis-ink: #1a1408;
+  --orange: #e8742a;                 /* akční tlačítka a kartáče */
+  --depot: #5fb8d9;
+  --bot: #9fd39b;
+  --danger: #e0654c;
+
+  --font-display: "Chakra Petch", "Bahnschrift", "Arial Narrow", sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-2: 1.75rem;
+
+  --radius: 6px;
+  color-scheme: dark;
+}

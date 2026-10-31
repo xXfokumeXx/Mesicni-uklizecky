@@ -1,0 +1,350 @@
+/* Multiplayer: lobby v menu, panel hráčů, chat a jmenovky nad astronauty. */
+.lobby {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.lobby__col {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.lobby__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font: 600 var(--step--1) / 1.2 var(--font-display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lobby__count {
+  padding: 1px 7px;
+  font-family: var(--font-mono);
+  color: var(--hivis-ink);
+  background: var(--hivis);
+  border-radius: 999px;
+}
+
+.lobby__status {
+  margin: 0;
+  padding: 8px 12px;
+  font: 500 var(--step--1) / 1.4 var(--font-mono);
+  color: var(--muted);
+  background: var(--surface);
+  border-left: 3px solid var(--muted);
+  border-radius: 4px;
+}
+
+.lobby__status--ok {
+  color: var(--bot);
+  border-left-color: var(--bot);
+}
+
+.lobby__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lobby__empty {
+  padding: 12px;
+  font-size: var(--step--1);
+  color: var(--muted);
+  border: 1px dashed var(--panel-line);
+  border-radius: 6px;
+}
+
+.person {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "avatar name" "avatar where";
+  column-gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--surface);
+  border-radius: 6px;
+}
+
+.person__avatar {
+  grid-area: avatar;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse 60% 36% at 50% 52%, #8a6a22 0 92%, #0000 96%),
+    var(--suit, #eceae3);
+}
+
+.person__name {
+  grid-area: name;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.person__where {
+  grid-area: where;
+  font: 400 var(--step--1) / 1.3 var(--font-mono);
+  color: var(--muted);
+}
+
+.person__you,
+.person__guest {
+  padding: 0 5px;
+  font: 500 0.6875rem / 1.5 var(--font-mono);
+  text-transform: uppercase;
+  color: var(--hivis-ink);
+  background: var(--hivis);
+  border-radius: 3px;
+}
+
+.person__guest {
+  color: var(--regolith);
+  background: var(--surface-raised);
+}
+
+.world {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+}
+
+.world__info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.world__title {
+  font: 600 1.05rem / 1.2 var(--font-display);
+  overflow-wrap: anywhere;
+}
+
+.world__meta {
+  font: 400 var(--step--1) / 1.3 var(--font-mono);
+  color: var(--muted);
+}
+
+/* panel hráčů ve hře (vpravo nahoře) */
+.hud__players {
+  grid-area: players;
+  justify-self: end;
+  align-self: start;
+  min-width: 180px;
+  pointer-events: auto;
+}
+
+.players {
+  display: grid;
+  gap: 8px;
+}
+
+.players__list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.players__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--step--1);
+}
+
+.players__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--suit);
+}
+
+.players__tag {
+  padding: 0 5px;
+  font: 500 0.625rem / 1.5 var(--font-mono);
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--panel-line);
+  border-radius: 3px;
+}
+
+.players__tag--host {
+  color: var(--hivis);
+  border-color: var(--hivis);
+}
+
+/* chat vlevo dole */
+.hud__chat {
+  grid-area: chat;
+  align-self: end;
+  pointer-events: none;
+}
+
+.chat {
+  display: grid;
+  gap: 6px;
+  width: min(380px, 100%);
+}
+
+.chat__log {
+  display: grid;
+  gap: 3px;
+  max-height: 180px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+
+.chat--open .chat__log {
+  max-height: 260px;
+  padding: 8px;
+  overflow-y: auto;
+  background: var(--panel);
+  border-radius: var(--radius);
+  pointer-events: auto;
+}
+
+.chat__msg {
+  padding: 3px 8px;
+  font-size: var(--step--1);
+  line-height: 1.4;
+  background: rgba(10, 12, 18, 0.7);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  transition: opacity 0.6s;
+}
+
+.chat--open .chat__msg {
+  background: none;
+  padding: 1px 0;
+}
+
+.chat__msg--old {
+  opacity: 0;
+}
+
+.chat--open .chat__msg--old {
+  opacity: 1;
+}
+
+.chat__msg--system {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+.chat__name {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--who);
+}
+
+.chat__form {
+  pointer-events: auto;
+}
+
+.chat__input {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: var(--step--1);
+  color: var(--regolith);
+  background: var(--panel);
+  border: 1px solid var(--hivis);
+  border-radius: var(--radius);
+  outline: none;
+}
+
+.chat__open {
+  justify-self: start;
+  padding: 4px 10px 4px 4px;
+  font: 500 var(--step--1) / 1.2 var(--font-body);
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.chat__open kbd {
+  margin-right: 6px;
+  padding: 1px 6px;
+  font: 500 0.6875rem / 1.4 var(--font-mono);
+  color: var(--regolith);
+  background: var(--surface-raised);
+  border-radius: 999px;
+}
+
+.chat--open .chat__open {
+  display: none;
+}
+
+/* jmenovky nad hlavou ostatních astronautů */
+.nametag-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.nametag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 2px 8px;
+  font: 600 0.8125rem / 1.3 var(--font-body);
+  white-space: nowrap;
+  color: var(--regolith);
+  background: rgba(10, 12, 18, 0.72);
+  border-bottom: 2px solid var(--tag, var(--hivis));
+  border-radius: 4px;
+  will-change: transform;
+}
+
+@media (max-width: 720px) {
+  .lobby {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* připojení kódem a pozvánka */
+.lobby__code {
+  display: flex;
+  gap: 8px;
+}
+
+.lobby__code-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+}
+
+.lobby__code-error {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--hivis);
+}
+
+.players__invite {
+  align-self: stretch;
+  text-align: center;
+}

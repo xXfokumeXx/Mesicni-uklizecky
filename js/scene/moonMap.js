@@ -1,0 +1,193 @@
+// Mapa celého Měsíce (klávesa M): zjednodušený glóbus se stejnou texturou prachu jako terén,
+// takže jsou vidět vyčištěné pásy i hotové hexy. Tažením myši (prstem) se glóbus otáčí,
+// kolečkem přibližuje. Glóbus se postaví až při prvním otevření (~25 000 vrcholů).
+import { MOON, BASE, DUST } from '../config.js';
+import { FACES } from '../planet/icosa.js';
+import { heightAt } from '../planet/height.js';
+import { dirToCell, cellDir } from '../planet/hexgrid.js';
+import { atlasUv, hexes } from '../planet/dustmap.js';
+import { FLAT_WINDOW } from '../planet/sunwindow.js';
+import { game } from '../state.js';
+import { createTerrainMaterial } from './terrainMaterial.js';
+
+const THREE = window.THREE;
+const R = MOON.radius;
+const N = 48;                                   // dílků na hranu stěny ikosaedru (~5,5 m)
+const MIN_DIST = R * 1.35, MAX_DIST = R * 5, START_DIST = R * 3.1;
+const CLEAN = [226, 216, 196], DONE = [196, 224, 240];
+
+export function createMoonMap(scene, camera, canvas, dustTexture) {
+  let globe = null, vertCell = null, colors = null, colorAttr = null;
+  const { material, uniforms } = createTerrainMaterial(dustTexture, 255 / DUST.max, null);
+  uniforms.ambient.value.setHex(0x3a4560);        // noční strana trochu světlejší, ať je mapa čitelná
+
+  const group = new THREE.Group();
+  group.visible = false;
+  scene.add(group);
+
+  // značky: hráč (oranžová), základna (modrá), stanice robotů (zelená)
+  const pinGeo = new THREE.SphereGeometry(1, 12, 8);
+  const mk = color => new THREE.Mesh(pinGeo, new THREE.MeshBasicMaterial({ color }));
+  const playerPin = mk(0xff8a3d), basePin = mk(0x5fb8d9);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.1, 32), new THREE.MeshBasicMaterial({
+    color: 0xff8a3d, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
+  }));
+  group.add(playerPin, basePin, ring);
+  const stationMat = new THREE.MeshBasicMaterial({ color: 0x7fd38a });
+  let stationPins = [];
+
+  function buildGlobe() {
+    const perFace = (N + 1) * (N + 2) / 2;
+    const vc = perFace * 20;
+    const pos = new Float32Array(vc * 3), uv = new Float32Array(vc * 2), sun = new Float32Array(vc * 2);
+    colors = new Uint8Array(vc * 3);
+    vertCell = new Int32Array(vc);
+    const idx = new Uint32Array(20 * N * N * 3);
+    const tmp = [0, 0];
+    let v = 0, ii = 0;
+    for (let f = 0; f < 20; f++) {
+      const P = FACES[f];
+      const first = v;
+      const row = [];                             // index prvního vrcholu v řádku j
+      for (let j = 0; j <= N; j++) {
+        row.push(v - first);
+        for (let i = 0; i <= N - j; i++) {
+          const s = i / N, t = j / N;
+          const x = P.A[0] + P.e1[0] * s + P.e2[0] * t, y = P.A[1] + P.e1[1] * s + P.e2[1] * t, z = P.A[2] + P.e1[2] * s + P.e2[2] * t;
+          const l = Math.hypot(x, y, z);
+          const d = [x / l, y / l, z / l];
+          const r = R + heightAt(d);
+          pos[v * 3] = d[0] * r; pos[v * 3 + 1] = d[1] * r; pos[v * 3 + 2] = d[2] * r;
+          atlasUv(f, s, t, tmp);
+          uv[v * 2] = tmp[0]; uv[v * 2 + 1] = tmp[1];
+          sun[v * 2] = FLAT_WINDOW[0]; sun[v * 2 + 1] = FLAT_WINDOW[1];
+          vertCell[v] = dirToCell(d);
+          v++;
+        }
+      }
+      const at = (i, j) => first + row[j] + i;
+      for (let j = 0; j < N; j++) {
+        for (let i = 0; i < N - j; i++) {
+          idx[ii++] = at(i, j); idx[ii++] = at(i + 1, j); idx[ii++] = at(i, j + 1);
+          if (i + j < N - 1) { idx[ii++] = at(i + 1, j); idx[ii++] = at(i + 1, j + 1); idx[ii++] = at(i, j + 1); }
+        }
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute('sunWin', new THREE.BufferAttribute(sun, 2));
+    colorAttr = new THREE.BufferAttribute(colors, 3, true);
+    geo.setAttribute('color', colorAttr);
+    geo.setIndex(new THREE.BufferAttribute(idx.subarray(0, ii), 1));
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    globe = new THREE.Mesh(geo, material);
+    group.add(globe);
+  }
+
+  // hotové hexy namodralé (jako na terénu)
+  function recolor() {
+    for (let i = 0; i < vertCell.length; i++) {
+      const c = hexes.done[vertCell[i]] ? DONE : CLEAN;
+      colors[i * 3] = c[0]; colors[i * 3 + 1] = c[1]; colors[i * 3 + 2] = c[2];
+    }
+    colorAttr.needsUpdate = true;
+  }
+
+  function placeStations() {
+    for (const p of stationPins) group.remove(p);
+    stationPins = game.s.stations.map(st => {
+      const pin = new THREE.Mesh(pinGeo, stationMat);
+      pin.userData.dir = cellDir(st.hex);
+      group.add(pin);
+      return pin;
+    });
+  }
+
+  // ---------- kamera ----------
+
+  const quat = new THREE.Quaternion(), qa = new THREE.Quaternion();
+  const axisX = new THREE.Vector3(1, 0, 0), axisY = new THREE.Vector3(0, 1, 0);
+  const basis = new THREE.Matrix4();
+  let dist = START_DIST, targetDist = START_DIST, active = false, recolorTimer = 0;
+
+  function open(p, f) {
+    if (!globe) buildGlobe();
+    recolor();
+    placeStations();
+    // pohled shora na hráče, „nahoru“ na obrazovce = kam se hráč dívá
+    const z = new THREE.Vector3(...p), y = new THREE.Vector3(...f);
+    const x = new THREE.Vector3().crossVectors(y, z);
+    basis.makeBasis(x, y, z);
+    quat.setFromRotationMatrix(basis);
+    dist = R + 60;
+    targetDist = START_DIST;
+    group.visible = true;
+    active = true;
+  }
+
+  function close() {
+    group.visible = false;
+    active = false;
+  }
+
+  function rotate(dx, dy) {
+    const k = 0.0045 * Math.min(1, (dist - R) / (START_DIST - R) + 0.15);   // přiblížený = jemnější
+    qa.setFromAxisAngle(axisY, -dx * k);
+    quat.multiply(qa);
+    qa.setFromAxisAngle(axisX, -dy * k);
+    quat.multiply(qa);
+    quat.normalize();
+  }
+
+  function zoom(factor) {
+    targetDist = Math.max(MIN_DIST, Math.min(MAX_DIST, R + (targetDist - R) * factor));
+  }
+
+  // ovládání myší / prstem (jen když je mapa otevřená)
+  let dragging = false, lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', e => {
+    if (!active) return;
+    dragging = true;
+    lx = e.clientX; ly = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!active || !dragging) return;
+    rotate(e.clientX - lx, e.clientY - ly);
+    lx = e.clientX; ly = e.clientY;
+  });
+  const stop = () => { dragging = false; };
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  const tmpV = new THREE.Vector3();
+  function placePin(pin, d, size, lift) {
+    const r = R + heightAt(d) + lift;
+    pin.position.set(d[0] * r, d[1] * r, d[2] * r);
+    pin.scale.setScalar(size);
+  }
+
+  function update(dt, playerPos) {
+    if (!active) return;
+    dist += (targetDist - dist) * (1 - Math.exp(-dt * 6));
+    camera.position.set(0, 0, dist).applyQuaternion(quat);
+    camera.quaternion.copy(quat);
+
+    // velikost značek podle vzdálenosti kamery (na obrazovce stále stejně velké)
+    const size = (dist - R) * 0.012 + 0.6;
+    const pd = tmpV.copy(playerPos).normalize().toArray();
+    placePin(playerPin, pd, size, size);
+    ring.position.copy(playerPin.position);
+    ring.lookAt(0, 0, 0);
+    ring.scale.setScalar(size * (1 + 0.25 * Math.sin(performance.now() / 260)));
+    placePin(basePin, BASE.dir, size * 1.1, size);
+    for (const pin of stationPins) placePin(pin, pin.userData.dir, size * 0.8, size * 0.8);
+
+    recolorTimer -= dt;
+    if (recolorTimer <= 0) { recolorTimer = 1; recolor(); }   // roboti mezitím dočistili hexy
+  }
+
+  return { open, close, update, rotate, zoom, uniforms, get active() { return active; }, get distance() { return dist; } };
+}

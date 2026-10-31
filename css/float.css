@@ -1,0 +1,35 @@
+/* Plovoucí „+$“ nad nástrojem po vyčištění hexu nebo prodeji. */
+.float-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.float-text {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font: 600 1.125rem / 1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  animation: float-up 1.3s ease-out forwards;
+}
+
+.float-text--bonus {
+  color: var(--hivis);
+}
+
+.float-text--sale {
+  font-size: 1.25rem;
+  color: var(--depot);
+}
+
+@keyframes float-up {
+  from { opacity: 1; transform: translate(-50%, -50%); }
+  70%  { opacity: 1; }
+  to   { opacity: 0; transform: translate(-50%, -260%); }
+}
+
+/* Při vypnutých animacích (base.css) zůstane text na místě a JS ho po chvíli odstraní. */

@@ -1,0 +1,22 @@
+.meter {
+  grid-column: 1 / -1;
+  height: 6px;
+  background: var(--surface-raised);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.meter__fill {
+  width: 0;
+  height: 100%;
+  background: var(--regolith);
+  transition: width 0.2s linear;
+}
+
+.meter__fill--full {
+  background: var(--danger);
+}
+
+.meter__fill--progress {
+  background: var(--hivis);
+}

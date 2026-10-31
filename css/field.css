@@ -1,0 +1,29 @@
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field__label {
+  font-weight: 600;
+}
+
+.field__hint {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.field__select {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--regolith);
+  background: var(--surface-raised);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.field__select:hover {
+  border-color: var(--muted);
+}

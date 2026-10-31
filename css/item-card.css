@@ -1,0 +1,68 @@
+/* Karta předmětu v katalogu: stavový štítek, náhled modelu, název. */
+.item-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  justify-items: center;
+  gap: 6px;
+  padding: 10px 10px 0;
+  font: inherit;
+  color: var(--regolith);
+  background: radial-gradient(ellipse at 50% 60%, var(--surface-raised), var(--space) 75%);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.item-card:hover {
+  border-color: var(--muted);
+}
+
+.item-card--selected,
+.item-card--selected:hover {
+  border-color: var(--orange);
+}
+
+.item-card__chip {
+  justify-self: center;
+  padding: 2px 8px;
+  font: 600 0.6875rem / 1.4 var(--font-mono);
+  letter-spacing: 0.06em;
+  border-radius: 4px;
+}
+
+.item-card__chip--store {
+  color: var(--depot);
+  background: rgba(95, 184, 217, 0.14);
+}
+
+.item-card__chip--owned {
+  color: var(--bot);
+  background: rgba(159, 211, 155, 0.14);
+}
+
+.item-card__chip--active {
+  color: var(--hivis-ink);
+  background: var(--hivis);
+}
+
+.item-card__img {
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 240 / 170;
+  object-fit: contain;
+}
+
+.item-card__name {
+  align-self: stretch;
+  margin: 0 -10px;
+  padding: 8px 10px;
+  font-weight: 600;
+  text-align: center;
+  background: var(--surface-raised);
+}
+
+.item-card--selected .item-card__name {
+  color: var(--hivis-ink);
+  background: var(--orange);
+}

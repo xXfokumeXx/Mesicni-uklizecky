@@ -1,0 +1,170 @@
+/* Detail vybraného předmětu: nadpis, popis, parametry, vylepšení, velké akční tlačítko. */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.detail__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.detail__heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail__eyebrow {
+  margin: 0 0 4px;
+  font: 600 var(--step--1) / 1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--depot);
+}
+
+.detail__title {
+  margin: 0;
+  font: 600 1.5rem / 1.15 var(--font-display);
+  text-wrap: balance;
+}
+
+.detail__img {
+  width: 96px;
+  height: 68px;
+  object-fit: contain;
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+}
+
+.detail__desc {
+  margin: 0;
+  color: var(--muted);
+}
+
+.detail__specs,
+.detail__upgrades {
+  display: grid;
+  gap: 6px;
+}
+
+.detail__action {
+  margin-top: 4px;
+  padding: 14px 16px;
+  font: 600 1.15rem / 1.2 var(--font-display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--orange);
+  border: 0;
+  border-radius: var(--radius);
+  box-shadow: 0 4px 0 #9c4512;
+  cursor: pointer;
+}
+
+.detail__action:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.detail__action:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #9c4512;
+}
+
+.detail__action:disabled {
+  color: var(--muted);
+  background: var(--surface-raised);
+  box-shadow: none;
+  cursor: default;
+}
+
+/* Řádek parametru: název vlevo, hodnota vpravo */
+.spec {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.spec__label {
+  font: 500 var(--step--1) / 1.4 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.spec__value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Vylepšení: název, úroveň (body), efekt, tlačítko */
+.upgrade {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "head button"
+    "effect button";
+  gap: 4px 12px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.upgrade__head {
+  grid-area: head;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.upgrade__name {
+  font-weight: 600;
+}
+
+.upgrade__pips {
+  display: flex;
+  gap: 3px;
+}
+
+.upgrade__pip {
+  width: 10px;
+  height: 6px;
+  background: var(--surface-raised);
+  border-radius: 1px;
+}
+
+.upgrade__pip--on {
+  background: var(--orange);
+}
+
+.upgrade__effect {
+  grid-area: effect;
+  font: 400 var(--step--1) / 1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.upgrade__button {
+  grid-area: button;
+  padding: 8px 12px;
+  font: 600 var(--step--1) / 1.2 var(--font-body);
+  color: #fff;
+  background: var(--orange);
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.upgrade__button:disabled {
+  color: var(--muted);
+  background: var(--surface-raised);
+  cursor: default;
+}

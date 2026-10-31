@@ -1,0 +1,40 @@
+/* Výzva k akci: „E  Vstoupit: Dílna“. Je to tlačítko, takže jde i klepnout. */
+.prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 8px 14px 8px 8px;
+  font: 600 var(--step-0) / 1.3 var(--font-body);
+  color: var(--regolith);
+  background: var(--panel);
+  border: 1px solid var(--hivis);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.prompt:disabled {
+  border-color: var(--danger);
+  cursor: default;
+}
+
+.prompt__key {
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  font: 600 var(--step--1) / 1 var(--font-mono);
+  color: var(--hivis-ink);
+  background: var(--hivis);
+  border-radius: 6px;
+}
+
+.prompt:disabled .prompt__key {
+  background: var(--danger);
+}
+
+.prompt__text {
+  min-width: 0;
+  text-align: left;
+}

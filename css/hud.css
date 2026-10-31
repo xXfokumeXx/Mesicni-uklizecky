@@ -1,0 +1,49 @@
+/* Průhledná vrstva nad scénou; kliká se jen na panely a tlačítka, jinak do 3D. */
+.hud {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 270px) 1fr minmax(0, 220px);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "stats  .      players"
+    "chat   chat   ."
+    "prompt prompt prompt"
+    "controls controls controls";
+  gap: 12px;
+  padding-top: calc(16px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+
+.hud__stats {
+  grid-area: stats;
+  align-self: start;
+  pointer-events: auto;
+}
+
+.hud__prompt {
+  grid-area: prompt;
+  justify-self: center;
+  pointer-events: auto;
+}
+
+.hud__controls {
+  grid-area: controls;
+}
+
+@media (max-width: 720px) {
+  .hud {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "stats"
+      "players"
+      "chat"
+      "prompt"
+      "controls";
+    gap: 8px;
+  }
+}

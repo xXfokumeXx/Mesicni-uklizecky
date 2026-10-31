@@ -1,0 +1,38 @@
+.button {
+  align-self: flex-start;
+  padding: 7px 11px;
+  font: 500 var(--step--1) / 1.2 var(--font-body);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.button:hover {
+  color: var(--regolith);
+  border-color: var(--muted);
+}
+
+.button--danger:hover,
+.button--armed {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.button--primary {
+  color: var(--hivis-ink);
+  background: var(--hivis);
+  border-color: var(--hivis);
+  font-weight: 600;
+}
+
+.button--primary:hover {
+  color: var(--hivis-ink);
+  border-color: var(--regolith);
+}
+
+.button--accent {
+  color: var(--hivis);
+  border-color: var(--hivis);
+}

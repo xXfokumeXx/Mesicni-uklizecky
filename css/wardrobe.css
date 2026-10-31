@@ -1,0 +1,94 @@
+/* Šatna (Dílna): paleta barev, karty rekvizit a živý náhled astronauta. */
+.facility__grid--plain {
+  display: block;
+}
+
+.wardrobe {
+  display: grid;
+  gap: 12px;
+}
+
+.wardrobe__heading {
+  margin: 4px 0 0;
+  font: 600 var(--step--1) / 1.2 var(--font-display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.wardrobe__swatches {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 8px;
+  max-width: 420px;
+}
+
+.swatch {
+  aspect-ratio: 1;
+  max-width: 100%;
+  background: var(--swatch);
+  border: 2px solid var(--panel-line);
+  border-radius: 50%;
+  box-shadow: inset 0 -4px 0 #0003;
+  cursor: pointer;
+}
+
+.swatch:hover {
+  border-color: var(--muted);
+}
+
+.swatch--active,
+.swatch--active:hover {
+  border-color: var(--hivis);
+  box-shadow: inset 0 -4px 0 #0003, 0 0 0 3px var(--surface), 0 0 0 5px var(--hivis);
+}
+
+.item-card--compact .item-card__img {
+  aspect-ratio: 240 / 150;
+}
+
+.wardrobe__stage {
+  height: 300px;
+  background: radial-gradient(ellipse at 50% 70%, var(--surface-raised), var(--space) 70%);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.wardrobe__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.wardrobe__hint {
+  margin: -8px 0 0;
+  font: 400 var(--step--1) / 1.3 var(--font-mono);
+  color: var(--muted);
+}
+
+/* drobnosti pro okna budov ve verzi 2 */
+.facility__summary {
+  margin: 0;
+  padding: 8px 12px;
+  font: 500 var(--step--1) / 1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--depot);
+  background: var(--space);
+  border-left: 3px solid var(--depot);
+  border-radius: 4px;
+}
+
+.detail__note {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .wardrobe__stage {
+    height: 240px;
+  }
+}

@@ -1,0 +1,151 @@
+/* Okno budovy (Obchod s nástroji, Dílna, Garáž): katalog vlevo, detail vpravo. */
+.facility {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding-top: calc(16px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+.facility__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 3, 6, 0.62);
+}
+
+.facility__window {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1080px, 100%);
+  max-height: 100%;
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+/* výstražný pruh nahoře jako na průmyslových panelech */
+.facility__window::before {
+  content: "";
+  height: 8px;
+  flex: none;
+  background: repeating-linear-gradient(-45deg, var(--orange) 0 10px, var(--space) 10px 20px);
+}
+
+.facility__header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--panel-line);
+}
+
+.facility__title {
+  margin: 0;
+  font: 600 1.6rem / 1.1 var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.facility__money {
+  margin-left: auto;
+  font: 600 1.35rem / 1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  color: var(--hivis);
+}
+
+.facility__close {
+  width: 34px;
+  height: 34px;
+  font: 400 24px / 1 var(--font-body);
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.facility__close:hover {
+  color: var(--regolith);
+  background: var(--surface-raised);
+}
+
+.facility__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.facility__catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 16px;
+  overflow-y: auto;
+}
+
+.facility__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.facility__empty {
+  margin: 0;
+  padding: 24px 0;
+  color: var(--muted);
+}
+
+.facility__detail {
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  overflow-y: auto;
+  background: var(--space);
+  border-left: 1px solid var(--panel-line);
+}
+
+.facility__keys {
+  padding: 8px 18px;
+  font: 400 var(--step--1) / 1.4 var(--font-mono);
+  color: var(--muted);
+  border-top: 1px solid var(--panel-line);
+}
+
+.facility__keys kbd {
+  padding: 1px 6px;
+  font-family: inherit;
+  color: var(--regolith);
+  background: var(--surface-raised);
+  border-radius: 4px;
+}
+
+@media (max-width: 760px) {
+  .facility__body {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .facility__catalog,
+  .facility__detail {
+    overflow: visible;
+  }
+
+  .facility__detail {
+    border-left: 0;
+    border-top: 1px solid var(--panel-line);
+  }
+
+  .facility__grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}

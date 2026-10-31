@@ -1,0 +1,29 @@
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  background: var(--space);
+  border-radius: var(--radius);
+}
+
+.segmented__option {
+  padding: 8px 6px;
+  font: 600 var(--step-0) / 1.2 var(--font-body);
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.segmented__option:hover {
+  color: var(--regolith);
+  background: var(--surface-raised);
+}
+
+.segmented__option--active,
+.segmented__option--active:hover {
+  color: var(--hivis-ink);
+  background: var(--hivis);
+}

@@ -1,0 +1,26 @@
+{
+  "rules": {
+    "lobby": {
+      ".read": "auth != null",
+      "$peer": {
+        ".write": "auth != null && $peer.beginsWith(auth.uid + '_')"
+      }
+    },
+    "rooms": {
+      "$room": {
+        "peers": {
+          ".read": "auth != null",
+          "$peer": {
+            ".write": "auth != null && $peer.beginsWith(auth.uid + '_')"
+          }
+        }
+      }
+    },
+    "docs": {
+      ".read": "auth != null",
+      "$doc": {
+        ".write": "auth != null && $doc.beginsWith('worlds~')"
+      }
+    }
+  }
+}

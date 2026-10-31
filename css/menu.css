@@ -1,0 +1,340 @@
+/* Hlavní menu: celá obrazovka nad scénou. Vlevo značka a panel, vpravo velký Měsíc. */
+.menu {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  overflow-y: auto;
+  background:
+    radial-gradient(1px 1px at 12% 18%, #fff8, transparent 60%),
+    radial-gradient(1px 1px at 31% 72%, #fff6, transparent 60%),
+    radial-gradient(1.5px 1.5px at 54% 12%, #fffa, transparent 60%),
+    radial-gradient(1px 1px at 77% 44%, #fff7, transparent 60%),
+    radial-gradient(1px 1px at 88% 81%, #fff6, transparent 60%),
+    radial-gradient(1.5px 1.5px at 8% 90%, #fff9, transparent 60%),
+    radial-gradient(1px 1px at 64% 63%, #fff5, transparent 60%),
+    radial-gradient(ellipse at 80% 30%, #18203a 0%, var(--space) 60%);
+}
+
+.menu__sky {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Měsíc z CSS: písková koule s krátery a terminátorem */
+.menu__moon {
+  position: absolute;
+  right: -14vmin;
+  top: 50%;
+  width: 92vmin;
+  aspect-ratio: 1;
+  max-width: none;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 30%, #0000 0 5%, #0002 5.5% 7%, #0000 7.5%),
+    radial-gradient(circle at 58% 62%, #0000 0 9%, #0002 9.5% 11.5%, #0000 12%),
+    radial-gradient(circle at 46% 78%, #0000 0 3.5%, #0002 4% 5%, #0000 5.5%),
+    radial-gradient(circle at 70% 36%, #0000 0 4%, #0002 4.5% 6%, #0000 6.5%),
+    radial-gradient(circle at 25% 58%, #0000 0 6%, #0001 6.5% 8%, #0000 8.5%),
+    radial-gradient(circle at 75% 25%, #0000 0 40%, #000a 75%),
+    radial-gradient(circle at 35% 35%, #e9dcc0, #b9a888 55%, #6d6150);
+  box-shadow: 0 0 120px #f2b33d22;
+  opacity: 0.9;
+}
+
+.menu__inner {
+  position: relative;
+  display: grid;
+  align-content: center;
+  gap: 24px;
+  min-height: 100%;
+  width: min(560px, 100%);
+  padding-block: calc(32px + env(safe-area-inset-top, 0px)) calc(32px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  margin-left: max(0px, calc((100% - 1080px) / 2));
+}
+
+.menu__brand {
+  display: grid;
+  gap: 6px;
+}
+
+.menu__eyebrow {
+  margin: 0;
+  font: 500 var(--step--1) / 1.3 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hivis);
+}
+
+.menu__title {
+  margin: 0;
+  font: 600 clamp(2.6rem, 9vw, 4.6rem) / 0.95 var(--font-display);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--regolith);
+  text-wrap: balance;
+}
+
+.menu__title::after {
+  content: "";
+  display: block;
+  width: 180px;
+  height: 8px;
+  margin-top: 12px;
+  background: repeating-linear-gradient(-45deg, var(--orange) 0 10px, var(--space) 10px 20px);
+}
+
+.menu__moon-status {
+  margin: 4px 0 0;
+  font: 500 var(--step--1) / 1.3 var(--font-mono);
+  color: var(--muted);
+}
+
+.menu__moon-status--ready {
+  color: var(--bot);
+}
+
+.menu__panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+}
+
+.menu__panel--wide {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.menu__panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menu__panel-title {
+  margin: 0;
+  font: 600 1.4rem / 1.1 var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.menu__profile {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+/* malá „helma“ v barvě skafandru */
+.menu__avatar {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse 60% 36% at 50% 52%, #8a6a22 0 92%, #0000 96%),
+    var(--suit, #eceae3);
+  box-shadow: inset 0 -6px 0 #0003;
+}
+
+.menu__name-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.menu__choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.menu__choice {
+  display: grid;
+  gap: 6px;
+  padding: 18px 16px;
+  text-align: left;
+  color: var(--regolith);
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.menu__choice:hover {
+  border-color: var(--hivis);
+}
+
+.menu__choice:first-child {
+  color: var(--hivis-ink);
+  background: var(--hivis);
+  border-color: var(--hivis);
+}
+
+.menu__choice-title {
+  font: 600 1.3rem / 1.1 var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.menu__choice-text {
+  font-size: var(--step--1);
+  opacity: 0.8;
+}
+
+.menu__loading {
+  margin: 0;
+  font: 500 1.05rem / 1.4 var(--font-mono);
+}
+
+.menu__loading::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 10px;
+  border: 2px solid var(--hivis);
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: menu-spin 0.8s linear infinite;
+}
+
+@keyframes menu-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* sloty uložených her */
+.slot-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+}
+
+.slot--last {
+  border-color: var(--hivis);
+}
+
+.slot--empty {
+  border-style: dashed;
+  background: transparent;
+}
+
+.slot__info {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.slot__title {
+  font: 600 1.05rem / 1.2 var(--font-display);
+  overflow-wrap: anywhere;
+}
+
+.slot__badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  font: 500 0.6875rem / 1.4 var(--font-mono);
+  text-transform: uppercase;
+  color: var(--hivis-ink);
+  background: var(--hivis);
+  border-radius: 4px;
+  vertical-align: 2px;
+}
+
+.slot__meta {
+  font: 400 var(--step--1) / 1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.slot__v1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.slot__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.slot--compact {
+  padding: 8px 10px;
+}
+
+.field__input {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--regolith);
+  background: var(--surface-raised);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+}
+
+.field__input:focus {
+  border-color: var(--hivis);
+  outline: none;
+}
+
+/* pauza */
+.pause__actions {
+  display: grid;
+  gap: 8px;
+}
+
+.pause__button {
+  align-self: stretch;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.pause__slots {
+  display: grid;
+  gap: 8px;
+}
+
+.pause__slots-title {
+  margin: 0;
+  font: 600 var(--step--1) / 1.2 var(--font-display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .menu__moon {
+    right: -40vmin;
+    top: 8%;
+    width: 80vmin;
+    transform: none;
+    opacity: 0.45;
+  }
+
+  .menu__choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
