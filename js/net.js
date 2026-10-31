@@ -16,17 +16,18 @@
 //  • Čas: všichni počítají denní dobu z hodin počítače + posunu hostitele → stejná denní doba.
 //
 // Vše jde přes presence (ne přes události), takže hrát může i pozvaný hráč s právem jen ke čtení.
-import { MOON, HEX_BONUS } from './config.js';
-import { game, newGame } from './state.js';
+import { MOON, HEX_BONUS, PRICE_PER_KG } from './config.js';
+import { game, newGame, addStat } from './state.js';
 import { profile, sanitizeName, validLook } from './profile.js';
-import { strokes } from './player.js';
+import { strokes, exitVehicle } from './player.js';
 import { hexes, sweepCapsule, clearHex } from './planet/dustmap.js';
 import { grid, cellDir } from './planet/hexgrid.js';
 import { norm, cross, anyTangent, dot, tangentTo } from './planet/vec.js';
 import { VEHICLES, STATION } from './catalog.js';
 import { packDust, unpackDust, toBase64, fromBase64 } from './storage.js';
-import { buildGarage, buyVehicle, upgradeVehicle, callBackVehicle } from './equipment.js';
-import { placeStation } from './robots.js';
+import { buildGarage, buyVehicle, upgradeVehicle, callBackVehicle, sellVehicle } from './equipment.js';
+import { placeStation, moveStation } from './robots.js';
+import { placeDepot, buildBelt, depositToDepot, beltLoad } from './depots.js';
 import { connectPlatform } from './platform/platform.js';
 
 const R = MOON.radius;
@@ -154,6 +155,13 @@ const pending = new Map();            // id → { resolve, t }
 let parkReport = null;                // klient: [seq, i, ...pozice, ...směr, náplň]
 let parkSeq = 0;
 let ragdollEnc = null;
+let kgTotal = 0;                      // klient: kolik kg prachu jsem celkem nasbíral (pro statistiky)
+const deposits = [];                  // klient: kolik kg jsem celkem vysypal do depa i
+
+// Klíč hráče pro statistiky: uid přihlášení (stejný prohlížeč) + jméno postavy.
+const uidOf = peer => String(peer || '').split('_')[0];
+export const myStatKey = () => `${net.me ? uidOf(net.me) : 'me'}|${profile.name}`;
+const statKeyOf = r => `${uidOf(r.peer)}|${r.name}`;
 
 export function setRagdollPresence(arr) { ragdollEnc = arr; }
 
@@ -175,6 +183,8 @@ function myWorldPresence(fx, vehicleSpeed) {
     s: strokes.list.map(k => [k.seq, ...enc(k.p), Math.round(k.w * 100), k.pw, k.cont ? 1 : 0]),
     c: chatOut,
     e: Math.round(earned * 100) / 100,
+    kg: Math.round(kgTotal * 10) / 10,
+    dk: deposits.length ? Array.from(deposits, x => Math.round((x || 0) * 10) / 10) : null,
     b: requests,
     pk: parkReport,
     g: ragdollEnc,
@@ -330,9 +340,21 @@ export function movingVehicles(radiusOf) {
 }
 
 export function players() {
-  const list = [{ name: profile.name, color: profile.look.color, me: true, host: net.mode === 'host' }];
-  for (const r of net.remotes.values()) list.push({ name: r.name, color: r.look.color, me: false, host: r.peer === net.hostPeer });
+  const list = [{ name: profile.name, color: profile.look.color, me: true, host: net.mode === 'host', stats: statsFor(myStatKey()) }];
+  for (const r of net.remotes.values()) {
+    list.push({ name: r.name, color: r.look.color, me: false, host: r.peer === net.hostPeer, stats: statsFor(statKeyOf(r)) });
+  }
   return list;
+}
+
+// Statistiky hráče { kg, e, sp }: hostitel je drží v uložené hře, připojený hráč je dostává v H.ps.
+function statsFor(key) {
+  if (net.mode === 'host') {
+    const st = game.s.pstats?.[key];
+    return st ? { kg: st.kg || 0, e: st.e || 0, sp: st.sp || 0 } : { kg: 0, e: 0, sp: 0 };
+  }
+  const row = Array.isArray(lastH?.ps) ? lastH.ps.find(x => Array.isArray(x) && x[0] === key) : null;
+  return row ? { kg: Number(row[2]) || 0, e: Number(row[3]) || 0, sp: Number(row[4]) || 0 } : { kg: 0, e: 0, sp: 0 };
 }
 
 // ---------- chat ----------
@@ -353,6 +375,8 @@ const host = {
   rc: [], rcBase: 1,          // dočištěné hexy od robotů [hex] (sekvence od rcBase)
   acks: [],                   // [[id, ok]]
   ep: {},                     // peer → přijatý součet výdělků
+  kp: {},                     // peer → přijatý součet nasbíraných kg
+  dk: {},                     // peer → přijaté součty vysypaného prachu po depech
   sv: 0,                      // verze snímku mapy v db
   applied: {},                // peer → poslední aplikovaný tah (pro snímek)
   lastPk: {},
@@ -388,27 +412,51 @@ export function hostRobotCompleted(cells) {
 
 function hostReadPeer(r, pr) {
   const s = game.s;
+  const key = statKeyOf(r);
   // výdělky (součet od připojení)
   if (isNum(pr.e) && pr.e >= 0) {
     const before = host.ep[r.peer] || 0;
-    if (pr.e > before) { s.money += Math.min(pr.e - before, 1e7); host.ep[r.peer] = pr.e; }
+    if (pr.e > before) {
+      const add = Math.min(pr.e - before, 1e7);
+      s.money += add;
+      addStat(key, r.name, 'e', add);
+      host.ep[r.peer] = pr.e;
+    }
+  }
+  // nasbíraný prach (jen statistika)
+  if (isNum(pr.kg) && pr.kg > (host.kp[r.peer] || 0)) {
+    addStat(key, r.name, 'kg', Math.min(pr.kg - (host.kp[r.peer] || 0), 1e7));
+    host.kp[r.peer] = pr.kg;
+  }
+  // prach vysypaný do dep (prodá se, až ho pás doveze do Výkupu; do statistiky se připíše hned)
+  if (Array.isArray(pr.dk)) {
+    const seen = host.dk[r.peer] || (host.dk[r.peer] = []);
+    pr.dk.forEach((kg, i) => {
+      if (!isNum(kg) || kg <= (seen[i] || 0)) return;
+      const add = Math.min(kg - (seen[i] || 0), 1e7);
+      seen[i] = kg;
+      if (depositToDepot(i, add)) addStat(key, r.name, 'e', add * PRICE_PER_KG);
+    });
   }
   // žádosti o nákup
   if (Array.isArray(pr.b)) {
     for (const q of pr.b) {
       if (!Array.isArray(q) || typeof q[0] !== 'string' || r.done.has(q[0])) continue;
       r.done.add(q[0]);
+      const before = s.money;
       const ok = hostRequest(q[1], Array.isArray(q[2]) ? q[2] : [], Number(q[3]) || 0, r);
+      if (s.money < before) addStat(key, r.name, 'sp', before - s.money);
+      else if (s.money > before) addStat(key, r.name, 'e', s.money - before);    // prodej vozidla
       host.acks.push([q[0].slice(0, 12), ok ? 1 : 0]);
       if (host.acks.length > 24) host.acks.shift();
     }
   }
-  // zaparkované vozidlo
+  // zaparkované (nebo přivolané) vozidlo
   const pk = pr.pk;
   if (okVec(pk, 0, 9) && pk[0] !== host.lastPk[r.peer]) {
     host.lastPk[r.peer] = pk[0];
     const v = s.vehicles[pk[1]];
-    if (v && s.driving !== pk[1]) {
+    if (v && s.driving !== pk[1] && !vehicleTakenBy(pk[1])) {
       v.p = decU(pk, 2);
       v.f = decF(pk, 5);
       v.load = Math.max(0, pk[8] / 10);
@@ -429,10 +477,17 @@ function hostRequest(kind, a, cost, r) {
     case 'veh': return buyVehicle(String(a[0]));
     case 'vup': return upgradeVehicle(a[0] | 0, String(a[1]));
     case 'st': return okVec(a, 0) ? placeStation(decU(a)) : false;
+    case 'stmove': return okVec(a, 1) ? moveStation(a[0] | 0, decU(a, 1)) : false;
     case 'call': return !vehicleTakenBy(a[0] | 0) && callBackVehicle(a[0] | 0);
+    case 'vsell': return s.driving !== (a[0] | 0) && !vehicleTakenBy(a[0] | 0) && vehicleUid(a[0] | 0) === String(a[1]) && sellVehicle(a[0] | 0);
+    case 'dep': return okVec(a, 0) ? placeDepot(decU(a)) : false;
+    case 'belt': return buildBelt(a[0] | 0);
     default: return false;
   }
 }
+
+// Prodej se potvrzuje i podle uid, aby se po posunu indexů neprodalo jiné vozidlo.
+const vehicleUid = i => game.s.vehicles[i]?.uid || '';
 
 function botEnc(st) {
   const c = cellDir(st.hex), e1 = anyTangent(c), e2 = cross(c, e1);
@@ -452,14 +507,26 @@ function hostState() {
     ts: Date.now(),
     g: s.garage ? 1 : 0,
     won: s.won ? 1 : 0,
-    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10)]),
+    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '']),
     st: s.stations.map(st => st.hex),
     b: s.stations.map(botEnc),
+    dp: s.depots.map(d => [d.hex, Math.round(d.store), d.belt ? 1 : 0, Math.round(beltLoad(d))]),
+    ps: presentStats(),
     rc: [host.rcBase, ...host.rc],
     ack: host.acks,
     ep: host.ep,
     sv: host.sv,
   };
+}
+
+// Statistiky hráčů, kteří jsou právě ve světě: [[klíč, jméno, kg, vyděláno, utraceno]].
+function presentStats() {
+  const ps = game.s.pstats || {};
+  const keys = [myStatKey(), ...[...net.remotes.values()].map(statKeyOf)];
+  return [...new Set(keys)].filter(k => ps[k]).map(k => {
+    const st = ps[k];
+    return [k, cleanText(st.n).slice(0, 16), Math.round(st.kg || 0), Math.round(st.e || 0), Math.round(st.sp || 0)];
+  });
 }
 
 function pushHostState() {
@@ -582,9 +649,11 @@ function applyHostState(H) {
   s.won = !!H.won;
   if (typeof H.t === 'string') s.title = cleanText(H.t).slice(0, 40);
 
-  // flotila
-  if (Array.isArray(H.v)) {
-    H.v.forEach((e, i) => {
+  // flotila (Firebase prázdné pole neuloží → chybějící H.v = žádná vozidla, třeba po prodeji posledního)
+  const hv = Array.isArray(H.v) ? H.v : [];
+  {
+    syncFleet(s, hv);
+    hv.forEach((e, i) => {
       if (!okVec(e, 0, 11) || !VEHICLES[e[0]]) return;
       let v = s.vehicles[i];
       if (!v) {
@@ -611,9 +680,10 @@ function applyHostState(H) {
   if (Array.isArray(H.st)) {
     H.st.forEach((hex, i) => {
       if (!Number.isInteger(hex) || hex < 0 || hex >= grid.cells) return;
-      if (!s.stations[i]) {
+      if (!s.stations[i] || s.stations[i].hex !== hex) {     // nová, nebo přesunutá stanice
         const home = cellDir(hex);
         s.stations[i] = { hex, robot: { p: home, t: home, hex: -1, k: -1, load: 0, mode: 'idle' } };
+        botPrev[i] = null;
       }
       const st = s.stations[i], b = H.b?.[i];
       if (!okVec(b, 0)) return;
@@ -626,6 +696,19 @@ function applyHostState(H) {
       st.robot.p = p;
       st.robot.mode = b[2] === 1 ? 'work' : 'idle';
     });
+  }
+
+  // depa a pásy: [hex, sklad kg, pás, kg na pásu]
+  if (Array.isArray(H.dp)) {
+    s.depots = H.dp
+      .filter(e => okVec(e, 0, 4) && Number.isInteger(e[0]) && e[0] >= 0 && e[0] < grid.cells)
+      .map((e, i) => {
+        const d = s.depots[i]?.hex === e[0] ? s.depots[i] : { hex: e[0], transit: [] };
+        d.store = Math.max(0, e[1]);
+        d.belt = !!e[2];
+        d.tk = Math.max(0, e[3]);
+        return d;
+      });
   }
 
   // hexy dočištěné roboty
@@ -653,6 +736,28 @@ function applyHostState(H) {
   net.onState?.();
 }
 
+// Flotila od hostitele podle uid vozidel: po prodeji se indexy posunou, takže se pole postaví znovu
+// (existující vozidla se zachovají) a vozidlo, ve kterém sedím, dostane nový index.
+function syncFleet(s, list) {
+  const uids = list.map(e => (Array.isArray(e) ? String(e[11] ?? '') : ''));
+  if (uids.length === s.vehicles.length && uids.every((u, i) => (s.vehicles[i]?.uid || '') === u)) return;
+  const old = new Map(s.vehicles.filter(v => v?.uid).map(v => [v.uid, v]));
+  const drivenUid = s.driving >= 0 ? s.vehicles[s.driving]?.uid : null;
+  if (s.driving >= 0 && !(drivenUid && uids.includes(drivenUid))) exitVehicle();   // vozidlo zmizelo
+  s.vehicles = list.map((e, i) => {
+    let v = uids[i] && old.get(uids[i]);
+    if (!v) {
+      if (!okVec(e, 0, 11) || !VEHICLES[e[0]]) return null;
+      v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2] } };
+    }
+    v.uid = uids[i];
+    v.moved = true;
+    return v;
+  }).filter(Boolean);
+  if (drivenUid && s.driving >= 0) s.driving = s.vehicles.findIndex(v => v.uid === drivenUid);
+  vehSig.length = 0;
+}
+
 // Žádost o nákup za společné peníze. Vrací Promise<boolean>.
 export function request(kind, args, cost) {
   const id = (net.me || 'x').slice(0, 4) + Math.random().toString(36).slice(2, 8);
@@ -672,6 +777,16 @@ export const hasPending = () => pending.size > 0;
 
 export function addEarned(amount) {
   if (amount > 0) earned += amount;
+}
+
+// Klient: nasbíraný prach (statistika) a náklad vysypaný do depa (hostitel ho přidá do skladu).
+export function addCollected(kg) {
+  if (kg > 0) kgTotal += kg;
+}
+export function reportDeposit(i, kg) {
+  if (!(kg > 0) || i < 0) return;
+  while (deposits.length <= i) deposits.push(0);
+  deposits[i] += kg;
 }
 
 // Klient vystoupil z vozidla → nahlásit, kde stojí.

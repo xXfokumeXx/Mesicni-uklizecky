@@ -1,10 +1,10 @@
 // Vybavení: nástroje a vozidla – parametry, nákup, výběr a vylepšení.
 // Každý nástroj i vozidlo má vlastní zásobník na prach (load v kg).
 import {
-  TOOLS, TOOL_UPGRADES, VEHICLE_UPGRADES, VEHICLES, GARAGE_PRICE, STATION, BOOTS,
+  TOOLS, TOOL_UPGRADES, VEHICLE_UPGRADES, VEHICLES, GARAGE_PRICE, STATION, BOOTS, SELL_REFUND,
   toolById, vehicleById, upgradeCost,
 } from './catalog.js';
-import { game, newToolState } from './state.js';
+import { game, newToolState, newUid } from './state.js';
 import { parkingSpot } from './base.js';
 import { WALK_SPEED, MAX_VEHICLES } from './config.js';
 import { tangentTo } from './planet/vec.js';
@@ -102,14 +102,45 @@ export const ownedVehicle = type => game.s.vehicles.findIndex(v => v.type === ty
 export const vehicleCount = type => game.s.vehicles.filter(v => v.type === type).length;
 export const fleetFull = () => game.s.vehicles.length >= MAX_VEHICLES;
 
+// První volné parkovací místo (po prodeji vozidla zůstane v řadě mezera).
+function freeSpot() {
+  const used = new Set(game.s.vehicles.map((v, i) => v.spot ?? i));
+  for (let k = 0; k < MAX_VEHICLES; k++) if (!used.has(k)) return k;
+  return game.s.vehicles.length;
+}
+
 // Flotila: stejný typ jde koupit víckrát (každé vozidlo má své parkovací místo).
 export function buyVehicle(type) {
   const base = vehicleById(type);
   if (!base || !game.s.garage || fleetFull() || game.s.money < base.price) return false;
   game.s.money -= base.price;
-  const i = game.s.vehicles.length;
-  const spot = parkingSpot(i);
-  game.s.vehicles.push({ type, spot: i, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: { width: 0, speed: 0 } });
+  const k = freeSpot();
+  const spot = parkingSpot(k);
+  game.s.vehicles.push({ uid: newUid(), type, spot: k, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: { width: 0, speed: 0 } });
+  return true;
+}
+
+// Kolik se vrátí za prodej: 75 % ceny vozidla a všech zaplacených vylepšení.
+export function vehicleSellValue(i) {
+  const v = game.s.vehicles[i];
+  if (!v) return 0;
+  const base = vehicleById(v.type);
+  let paid = base.price;
+  for (const key in VEHICLE_UPGRADES) {
+    for (let lv = 0; lv < (v.lv[key] | 0); lv++) paid += upgradeCost(base.price, lv, 0.25);
+  }
+  return Math.round(paid * SELL_REFUND);
+}
+
+// Prodá vozidlo (nesmí v něm nikdo sedět – to hlídá volající). Indexy dalších vozidel se posunou.
+export function sellVehicle(i) {
+  const s = game.s;
+  const v = s.vehicles[i];
+  if (!v || s.driving === i) return false;
+  s.money += vehicleSellValue(i);
+  s.vehicles.splice(i, 1);
+  if (s.driving > i) s.driving--;
+  for (const x of s.vehicles) x.moved = true;      // fyzika vozidel se znovu založí podle nových indexů
   return true;
 }
 

@@ -117,6 +117,7 @@ export function toast(message, ms = 4000) {
 }
 
 // Panel hráčů v multiplayeru (jména, barvy, kdo je hostitel) a kód světa.
+// Pod jménem: kolik kg prachu hráč nasbíral, kolik vydělal a kolik utratil ze společných peněz.
 export function updatePlayers(list, code) {
   const el = $('players');
   if (!list) { el.hidden = true; return; }
@@ -125,7 +126,15 @@ export function updatePlayers(list, code) {
   const html = list.map(p => {
     const c = '#' + SUIT_COLORS[p.color].hex.toString(16).padStart(6, '0');
     const name = p.name.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-    return `<li class="players__item"><span class="players__dot" style="--suit:${c}"></span>${name}${p.me ? ' <span class="players__tag">ty</span>' : ''}${p.host ? ' <span class="players__tag players__tag--host">hostitel</span>' : ''}</li>`;
+    const st = p.stats || { kg: 0, e: 0, sp: 0 };
+    const stats = `<span class="players__stats">`
+      + `<span title="Nasbíraný prach">${fmtKg(st.kg)}</span>`
+      + `<span class="players__earn" title="Vydělal(a)">+$${fmtStat(st.e)}</span>`
+      + `<span class="players__spent" title="Utratil(a)">−$${fmtStat(st.sp)}</span></span>`;
+    return `<li class="players__item"><span class="players__head"><span class="players__dot" style="--suit:${c}"></span>${name}${p.me ? ' <span class="players__tag">ty</span>' : ''}${p.host ? ' <span class="players__tag players__tag--host">hostitel</span>' : ''}</span>${stats}</li>`;
   }).join('');
   if (el.dataset.html !== html) { el.dataset.html = html; $('players-list').innerHTML = html; }
 }
+
+const fmtStat = v => (v < 1000 ? String(Math.round(v)) : fmt(v));
+const fmtKg = v => (v < 1e4 ? `${Math.round(v).toLocaleString('cs-CZ')} kg` : `${(v / 1000).toFixed(v < 1e5 ? 1 : 0).replace('.', ',')} t`);

@@ -2,7 +2,7 @@
 // Obsah se skládá z dat (catalog.js + stav hry), akce volají equipment.js přes econ.js
 // (v multiplayeru schvaluje nákupy hostitel). Verze 2: Šatna v Dílně, Flotila v Garáži.
 import {
-  TOOLS, VEHICLES, TOOL_UPGRADES, VEHICLE_UPGRADES, GARAGE_PRICE, STATION, BOOTS, vehicleById,
+  TOOLS, VEHICLES, TOOL_UPGRADES, VEHICLE_UPGRADES, GARAGE_PRICE, STATION, BOOTS, SILO, vehicleById,
   SUIT_COLORS, HELMET_PROPS, propById,
 } from './catalog.js';
 import { MOON, MAX_VEHICLES } from './config.js';
@@ -10,16 +10,17 @@ import { game } from './state.js';
 import {
   toolStats, vehicleStats, ownsTool, buyTool, equipTool, toolUpgradeCost, upgradeTool,
   bootsLevel, walkSpeed, bootsUpgradeCost, upgradeBoots, vehicleCount, fleetFull,
-  buildGarage, buyVehicle, callBackVehicle, vehicleUpgradeCost, upgradeVehicle, stationPrice,
+  buildGarage, buyVehicle, vehicleUpgradeCost, upgradeVehicle, stationPrice,
+  vehicleSellValue, sellVehicle,
 } from './equipment.js';
-import { purchase } from './econ.js';
+import { purchase, callVehicle } from './econ.js';
 import { vehicleTakenBy, isClient } from './net.js';
 import { profile, saveProfile, sanitizeName } from './profile.js';
 import { parkingSpot, distanceToBase } from './base.js';
 import { angleBetween } from './planet/vec.js';
 import { buildToolModel, buildBootsModel } from './scene/toolModels.js';
 import { buildVehicle } from './scene/vehicles.js';
-import { buildStation, buildGarage as buildGarageModel } from './scene/buildings.js';
+import { buildStation, buildSilo, buildGarage as buildGarageModel } from './scene/buildings.js';
 import { fmt } from './format.js';
 
 const $ = id => document.getElementById(id);
@@ -114,6 +115,28 @@ function stationsTab() {
         run: () => { hooks.onPlaceStation(); return 'close'; },
       },
     },
+  }, {
+    key: 'depot',
+    name: 'Depo na prach',
+    chip: [`${game.s.depots.length}× POSTAVENO`, game.s.depots.length ? 'owned' : 'store'],
+    thumb: () => thumb('silo', () => buildSilo().root),
+    detail: {
+      eyebrow: 'Logistika',
+      title: 'Depo na prach',
+      desc: 'Sklad prachu daleko od základny: vysypeš do něj zásobník jako do Výkupu a nemusíš jezdit domů. '
+        + 'U depa pak postavíš nadzemní pás, který prach odveze do Výkupu a prodá ho. Pás vede ve výšce, pod ním projedeš i s roverem.',
+      stats: [
+        ['Cena depa', money(SILO.price)],
+        ['Pás do základny', `${money(SILO.beltPerHex)} za hex`],
+        ['Výkon pásu', `${SILO.beltRate} kg/s · ${SILO.beltSpeed} m/s`],
+        ['Postaveno', `${game.s.depots.length}`],
+      ],
+      action: {
+        label: `Koupit a umístit · ${money(SILO.price)}`,
+        disabled: game.s.money < SILO.price,
+        run: () => { hooks.onPlaceDepot(); return 'close'; },
+      },
+    },
   }];
 }
 
@@ -167,10 +190,29 @@ function fleetTab() {
         title: vehicleName(i), desc: v.desc, stats,
         action: status.home
           ? { label: 'Stojí na parkovišti', disabled: true }
-          : { label: 'Přivolat na parkoviště', disabled: status.busy, run: () => purchase('call', [i], 0, () => callBackVehicle(i)) },
+          : { label: 'Přivolat na parkoviště', disabled: status.busy, run: () => callVehicle(i) },
+        action2: sellAction(i, status.busy),
       },
     };
   });
+}
+
+// Prodej vozidla: první klik se zeptá, druhý prodá (75 % ceny včetně vylepšení).
+let sellArmed = null;                // uid vozidla, u kterého se čeká na potvrzení prodeje
+function sellAction(i, busyVeh) {
+  const veh = game.s.vehicles[i];
+  const value = vehicleSellValue(i);
+  if (busyVeh) return { label: `Prodat · ${money(value)} (nejdřív z něj musí vystoupit)`, disabled: true, danger: true };
+  if (sellArmed !== veh.uid) {
+    return { label: `Prodat za ${money(value)} (75 % ceny)`, danger: true, run: () => { sellArmed = veh.uid; return 'stay'; } };
+  }
+  return {
+    label: `Opravdu prodat? Vrátí se ${money(value)}`, danger: true, armed: true,
+    run: () => {
+      sellArmed = null;
+      return purchase('vsell', [i, veh.uid], 0, () => !vehicleTakenBy(i) && sellVehicle(i));
+    },
+  };
 }
 
 function fleetSummary() {
@@ -257,7 +299,7 @@ function garageSiteTab() {
 }
 
 function tabsFor(id) {
-  if (id === 'toolshop') return [['tools', 'Nástroje', () => toolsTab(false)], ['stations', 'Stanice robotů', stationsTab]];
+  if (id === 'toolshop') return [['tools', 'Nástroje', () => toolsTab(false)], ['stations', 'Roboti a depa', stationsTab]];
   if (id === 'workshop') {
     return [
       ['tools', 'Nástroje', () => toolsTab(true)], ['vehicles', 'Vozidla', vehiclesUpgradeTab],
@@ -344,7 +386,7 @@ function render() {
        aria-selected="${key === view.tab}" data-tab="${key}">${esc(label)}</button>`).join('');
 
   const summary = $('facility-summary');
-  summary.hidden = view.tab !== 'fleet';
+  summary.hidden = view.tab !== 'fleet' || !game.s.vehicles.length;
   if (view.tab === 'fleet') summary.textContent = fleetSummary();
 
   if (view.tab === 'wardrobe') {
@@ -396,6 +438,10 @@ function detailHtml(it) {
   const action = d.action
     ? `<button class="detail__action" type="button" data-action ${busy || d.action.disabled ? 'disabled' : ''}>${esc(label)}</button>`
     : '';
+  const a2 = d.action2;
+  const action2 = a2
+    ? `<button class="detail__action detail__action--secondary${a2.danger ? ' detail__action--danger' : ''}${a2.armed ? ' detail__action--armed' : ''}" type="button" data-action2 ${busy || a2.disabled ? 'disabled' : ''}>${esc(a2.label)}</button>`
+    : '';
   const shared = isClient() ? '<p class="detail__note">Peníze jsou společné pro celý svět – nákup schvaluje hostitel.</p>' : '';
   return `
     <div class="detail__head">
@@ -409,6 +455,7 @@ function detailHtml(it) {
     <div class="detail__specs">${stats}</div>
     ${ups ? `<div class="detail__upgrades">${ups}</div>` : ''}
     ${action}
+    ${action2}
     ${shared}`;
 }
 
@@ -416,6 +463,7 @@ function detailHtml(it) {
 
 function finish(result) {
   if (result === 'close') { closeFacility(); return; }
+  if (result === 'stay') { render(); return; }
   if (result && typeof result.then === 'function') {
     busy = true;
     render();
@@ -436,8 +484,9 @@ export function initFacility(renderThumb, h) {
   hooks = h;
   const root = $('facility');
   root.addEventListener('click', e => {
-    const t = e.target.closest('[data-tab],[data-sel],[data-up],[data-action],[data-color],[data-prop],[data-random]');
+    const t = e.target.closest('[data-tab],[data-sel],[data-up],[data-action],[data-action2],[data-color],[data-prop],[data-random]');
     if (!t) return;
+    if (!t.hasAttribute('data-action2')) sellArmed = null;      // potvrzení prodeje platí jen pro další klik
     if (t.dataset.tab) { view.tab = t.dataset.tab; view.sel = null; render(); return; }
     if (t.dataset.sel) { view.sel = t.dataset.sel; render(); return; }
     if (t.dataset.color !== undefined) { setLook({ color: Number(t.dataset.color) }); return; }
@@ -454,6 +503,7 @@ export function initFacility(renderThumb, h) {
     if (busy) return;
     if (t.dataset.up !== undefined) finish(current.detail.upgrades[Number(t.dataset.up)].run());
     else if (t.hasAttribute('data-action')) finish(current.detail.action.run?.());
+    else if (t.hasAttribute('data-action2')) finish(current.detail.action2.run?.());
   });
   root.addEventListener('change', e => {
     if (e.target.id !== 'wardrobe-name') return;

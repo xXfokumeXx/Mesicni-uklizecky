@@ -29,11 +29,36 @@ export function newGame(title = 'Nová směna', dust = game.dust) {
     vehicles: [],                                 // { type, spot, p, f, load, lv: { width, speed } }
     driving: -1,                                  // index vozidla, ve kterém sedíš
     stations: [],                                 // { hex, robot }
+    depots: [],                                   // { hex, store, belt, transit: [[s, kg]] } (depots.js)
+    pstats: {},                                   // klíč hráče → { n, kg, e, sp } (sesbíráno / vyděláno / utraceno)
     won: false,
     playMs: 0,                                    // odehraný čas (pro seznam uložených her)
     last: Date.now(),
   };
   game.dust = dust;
+}
+
+export const newUid = () => Math.random().toString(36).slice(2, 8).padEnd(6, '0');
+
+// Doplní pole, která starší uložené hry nemají (hra z předchozí verze se načte beze ztrát).
+export function upgradeState(s = game.s) {
+  if (!Array.isArray(s.depots)) s.depots = [];
+  if (!s.pstats || typeof s.pstats !== 'object') s.pstats = {};
+  for (const d of s.depots) {
+    d.store = Number(d.store) || 0;
+    d.belt = !!d.belt;
+    if (!Array.isArray(d.transit)) d.transit = [];
+  }
+  for (const v of s.vehicles) if (!v.uid) v.uid = newUid();
+}
+
+// Statistiky hráče: kg = nasbíraný prach, e = vydělané peníze, sp = utracené peníze.
+export function addStat(key, name, field, amount) {
+  if (!key || !(amount > 0)) return;
+  const ps = game.s.pstats || (game.s.pstats = {});
+  const st = ps[key] || (ps[key] = { n: name || 'Astronaut', kg: 0, e: 0, sp: 0 });
+  if (name) st.n = name;
+  st[field] = (st[field] || 0) + amount;
 }
 
 // Čas hry: hodiny počítače (+ v multiplayeru posun na hodiny hostitele) + zrychlení klávesou T.

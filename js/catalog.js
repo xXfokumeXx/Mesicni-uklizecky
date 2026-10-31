@@ -60,6 +60,20 @@ export const STATION = {
   kgPerSec: 0.07,               // průměrný výkon pro offline výpočet
 };
 
+// Depo: sklad prachu mimo základnu. Prach se do něj vysype jako do Výkupu, ale peníze přinese
+// až nadzemní pás, který ho odveze do Výkupu uprostřed základny.
+export const SILO = {
+  price: 2000,
+  beltPerHex: 25,               // cena pásu za každý hex, přes který vede
+  zone: 4.5,                    // poloměr vysýpací zóny kolem depa (m)
+  beltRate: 12,                 // kolik kg za sekundu pás odebere z depa
+  beltSpeed: 3,                 // rychlost pásu (m/s) → jak dlouho prach jede do základny
+  beltHeight: 6.5,              // výška pásu nad terénem (pod ním projede i Mega rover)
+};
+
+// Prodej vozidla: vrátí se 75 % kupní ceny včetně zaplacených vylepšení.
+export const SELL_REFUND = 0.75;
+
 export const toolById = id => TOOLS.find(t => t.id === id);
 export const vehicleById = id => VEHICLES.find(v => v.id === id);
 

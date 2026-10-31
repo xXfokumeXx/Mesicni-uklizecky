@@ -33,11 +33,25 @@ export function hexArea(hex, rings = STATION.rings) {
   return area;
 }
 
-// Může tu stát stanice? (mimo základnu a ne na hexu, kde už stanice je)
-export function canPlaceStation(p) {
+// Může tu stát stanice? (mimo základnu a ne na hexu, kde už stojí stanice nebo depo)
+// skip = index stanice, která se právě přesouvá (její starý hex se nepočítá).
+export function canPlaceStation(p, skip = -1) {
   if (angleBetween(p, BASE.dir) * R < BASE.noStations) return false;
   const hex = dirToCell(p);
-  return !game.s.stations.some(st => st.hex === hex);
+  return !game.s.stations.some((st, i) => i !== skip && st.hex === hex)
+    && !(game.s.depots || []).some(d => d.hex === hex);
+}
+
+// Přesune stanici i s robotem na nové místo (zdarma). Náplň robota se vyloží a prodá.
+export function moveStation(i, p) {
+  const st = game.s.stations[i];
+  if (!st || !canPlaceStation(p, i)) return false;
+  const rb = st.robot;
+  if (rb.load > 0) game.s.money += rb.load * PRICE_PER_KG;
+  st.hex = dirToCell(p);
+  const home = cellDir(st.hex);
+  st.robot = { p: home, t: home, hex: -1, k: -1, load: 0, mode: 'work' };
+  return true;
 }
 
 export function placeStation(p) {

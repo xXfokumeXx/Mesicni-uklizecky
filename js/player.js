@@ -6,6 +6,7 @@ import { game } from './state.js';
 import { activeEquipment, walkSpeed } from './equipment.js';
 import { createBody, stepBody, jumpBody, altitude } from './physics.js';
 import { sweepCapsule } from './planet/dustmap.js';
+import { depotAt } from './depots.js';
 import { createRagdoll, stepRagdoll, ragdollPoints, encodeRagdoll, RG } from './ragdoll.js';
 import { cross, madd, norm, tangentTo, angleBetween, rotateAround, dot } from './planet/vec.js';
 
@@ -32,6 +33,7 @@ export const playerFx = {
   vr: 0,               // svislá rychlost
   landed: 0,           // rychlost dopadu (jednorázově, pro efekty)
   landedAnim: false,
+  deposit: null,       // { i, kg }: náklad právě vysypaný do depa i
 };
 
 let body = null;                         // těleso astronauta
@@ -267,6 +269,7 @@ export function exitVehicle() {
 // Vrací výdělek z výkupu, pokud se právě vykupovalo.
 export function collect() {
   const s = game.s;
+  playerFx.deposit = null;
   if (rag) { playerFx.swept = 0; playerFx.bonus = 0; playerFx.completed = []; playerFx.tool = null; return 0; }
   const eq = activeEquipment();
   const b = activeBody();
@@ -311,6 +314,14 @@ export function collect() {
     s.money += earned;
     item.load = 0;
     return earned;
+  }
+  // depo: náklad se vysype do skladu, peníze přinese pás (zpracuje main.js)
+  if (item.load > 0 && b.grounded) {
+    const i = depotAt(s.p);
+    if (i >= 0) {
+      playerFx.deposit = { i, kg: item.load };
+      item.load = 0;
+    }
   }
   return 0;
 }

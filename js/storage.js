@@ -3,7 +3,7 @@
 // (pevné semínko) a uloží se jen ROZDÍL = kolik prachu kde ubylo. Rozdíl je skoro všude nula,
 // takže ho gzip v prohlížeči (CompressionStream) zmenší na desítky až stovky kB.
 import { SAVE_KEY } from './config.js';
-import { game, newGame } from './state.js';
+import { game, newGame, upgradeState, newUid } from './state.js';
 import { hexes, dustDiff, applyDustDiff } from './planet/dustmap.js';
 import { VEHICLES, STATION } from './catalog.js';
 import { parkingSpot } from './base.js';
@@ -47,14 +47,28 @@ export async function unpackDust({ gz, bytes }) {
 let dbPromise = null;
 function openDb() {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve) => {
+  // Otevře databázi v její stávající verzi. Jen když v ní chybí úložiště (prázdná databáze), otevře ji
+  // znovu o verzi výš a úložiště založí – uložené hry ani jiné otevřené karty to neovlivní.
+  const tryOpen = version => new Promise((resolve) => {
     try {
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id' });
-      req.onsuccess = () => resolve(req.result);
+      const req = version ? indexedDB.open(DB_NAME, version) : indexedDB.open(DB_NAME);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: 'id' });
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onversionchange = () => db.close();
+        resolve(db);
+      };
       req.onerror = () => resolve(null);
       req.onblocked = () => resolve(null);
     } catch { resolve(null); }
+  });
+  dbPromise = tryOpen(0).then(db => {
+    if (!db || db.objectStoreNames.contains(STORE)) return db;
+    const next = db.version + 1;
+    db.close();
+    return tryOpen(next);
   });
   return dbPromise;
 }
@@ -159,6 +173,7 @@ export async function loadGame(slot) {
     if (!rec?.s || rec.v !== 2) return false;
     if (!(await unpackDust(rec.dust))) return false;
     game.s = rec.s;
+    upgradeState(game.s);
     game.slot = slot;
     try { localStorage.setItem(LAST_KEY, slot); } catch { /* nic */ }
     return true;
@@ -196,7 +211,7 @@ export function importV1(title) {
     (old.vehicles || []).forEach((v, i) => {
       if (!VEHICLES.some(x => x.id === v.type)) return;
       const spot = parkingSpot(i);
-      s.vehicles.push({ type: v.type, spot: i, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: v.lv || { width: 0, speed: 0 } });
+      s.vehicles.push({ uid: newUid(), type: v.type, spot: i, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: v.lv || { width: 0, speed: 0 } });
     });
     const n = (old.stations || []).length;
     for (let k = 0; k < n; k++) s.money += Math.round(STATION.price * STATION.priceMult ** k);

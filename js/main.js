@@ -1,9 +1,10 @@
 // Vstupní bod: hlavní menu → příprava Měsíce → hra (sám, jako hostitel, nebo připojený hráč).
 // Propojí logiku, 3D scénu, budovy, síť, chat a nastavení; spustí smyčku a ukládání.
-import { TICK_MS, WIN_LEFT, OFFLINE_CAP_S, SUN, CAMERA } from './config.js';
-import { game, newGame, gameTime } from './state.js';
+import { TICK_MS, WIN_LEFT, OFFLINE_CAP_S, SUN, CAMERA, UNITS_PER_KG, PRICE_PER_KG } from './config.js';
+import { game, newGame, gameTime, addStat } from './state.js';
 import { activeEquipment } from './equipment.js';
 import { robotTick, simulateOffline } from './robots.js';
+import { depotTick, depotsOffline, depositToDepot } from './depots.js';
 import {
   initPlayer, movePlayer, collect, playerFx, rotateHeading, tryJump, activeBody,
   checkVehicleHits, isRagdoll, ragdollEncoded, currentVehicleSpeed,
@@ -20,6 +21,7 @@ import { loadProfile, profile } from './profile.js';
 import {
   net, initLobby, startHost, joinWorld, netTick, addEarned, sendChat, players, movingVehicles,
   vehicleOverride, hostRobotCompleted, setRagdollPresence, savePersonal, inviteLink,
+  addCollected, reportDeposit, myStatKey,
 } from './net.js';
 import { initChat, showChat, addMessage, openChat, chatOpen } from './chat.js';
 import { initMenu, initPause, showLoading, hideMenu, setMoonStatus } from './menu.js';
@@ -68,7 +70,21 @@ function work(dt) {
   const s = game.s;
   const before = s.money;
   const earned = collect();
-  if (net.mode === 'client') addEarned(s.money - before);    // výdělek se přičte do společných peněz
+  const gained = s.money - before;
+  const swept = playerFx.swept / UNITS_PER_KG;
+  if (net.mode === 'client') {
+    addEarned(gained);                                       // výdělek se přičte do společných peněz
+    addCollected(swept);
+  } else {
+    addStat(myStatKey(), profile.name, 'e', gained);
+    addStat(myStatKey(), profile.name, 'kg', swept);
+  }
+  if (playerFx.deposit) {                                    // náklad vysypaný do depa
+    const { i, kg } = playerFx.deposit;
+    if (net.mode === 'client') reportDeposit(i, kg);
+    else if (depositToDepot(i, kg)) addStat(myStatKey(), profile.name, 'e', kg * PRICE_PER_KG);
+    floatAtTool(`+${fmt(kg)} kg do depa`, 'sale');
+  }
   if (earned) {
     flashMoney();
     floatAtTool(`+$${fmt(earned)}`, 'sale');
@@ -85,6 +101,7 @@ function work(dt) {
       const done = robotTick(st, dt);
       if (done.length) hostRobotCompleted(done);
     }
+    depotTick(dt);                                           // pásy vozí prach z dep do Výkupu
     if (!s.won && hexes.doneCount >= hexes.total * (1 - WIN_LEFT)) {
       s.won = true;
       toast('Měsíc je čistý. Směna skončila!', 8000);
@@ -109,6 +126,10 @@ function doAction() {
   const result = action.run();
   const done = r => {
     if (r === 'placed') toast('Stanice postavena. Robot začíná uklízet okolní hexy.');
+    else if (r === 'moved') toast('Stanice přesunutá. Robot uklízí hexy kolem nového místa.');
+    else if (r === 'carry') toast('Neseš stanici robota. Vyber nové místo mimo základnu: E = položit, Esc = nechat na místě.', 7000);
+    else if (r === 'depot') toast('Depo postavené. Vysyp do něj zásobník, a až u něj postavíš pás (E), prach pojede do Výkupu.', 8000);
+    else if (r === 'belt') toast('Pás postavený. Prach z depa teď jede do Výkupu a prodává se sám.', 6000);
     else if (r === 'denied') toast('Hostitel nákup neschválil (nejspíš došly společné peníze).');
     updateUi();
   };
@@ -119,8 +140,9 @@ function doAction() {
 
 function cancel() {
   if (placing.active) {
+    const kind = placing.kind;
     cancelPlacing();
-    toast('Stavba stanice zrušena.');
+    toast(kind === 'move' ? 'Stanice zůstává na původním místě.' : kind === 'depot' ? 'Stavba depa zrušena.' : 'Stavba stanice zrušena.');
   }
 }
 
@@ -241,6 +263,8 @@ function frame(now) {
   particles.update(rdt);
   cam.setBaseDistance(s.driving >= 0 ? eq.base.camera : isRagdoll() ? 16 : CAMERA.distance);
   cam.update(rdt, actors.focusPosition(), s.p, s.f);
+  actors.fadeOccluders(world.camera.position, actors.focusPosition());
+  if (map.active) map.setTarget(input.target);
   map.update(rdt, focus);
   world.renderer.render(world.scene, world.camera);
   trackFps(now);
@@ -283,7 +307,7 @@ function toggleMap(on = !map.active) {
     input.target = null;
     terrain.setHidden(true);
     map.open(game.s.p, game.s.f);
-    toast('Mapa Měsíce: táhni myší = otáčení, kolečko = přiblížení, M nebo Esc = zpět.', 5000);
+    toast('Mapa Měsíce: táhni myší = otáčení, kolečko = přiblížení, klik = jdi tam, M nebo Esc = zpět.', 6000);
   } else {
     map.close();
     terrain.setHidden(false);
@@ -291,6 +315,16 @@ function toggleMap(on = !map.active) {
   }
   mapButton().setAttribute('aria-pressed', String(on));
   mapButton().classList.toggle('controls__button--active', on);
+}
+
+// Klik do mapy: astronaut (nebo vozidlo, ve kterém sedíš) vyrazí na vybrané místo.
+function goTo(d) {
+  if (!d || isRagdoll()) return;
+  input.target = d;
+  map.setTarget(d);
+  toast(game.s.driving >= 0
+    ? 'Vozidlo jede k vybranému místu. W/S nebo klik ve hře cíl zruší.'
+    : 'Astronaut jde k vybranému místu. W/S nebo klik ve hře cíl zruší.', 5000);
 }
 
 // ---------- ukládání a menu ----------
@@ -319,9 +353,9 @@ function loadFrom(slot) {
 // Doplní práci robotů za dobu, kdy hra neběžela (zavřená stránka / skrytá karta).
 function catchUp(since) {
   const sec = Math.min((Date.now() - since) / 1000, OFFLINE_CAP_S) | 0;
-  if (sec < 10 || !game.s.stations.length) return;
-  const earned = simulateOffline(sec);
-  toast(`Za ${Math.max(1, Math.round(sec / 60))} min tvé nepřítomnosti roboti vydělali $${fmt(earned)}.`, 6000);
+  if (sec < 10 || (!game.s.stations.length && !game.s.depots.some(d => d.belt))) return;
+  const earned = simulateOffline(sec) + depotsOffline(sec);
+  toast(`Za ${Math.max(1, Math.round(sec / 60))} min tvé nepřítomnosti roboti a pásy vydělali $${fmt(earned)}.`, 6000);
 }
 
 // Odkaz pro kamarády do schránky (když schránka nejde, ukáže se v poli k ručnímu zkopírování).
@@ -404,7 +438,8 @@ function build() {
   actors = createActors(world.scene, settings.shadows, profile.look, { vehicleOverride: i => (net.mode === 'off' ? null : vehicleOverride(i)) });
   particles = createParticles(world.scene);
   cam = createFollowCamera(world.camera);
-  map = createMoonMap(world.scene, world.camera, canvas, terrain.texture);
+  const pickDir = createPicker(canvas, world.camera);
+  map = createMoonMap(world.scene, world.camera, canvas, terrain.texture, { onPick: (x, y) => goTo(pickDir(x, y)) });
   terrain.linkUniforms(map.uniforms);
   if (net.mode !== 'off') remotes = createRemotes(world.scene, world.camera, actors, document.getElementById('nametag-layer'));
   actors.update(0.016, 0, playerFx, 120);
@@ -415,7 +450,7 @@ function build() {
   const resumeInput = () => { input.enabled = !map.active && !modalOpen() && !chatOpen(); };
 
   bindInput(canvas, {
-    pickDir: createPicker(canvas, world.camera),
+    pickDir,
     rotate: a => { if (!isRagdoll()) rotateHeading(a); },
     zoom: f => (map.active ? map.zoom(f) : cam.zoom(f)),
     onAction: doAction,
@@ -429,8 +464,12 @@ function build() {
     onChange: () => { flashMoney(); updateUi(); },
     onDenied: () => toast('Hostitel nákup neschválil (nejspíš došly společné peníze).'),
     onPlaceStation: () => {
-      startPlacing();
+      startPlacing('station');
       toast('Vyber místo mimo základnu: robot uklidí hexy do vzdálenosti 2 od stanice. E = postavit, Esc = zrušit.', 7000);
+    },
+    onPlaceDepot: () => {
+      startPlacing('depot');
+      toast('Vyber místo pro depo mimo základnu, nejlépe tam, kde se hodně zametá. E = postavit, Esc = zrušit.', 7000);
     },
     onLook: look => actors.setLook(look),
     wardrobe,
