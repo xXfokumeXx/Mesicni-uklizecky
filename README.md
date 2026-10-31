@@ -1,6 +1,6 @@
 # Moon Sweepers 2
 
-Chill inkrementální hra: zametáš prach z celého Měsíce zubním kartáčkem, koštětem, vysavači a nakonec flotilou zametacích vozů. Hraje se sám nebo s kamarády přes odkaz.
+Chill inkrementální hra: zametáš prach z celého Měsíce zubním kartáčkem, koštětem, vysavači a nakonec flotilou zametacích vozů. Až je Měsíc na 100 % čistý, odletíte obří raketou na Mars a úklid začíná znovu. Hraje se sám nebo s kamarády přes odkaz.
 
 - **Singleplayer:** 5 slotů pro uložené hry (ukládají se v prohlížeči).
 - **Multiplayer:** jeden hráč svět hostuje a ostatním pošle odkaz nebo kód. Peníze jsou společné a všichni vidí pohyb a zametání ostatních v reálném čase. Je tu chat a stejná denní doba pro všechny.
@@ -39,7 +39,7 @@ Bez tohoto kroku hra funguje, ale jen pro jednoho hráče.
 3. Kamarád odkaz otevře a připojí se sám. Kód jde zadat i ručně v lobby, pole **Připojit kódem**.
 4. Svět drží a ukládá hostitel. Když odejde, svět se zavře. Vybavení ostatních hráčů (nástroje, boty) zůstává v jejich prohlížeči.
 
-**Ovládání:** W/S chůze a plyn, A/D otáčení, mezerník skok (ve vzduchu jetpack), Shift boost vozidla, 1–3 hotbar, E akce, R jiný cíl pásu, M mapa (WSAD / šipky otáčí, Q/E přibližuje), U úspěchy, T zrychlení času (v multiplayeru jen hostitel), Enter chat, Esc menu.
+**Ovládání:** W/S chůze a plyn, A/D otáčení, mezerník skok (ve vzduchu jetpack), Shift boost vozidla, 1–3 hotbar, X vyprázdnit políčko hotbaru, E akce (u Výkupu hologram a burza), R jiný cíl pásu, G přesunout depo, M mapa (WSAD / šipky otáčí, Q/E přibližuje), U úspěchy, T zrychlení času (v multiplayeru jen hostitel), Enter chat, Esc menu.
 
 ## Limity bezplatného tarifu
 
