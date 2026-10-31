@@ -13,7 +13,8 @@ import { heightAt } from '../planet/height.js';
 import { createAstronaut } from './astronaut.js';
 import { buildBot } from './models.js';
 import { buildVehicle } from './vehicles.js';
-import { buildDepot, buildWorkshop, buildToolshop, buildGarage, buildStation, buildBasePad } from './buildings.js';
+import { buildDepot, buildWorkshop, buildToolshop, buildGarage, buildStation, buildSilo, buildBasePad } from './buildings.js';
+import { createBelts } from './belts.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
@@ -193,13 +194,26 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
 
   function syncVehicles(dt, viewRange) {
     const list = game.s.vehicles;
-    while (vehicleViews.length < list.length) {
-      const view = buildVehicle(list[vehicleViews.length].type);
-      view.normal = new THREE.Vector3();
-      view.spin = 0;
-      scene.add(prepare(view.root));
-      vehicleViews.push(view);
+    // po prodeji vozidla se indexy posunou → model, který k indexu nepatří, se postaví znovu
+    for (let i = 0; i < Math.max(list.length, vehicleViews.length); i++) {
+      const v = list[i], old = vehicleViews[i];
+      if (old && (!v || old.uid !== (v.uid || '') || old.type !== v.type)) {
+        scene.remove(old.root);
+        const k = prepared.indexOf(old.root);
+        if (k >= 0) prepared.splice(k, 1);
+        vehicleViews[i] = null;
+      }
+      if (v && !vehicleViews[i]) {
+        const view = buildVehicle(v.type);
+        view.normal = new THREE.Vector3();
+        view.spin = 0;
+        view.uid = v.uid || '';
+        view.type = v.type;
+        scene.add(prepare(view.root));
+        vehicleViews[i] = view;
+      }
     }
+    vehicleViews.length = list.length;
     list.forEach((v, i) => {
       const view = vehicleViews[i];
       const remote = vehicleOverride(i);
@@ -235,21 +249,25 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   function syncStations(dt, viewRange) {
     const list = game.s.stations;
     while (stationViews.length < list.length) {
-      const st = list[stationViews.length];
       const station = buildStation();
-      const home = [grid.dirs[st.hex * 3], grid.dirs[st.hex * 3 + 1], grid.dirs[st.hex * 3 + 2]];
-      surface(home, station.root.position);
-      orient(station.root, _up.set(...home), _f.set(...anyTangent(home)));
       const bot = buildBot();
       scene.add(prepare(station.root), prepare(bot.root));
-      stationViews.push({ station, bot, placed: false });
+      stationViews.push({ station, bot, placed: false, hex: -1 });
     }
     const k = 1 - Math.exp(-dt * 10);
     list.forEach((st, i) => {
       const v = stationViews[i], rb = st.robot, p = v.bot.root.position;
+      if (v.hex !== st.hex) {                         // nová nebo přesunutá stanice
+        v.hex = st.hex;
+        v.placed = false;
+        const home = [grid.dirs[st.hex * 3], grid.dirs[st.hex * 3 + 1], grid.dirs[st.hex * 3 + 2]];
+        surface(home, v.station.root.position);
+        orient(v.station.root, _up.set(...home), _f.set(...anyTangent(home)));
+      }
       surface(rb.p, _a);
       if (!v.placed) { p.copy(_a); v.placed = true; } else p.lerp(_a, k);
-      const near = p.distanceTo(astro.root.position) < viewRange;
+      const carried = placing.active && placing.kind === 'move' && placing.index === i;   // hráč ji právě nese
+      const near = !carried && p.distanceTo(astro.root.position) < viewRange;
       v.bot.root.visible = near;
       v.station.root.visible = near;
       if (!near) return;
@@ -260,15 +278,47 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     });
   }
 
+  // ---------- depa a pásy ----------
+  const depotViews = [];
+  const siloGhost = buildSilo(ghostMat);
+  siloGhost.root.visible = false;
+  scene.add(siloGhost.root);
+  const belts = createBelts(scene);
+
+  function syncDepots(viewRange) {
+    const list = game.s.depots;
+    while (depotViews.length < list.length) {
+      const view = buildSilo();
+      scene.add(prepare(view.root));
+      depotViews.push({ view, hex: -1 });
+    }
+    list.forEach((d, i) => {
+      const v = depotViews[i];
+      if (v.hex !== d.hex) {
+        v.hex = d.hex;
+        const home = [grid.dirs[d.hex * 3], grid.dirs[d.hex * 3 + 1], grid.dirs[d.hex * 3 + 2]];
+        surface(home, v.view.root.position);
+        // násypka čelem k základně
+        orient(v.view.root, _up.set(...home), _f.set(-home[0], -home[1], 1 - home[2]));
+      }
+      v.view.root.visible = v.view.root.position.distanceTo(astro.root.position) < viewRange + 20;
+    });
+    for (let i = list.length; i < depotViews.length; i++) depotViews[i].view.root.visible = false;
+  }
+
   function updatePlacement() {
-    ghost.root.visible = placing.active;
-    areaLines.lines.visible = placing.active;
+    const depot = placing.active && placing.kind === 'depot';
+    ghost.root.visible = placing.active && !depot;
+    siloGhost.root.visible = depot;
+    areaLines.lines.visible = placing.active && !depot;
     if (!placing.active || !placing.point) return;
     const hex = dirToCell(placing.point);
     const home = [grid.dirs[hex * 3], grid.dirs[hex * 3 + 1], grid.dirs[hex * 3 + 2]];
-    surface(home, ghost.root.position);
-    orient(ghost.root, _up.set(...home), _f.set(...anyTangent(home)));
+    const g = depot ? siloGhost : ghost;
+    surface(home, g.root.position);
+    orient(g.root, _up.set(...home), _f.set(...anyTangent(home)));
     ghostMat.color.setHex(placing.valid ? 0x5fb8d9 : 0xe0654c);
+    if (depot) return;
     areaLines.lines.material.color.setHex(placing.valid ? 0x5fb8d9 : 0xe0654c);
     areaLines.set(hexArea(hex));
   }
@@ -281,6 +331,8 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     views.garage.setBuilt(s.garage);
     syncVehicles(dt, viewRange);
     syncStations(dt, viewRange);
+    syncDepots(viewRange);
+    belts.update(time, viewRange, astro.root.position);
     updatePlacement();
 
     const eq = activeEquipment();
@@ -352,6 +404,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
 
   return {
     update,
+    fadeOccluders: belts.fade,
     seatTransform,
     vehicleRadius: i => vehicleViews[i]?.radius ?? 1,
     vehicleWorld: i => vehicleViews[i]?.root.position,

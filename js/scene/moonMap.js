@@ -8,6 +8,7 @@ import { dirToCell, cellDir } from '../planet/hexgrid.js';
 import { atlasUv, hexes } from '../planet/dustmap.js';
 import { FLAT_WINDOW } from '../planet/sunwindow.js';
 import { game } from '../state.js';
+import { beltPath } from '../depots.js';
 import { createTerrainMaterial } from './terrainMaterial.js';
 
 const THREE = window.THREE;
@@ -16,7 +17,8 @@ const N = 48;                                   // dílků na hranu stěny ikosa
 const MIN_DIST = R * 1.35, MAX_DIST = R * 5, START_DIST = R * 3.1;
 const CLEAN = [226, 216, 196], DONE = [196, 224, 240];
 
-export function createMoonMap(scene, camera, canvas, dustTexture) {
+// opts.onPick(clientX, clientY) = klik (bez tažení) do mapy → hráč tam vyrazí.
+export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
   let globe = null, vertCell = null, colors = null, colorAttr = null;
   const { material, uniforms } = createTerrainMaterial(dustTexture, 255 / DUST.max, null);
   uniforms.ambient.value.setHex(0x3a4560);        // noční strana trochu světlejší, ať je mapa čitelná
@@ -35,6 +37,14 @@ export function createMoonMap(scene, camera, canvas, dustTexture) {
   group.add(playerPin, basePin, ring);
   const stationMat = new THREE.MeshBasicMaterial({ color: 0x7fd38a });
   let stationPins = [];
+  // cíl cesty (klik do mapy), depa (fialová) a jejich pásy
+  const targetPin = mk(0xe0654c);
+  targetPin.visible = false;
+  group.add(targetPin);
+  let target = null;
+  const depotMat = new THREE.MeshBasicMaterial({ color: 0xb48cf0 });
+  const beltMat = new THREE.LineBasicMaterial({ color: 0xb48cf0 });
+  let depotPins = [], beltLines = [], depotKey = '';
 
   function buildGlobe() {
     const perFace = (N + 1) * (N + 2) / 2;
@@ -105,6 +115,29 @@ export function createMoonMap(scene, camera, canvas, dustTexture) {
     });
   }
 
+  function placeDepots() {
+    const key = game.s.depots.map(d => `${d.hex}${d.belt ? 'b' : ''}`).join(',');
+    if (key === depotKey) return;
+    depotKey = key;
+    for (const o of [...depotPins, ...beltLines]) group.remove(o);
+    beltLines.forEach(l => l.geometry.dispose());
+    depotPins = game.s.depots.map(d => {
+      const pin = new THREE.Mesh(pinGeo, depotMat);
+      pin.userData.dir = cellDir(d.hex);
+      group.add(pin);
+      return pin;
+    });
+    beltLines = game.s.depots.filter(d => d.belt).map(d => {
+      const pts = beltPath(d.hex).points.map(p => {
+        const r = R + heightAt(p) + 1.5;
+        return new THREE.Vector3(p[0] * r, p[1] * r, p[2] * r);
+      });
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), beltMat);
+      group.add(line);
+      return line;
+    });
+  }
+
   // ---------- kamera ----------
 
   const quat = new THREE.Quaternion(), qa = new THREE.Quaternion();
@@ -116,6 +149,7 @@ export function createMoonMap(scene, camera, canvas, dustTexture) {
     if (!globe) buildGlobe();
     recolor();
     placeStations();
+    placeDepots();
     // pohled shora na hráče, „nahoru“ na obrazovce = kam se hráč dívá
     const z = new THREE.Vector3(...p), y = new THREE.Vector3(...f);
     const x = new THREE.Vector3().crossVectors(y, z);
@@ -145,22 +179,31 @@ export function createMoonMap(scene, camera, canvas, dustTexture) {
     targetDist = Math.max(MIN_DIST, Math.min(MAX_DIST, R + (targetDist - R) * factor));
   }
 
-  // ovládání myší / prstem (jen když je mapa otevřená)
-  let dragging = false, lx = 0, ly = 0;
+  // ovládání myší / prstem (jen když je mapa otevřená): tažení = otáčení, klik = cíl cesty
+  let dragging = false, lx = 0, ly = 0, sx = 0, sy = 0, moved = 0;
   canvas.addEventListener('pointerdown', e => {
     if (!active) return;
     dragging = true;
-    lx = e.clientX; ly = e.clientY;
+    lx = sx = e.clientX; ly = sy = e.clientY;
+    moved = 0;
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', e => {
     if (!active || !dragging) return;
     rotate(e.clientX - lx, e.clientY - ly);
     lx = e.clientX; ly = e.clientY;
+    moved = Math.max(moved, Math.hypot(e.clientX - sx, e.clientY - sy));
   });
-  const stop = () => { dragging = false; };
-  canvas.addEventListener('pointerup', stop);
-  canvas.addEventListener('pointercancel', stop);
+  canvas.addEventListener('pointerup', e => {
+    if (active && dragging && moved < 6 && e.button === 0) opts.onPick?.(e.clientX, e.clientY);
+    dragging = false;
+  });
+  canvas.addEventListener('pointercancel', () => { dragging = false; });
+
+  function setTarget(d) {
+    target = d || null;
+    targetPin.visible = !!target;
+  }
 
   const tmpV = new THREE.Vector3();
   function placePin(pin, d, size, lift) {
@@ -184,10 +227,12 @@ export function createMoonMap(scene, camera, canvas, dustTexture) {
     ring.scale.setScalar(size * (1 + 0.25 * Math.sin(performance.now() / 260)));
     placePin(basePin, BASE.dir, size * 1.1, size);
     for (const pin of stationPins) placePin(pin, pin.userData.dir, size * 0.8, size * 0.8);
+    for (const pin of depotPins) placePin(pin, pin.userData.dir, size * 0.9, size * 0.9);
+    if (target) placePin(targetPin, target, size * 0.9, size * 0.9);
 
     recolorTimer -= dt;
-    if (recolorTimer <= 0) { recolorTimer = 1; recolor(); }   // roboti mezitím dočistili hexy
+    if (recolorTimer <= 0) { recolorTimer = 1; recolor(); placeDepots(); }   // roboti mezitím dočistili hexy
   }
 
-  return { open, close, update, rotate, zoom, uniforms, get active() { return active; }, get distance() { return dist; } };
+  return { open, close, update, rotate, zoom, setTarget, uniforms, get active() { return active; }, get distance() { return dist; } };
 }

@@ -228,6 +228,33 @@ export function buildStation(ghostMaterial = null) {
   return { root };
 }
 
+// Depo na prach: silo s násypkou, nahoře hlava pásu, kolem vysýpací zóna.
+export function buildSilo(ghostMaterial = null) {
+  const m = materials();
+  const mat = mm => ghostMaterial || mm;
+  const root = new THREE.Group();
+  root.add(
+    cyl(2.3, 2.5, 0.25, mat(m.pad), 0, 0.12, 0, 24),
+    cyl(1.5, 1.5, 4.2, mat(m.wall), 0, 2.45, 0, 20),
+    cyl(1.53, 1.53, 0.18, mat(m.hivis), 0, 1.3, 0, 20),
+    cyl(1.53, 1.53, 0.18, mat(m.hivis), 0, 3.6, 0, 20),
+    cyl(0.2, 1.5, 1.1, mat(m.shade), 0, 5.1, 0, 20),
+    box(1.1, 0.7, 1.1, mat(m.roof), 0, 6.0, 0),                 // hlava pásu
+    box(1.0, 0.9, 1.4, mat(m.dark), 0, 0.7, 1.75),               // násypka
+  );
+  for (const [x, z] of [[-1.3, -1.3], [1.3, -1.3], [-1.3, 1.3], [1.3, 1.3]]) root.add(box(0.18, 1.0, 0.18, mat(m.dark), x, 0.5, z));
+  if (!ghostMaterial) {
+    const zoneGeo = new THREE.RingGeometry(4.35, 4.5, 48);
+    zoneGeo.rotateX(-Math.PI / 2);
+    const zone = new THREE.Mesh(zoneGeo, new THREE.MeshBasicMaterial({ color: 0xb48cf0, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
+    zone.position.y = 0.12;
+    const label = sign('DEPO', 2.0, 0.5);
+    label.position.set(0, 2.5, 1.56);
+    root.add(zone, label);
+  }
+  return { root };
+}
+
 // Betonová plocha základny – kulový vrchlík, aby kopírovala zakřivení Měsíce.
 export function buildBasePad() {
   const ang = BASE.clean / R;
