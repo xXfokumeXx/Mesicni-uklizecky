@@ -8,11 +8,35 @@
     },
     "rooms": {
       "$room": {
+        ".read": "auth != null && (!root.child('secrets/' + $room.replace('svet-', '')).exists() || root.child('members/' + $room.replace('svet-', '') + '/' + auth.uid).exists())",
         "peers": {
-          ".read": "auth != null",
           "$peer": {
-            ".write": "auth != null && $peer.beginsWith(auth.uid + '_')"
+            ".write": "auth != null && $peer.beginsWith(auth.uid + '_') && (!root.child('secrets/' + $room.replace('svet-', '')).exists() || root.child('members/' + $room.replace('svet-', '') + '/' + auth.uid).exists())"
           }
+        }
+      }
+    },
+    "w": {
+      "$code": {
+        ".read": "auth != null && (!root.child('secrets/' + $code).exists() || root.child('members/' + $code + '/' + auth.uid).exists())",
+        ".write": "auth != null && (!root.child('secrets/' + $code).exists() || root.child('members/' + $code + '/' + auth.uid).exists())",
+        "meta": {
+          ".read": "auth != null"
+        }
+      }
+    },
+    "secrets": {
+      "$code": {
+        ".write": "auth != null && (data.exists() ? data.child('o/' + auth.uid).exists() : root.child('w/' + $code + '/host/u').val() === auth.uid)",
+        ".validate": "newData.hasChildren(['h', 'o']) && newData.child('h').isString() && newData.child('h').val().length === 64"
+      }
+    },
+    "members": {
+      "$code": {
+        ".write": "auth != null && (root.child('secrets/' + $code + '/o/' + auth.uid).exists() || root.child('w/' + $code + '/host/u').val() === auth.uid)",
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && (!root.child('secrets/' + $code).exists() || newData.val() === root.child('secrets/' + $code + '/h').val())"
         }
       }
     },

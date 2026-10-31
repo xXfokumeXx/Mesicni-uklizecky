@@ -3,7 +3,7 @@
 Chill inkrementální hra: zametáš prach z celého Měsíce zubním kartáčkem, koštětem, vysavači a nakonec flotilou zametacích vozů. Až je Měsíc na 100 % čistý, odletíte obří raketou na Mars a úklid začíná znovu. Hraje se sám nebo s kamarády přes odkaz.
 
 - **Singleplayer:** 5 slotů pro uložené hry (ukládají se v prohlížeči).
-- **Multiplayer:** jeden hráč svět hostuje a ostatním pošle odkaz nebo kód. Peníze jsou společné a všichni vidí pohyb a zametání ostatních v reálném čase. Je tu chat a stejná denní doba pro všechny.
+- **Multiplayer:** jeden hráč svět hostuje a ostatním pošle odkaz nebo kód. Peníze jsou společné a všichni vidí pohyb a zametání ostatních v reálném čase. Je tu chat a stejná denní doba pro všechny. Svět se ukládá i do cloudu, takže se dá hrát i bez hostitele, a může mít heslo.
 - Běží na three.js r128 a statickém webu (GitHub Pages). Multiplayer jede přes Firebase Realtime Database v bezplatném tarifu.
 
 ---
@@ -37,9 +37,11 @@ Bez tohoto kroku hra funguje, ale jen pro jednoho hráče.
 1. **Hrát s ostatními → Založit vlastní svět** a vyber slot (uloženou hru nebo novou). Zaškrtnutím zvolíš, jestli se svět ukáže v seznamu lobby, nebo jen přes kód.
 2. Ve hře klikni vpravo nahoře na **Pozvat · kopírovat odkaz**, nebo v menu (Esc) na **Kopírovat odkaz pro kamarády**. Odkaz vypadá jako `…/moon-sweepers/#k3x9p`.
 3. Kamarád odkaz otevře a připojí se sám. Kód jde zadat i ručně v lobby, pole **Připojit kódem**.
-4. Svět drží a ukládá hostitel. Když odejde, svět se zavře. Vybavení ostatních hráčů (nástroje, boty) zůstává v jejich prohlížeči.
+4. Svět drží hostitel a ukládá ho do svého slotu i do cloudu (Firebase). Když odejde, převezme hostování automaticky další hráč ve světě. Když nikdo nehostuje, otevře svět kdokoli z party: zadá kód a klikne na **Otevřít svět – budu hostitel**. Až se původní hostitel vrátí, načte se mu novější stav z cloudu. Vybavení ostatních hráčů (nástroje, boty) zůstává v jejich prohlížeči.
+5. **Heslo ke světu:** hostitel ho nastaví v menu (Esc) → **Heslo světa…**. Kamarádi ho zadají jednou při připojení. Heslo hlídají pravidla databáze, takže bez něj nejde svět ani přečíst. Kdo je ve světě ve chvíli nastavení hesla, hraje dál.
+6. Hostitel kontroluje výdělky: peníze za prach uzná jen za prach, který hráč opravdu nasbíral, a jen u Výkupu.
 
-**Ovládání:** W/S chůze a plyn, A/D otáčení, mezerník skok (ve vzduchu jetpack), Shift boost vozidla, 1–3 hotbar, X vyprázdnit políčko hotbaru, E akce (u Výkupu hologram a burza), R jiný cíl pásu, G přesunout depo, M mapa (WSAD / šipky otáčí, Q/E přibližuje), U úspěchy, T zrychlení času (v multiplayeru jen hostitel), Enter chat, Esc menu.
+**Ovládání** (přehled je i ve hře: Esc → Ovládání): W/S chůze a plyn, A/D otáčení, mezerník skok (ve vzduchu jetpack), Shift boost vozidla, 1–3 hotbar, X vyprázdnit políčko hotbaru, E akce (u Výkupu hologram, burza a statistiky), R jiný cíl pásu, G přesunout depo, L světla, M mapa (WSAD / šipky otáčí, Q/E přibližuje), U úspěchy, T zrychlení času (v multiplayeru jen hostitel), Enter chat, Esc menu.
 
 ## Limity bezplatného tarifu
 
@@ -59,7 +61,8 @@ python -m http.server 8000
 | Složka / soubor | Obsah |
 |---|---|
 | `js/main.js` | start, menu, herní smyčka |
-| `js/net.js` | logika multiplayeru (hostitel, tahy koštětem, nákupy, chat) |
+| `js/net.js` | logika multiplayeru (hostitel, tahy koštětem, nákupy, chat, kontrola výdělků) |
+| `js/cloud.js` | svět v cloudu, zámek hostitele, heslo ke světu |
 | `js/platform/` | přenos dat: Firebase (`firebaseRoom.js`) nebo artefakt claude.ai |
 | `js/firebase-config.js` | konfigurace Firebase projektu |
 | `js/planet/` | Měsíc: hexy, prach, reliéf, stíny (bez three.js) |
