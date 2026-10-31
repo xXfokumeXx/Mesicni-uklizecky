@@ -2,7 +2,7 @@
 // Každý nástroj i vozidlo má vlastní zásobník na prach (load v kg).
 import {
   TOOLS, TOOL_UPGRADES, VEHICLE_UPGRADES, VEHICLES, GARAGE_PRICE, STATION, BOOTS, SELL_REFUND, BELT, JETPACK,
-  toolById, vehicleById, upgradeCost, boostFactor,
+  MARKET, HEXUP, toolById, vehicleById, upgradeCost, boostFactor, marketCost, hexupCost,
 } from './catalog.js';
 import { game, newToolState, newUid } from './state.js';
 import { heldTool, heldKit, putTool, ensureHotbar, KIT_NAMES } from './hotbar.js';
@@ -99,6 +99,30 @@ export function upgradeBoots() {
   if (c === null || game.s.money < c) return false;
   game.s.money -= c;
   game.s.boots = bootsLevel() + 1;
+  return true;
+}
+
+// ---------- burza ve Výkupu (sdílené vylepšení světa) ----------
+
+export const marketLevel = () => Math.min(MARKET.max, game.s.market | 0);
+export const marketUpgradeCost = () => marketCost(marketLevel());
+
+export function upgradeMarket() {
+  const c = marketUpgradeCost();
+  if (c === null || game.s.money < c) return false;
+  game.s.money -= c;
+  game.s.market = marketLevel() + 1;
+  return true;
+}
+
+export const hexupLevel = () => Math.min(HEXUP.max, game.s.hexup | 0);
+export const hexupUpgradeCost = () => hexupCost(hexupLevel());
+
+export function upgradeHexup() {
+  const c = hexupUpgradeCost();
+  if (c === null || game.s.money < c) return false;
+  game.s.money -= c;
+  game.s.hexup = hexupLevel() + 1;
   return true;
 }
 

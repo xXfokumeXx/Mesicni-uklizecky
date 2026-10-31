@@ -16,8 +16,8 @@
 //  • Čas: všichni počítají denní dobu z hodin počítače + posunu hostitele → stejná denní doba.
 //
 // Vše jde přes presence (ne přes události), takže hrát může i pozvaný hráč s právem jen ke čtení.
-import { MOON, HEX_BONUS, PRICE_PER_KG } from './config.js';
-import { game, newGame, addStat } from './state.js';
+import { MOON, HEX_BONUS, PLANET } from './config.js';
+import { game, newGame, addStat, dustPrice } from './state.js';
 import { profile, sanitizeName, validLook } from './profile.js';
 import { strokes, exitVehicle, riding, remapRide, playerFx } from './player.js';
 import { hexes, sweepCapsule, clearHex } from './planet/dustmap.js';
@@ -25,9 +25,9 @@ import { grid, cellDir } from './planet/hexgrid.js';
 import { norm, cross, anyTangent, dot, tangentTo } from './planet/vec.js';
 import { VEHICLES, STATION, DRONE } from './catalog.js';
 import { packDust, unpackDust, toBase64, fromBase64 } from './storage.js';
-import { buildGarage, buyVehicle, upgradeVehicle, callBackVehicle, sellVehicle } from './equipment.js';
+import { buildGarage, buyVehicle, upgradeVehicle, callBackVehicle, sellVehicle, upgradeMarket, upgradeHexup } from './equipment.js';
 import { placeStation, moveStation } from './robots.js';
-import { placeDepot, buildBelt, depositToDepot, beltLoad } from './depots.js';
+import { placeDepot, moveDepot, buildBelt, depositToDepot, beltLoad } from './depots.js';
 import { buyDrone } from './drones.js';
 import { ensureHotbar } from './hotbar.js';
 import { connectPlatform } from './platform/platform.js';
@@ -58,6 +58,8 @@ export const net = {
   onLobby: null,            // změna lobby (pro menu)
   onChat: null,             // ({ name, color, text, system }) → chat
   onHostLeft: null,
+  onDepart: null,           // hostitel odlétá s celým světem na jinou planetu (planeta) → odletová scéna
+  onDepartRequest: null,    // hostitel: klient u rakety chce odletět → true / false
   onState: null,            // klient: přišel nový sdílený stav
 };
 
@@ -134,6 +136,7 @@ export function openWorlds(includePrivate = false) {
       hostPeer: p.peer,
       hostName: sanitizeName(p.presence.n) || 'Hostitel',
       players: p.presence.H.pl | 0,
+      planet: p.presence.H.pn === 'mars' ? 'mars' : 'moon',
       me: p.isMe && p.sameTab,
     }));
 }
@@ -452,7 +455,7 @@ function hostReadPeer(r, pr) {
       if (!isNum(kg) || kg <= (seen[i] || 0)) return;
       const add = Math.min(kg - (seen[i] || 0), 1e7);
       seen[i] = kg;
-      if (depositToDepot(i, add)) addStat(key, r.name, 'e', add * PRICE_PER_KG);
+      if (depositToDepot(i, add)) addStat(key, r.name, 'e', add * dustPrice());
     });
   }
   // žádosti o nákup
@@ -498,8 +501,12 @@ function hostRequest(kind, a, cost, r) {
     case 'call': return !vehicleTakenBy(a[0] | 0) && callBackVehicle(a[0] | 0);
     case 'vsell': return s.driving !== (a[0] | 0) && !vehicleTakenBy(a[0] | 0) && !seatsTaken(a[0] | 0).size && vehicleUid(a[0] | 0) === String(a[1]) && sellVehicle(a[0] | 0);
     case 'dep': return okVec(a, 0) ? placeDepot(decU(a)) : false;
+    case 'depmove': return okVec(a, 1) ? moveDepot(a[0] | 0, decU(a, 1)) : false;
     case 'belt': return buildBelt(a[0] | 0, Number.isInteger(a[1]) ? a[1] : -1);
     case 'drone': return buyDrone();
+    case 'market': return upgradeMarket();
+    case 'hexup': return upgradeHexup();
+    case 'depart': return !!net.onDepartRequest?.();
     default: return false;
   }
 }
@@ -525,6 +532,10 @@ function hostState() {
     ts: Date.now(),
     g: s.garage ? 1 : 0,
     won: s.won ? 1 : 0,
+    pn: PLANET.id,
+    go: s.go || 0,
+    mk: s.market | 0,
+    hu: s.hexup | 0,
     v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '', v.lv.boost | 0]),
     st: s.stations.map(st => st.hex),
     b: s.stations.map(botEnc),
@@ -586,6 +597,7 @@ async function writeSnapshot() {
 
 let lastH = null;
 let lastRc = 0;
+let departing = false;
 const vehSig = [];                      // podpis polohy vozidel z H (aby se poloha přepsala jen při změně)
 const botPrev = [];
 const dronePrev = [];
@@ -667,6 +679,9 @@ function applyHostState(H) {
   }
   s.garage = !!H.g;
   s.won = !!H.won;
+  s.market = Math.max(0, H.mk | 0);
+  if (H.go && !departing) { departing = true; net.onDepart?.(String(H.go)); }
+  s.hexup = Math.max(0, H.hu | 0);
   if (typeof H.t === 'string') s.title = cleanText(H.t).slice(0, 40);
 
   // flotila (Firebase prázdné pole neuloží → chybějící H.v = žádná vozidla, třeba po prodeji posledního)
@@ -837,7 +852,7 @@ export function reportParked(i) {
 }
 
 // Osobní postup klienta v cizím světě (nástroje, boty, poloha) – v prohlížeči hráče.
-const personalKey = () => `ms2_mp_${net.code}`;
+const personalKey = () => `ms2_mp_${net.code}${PLANET.id === 'moon' ? '' : `_${PLANET.id}`}`;   // na Marsu od nuly
 export function savePersonal() {
   if (net.mode !== 'client' || !game.s) return;
   const s = game.s;

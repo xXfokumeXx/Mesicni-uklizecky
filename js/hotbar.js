@@ -1,13 +1,14 @@
 // Hotbar: políčka dole na obrazovce, co astronaut drží po ruce. Na začátku jedno políčko,
 // opasek (Dílna → Astronaut) přidá druhé a třetí. Políčko drží id nástroje (string),
-// stavební sadu { kit: 'station' | 'depot' | 'move', i, prev } nebo null (prázdné).
+// stavební sadu { kit: 'station' | 'depot' | 'move' | 'dmove', i, prev } nebo null (prázdné).
+// move = sebraná stanice robota i, dmove = přesouvané depo i.
 // Sada = stanice / depo, které se právě staví (E = postavit), nebo sebraná stanice robota;
 // prev = nástroj, který v políčku byl předtím a po postavení se do něj vrátí.
 import { TOOLS, BELT } from './catalog.js';
 import { game } from './state.js';
 
-const KITS = ['station', 'depot', 'move'];
-export const KIT_NAMES = { station: 'Stanice robota', depot: 'Depo na prach', move: 'Sebraná stanice' };
+const KITS = ['station', 'depot', 'move', 'dmove'];
+export const KIT_NAMES = { station: 'Stanice robota', depot: 'Depo na prach', move: 'Sebraná stanice', dmove: 'Přesun depa' };
 
 export const hotbarSlots = (s = game.s) => BELT.levels[s.belt || 0].slots;
 
@@ -15,7 +16,7 @@ const isKit = e => !!e && typeof e === 'object' && KITS.includes(e.kit);
 
 function validEntry(s, e) {
   if (typeof e === 'string') return !!s.tools[e];
-  return isKit(e) && (e.kit !== 'move' || !!s.stations[e.i]);
+  return isKit(e) && (e.kit !== 'move' || !!s.stations[e.i]) && (e.kit !== 'dmove' || !!s.depots[e.i]);
 }
 
 // Nejlepší vlastněný nástroj, který ještě není v hotbaru.
@@ -34,8 +35,10 @@ function syncTool(s) {
 }
 
 // Srovná hotbar s počtem políček a vlastněnými nástroji (po načtení hry a po koupi opasku).
+// Nástroji se doplní jen úplně nový hotbar – políčko, které hráč vyprázdnil (X), zůstane prázdné.
 export function ensureHotbar(s = game.s) {
   const n = hotbarSlots(s);
+  const fresh = !Array.isArray(s.hotbar) || !s.hotbar.length;
   const seen = new Set();
   let bar = (Array.isArray(s.hotbar) ? s.hotbar.slice(0, n) : []).map(e => {
     if (!validEntry(s, e)) return null;
@@ -46,7 +49,7 @@ export function ensureHotbar(s = game.s) {
     return e;
   });
   while (bar.length < n) bar.push(null);
-  for (let k = 0; k < n; k++) if (bar[k] === null) bar[k] = freeTool(s, bar);
+  if (fresh) for (let k = 0; k < n; k++) if (bar[k] === null) bar[k] = freeTool(s, bar);
   s.hotbar = bar;
   s.sel = Math.min(n - 1, Math.max(0, s.sel | 0));
   syncTool(s);
@@ -85,7 +88,7 @@ export function putTool(id) {
 export function putKit(kit) {
   const s = game.s;
   ensureHotbar(s);
-  let k = s.hotbar.findIndex(e => isKit(e) && e.kit === kit.kit && (kit.kit !== 'move' || e.i === kit.i));
+  let k = s.hotbar.findIndex(e => isKit(e) && e.kit === kit.kit && ((kit.kit !== 'move' && kit.kit !== 'dmove') || e.i === kit.i));
   if (k < 0) {
     k = s.hotbar.indexOf(null);
     if (k < 0) {
@@ -96,6 +99,15 @@ export function putKit(kit) {
     s.hotbar[k] = { ...kit };
   }
   s.sel = k;
+}
+
+// Vyprázdní políčko k (klávesa X / pravé tlačítko): nástroj zůstává koupený a vrátí se do ruky
+// tlačítkem v Obchodě nebo Dílně; stavební sada se zahodí (sebraná stanice zůstane, kde byla).
+export function dropSlot(k = game.s.sel) {
+  const s = game.s;
+  if (k < 0 || k >= hotbarSlots() || s.driving >= 0 || s.hotbar[k] == null) return false;
+  s.hotbar[k] = null;
+  return true;
 }
 
 // Sada ve vybraném políčku se spotřebovala (postaveno) nebo zrušila (Esc).

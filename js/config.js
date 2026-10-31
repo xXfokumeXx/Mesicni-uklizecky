@@ -1,15 +1,53 @@
 // Všechna laditelná čísla hry na jednom místě. Ceny a parametry nástrojů/vozidel jsou v catalog.js.
 
-// Měsíc (verze 2): poloměr 304 m (obvod ≈ 1,9 km, plocha 1,6× proti v1).
-// Hexové sektory: ikosaedr s frekvencí 33 → 10·33² + 2 = 10 892 hexů, hex ≈ 10 m napříč (jako v1).
-// Terén: každá stěna ikosaedru rozdělená na 240 dílků (~1,3 m), kreslí se po kusech (5×5 na stěnu).
-export const MOON = { radius: 304, hexFreq: 33, terrainSeg: 240, terrainChunks: 5 };
+// ---------- planeta ----------
+// Hra běží buď na Měsíci, nebo (po odletu raketou) na Marsu. Planeta se vybere při načtení stránky
+// (sessionStorage ms2_planet, ve Web Workeru parametr ?planet= v adrese) a všechny moduly ji
+// převezmou jako konstanty – přepnutí planety = uložit hru a znovu načíst stránku (main.js switchPlanet).
+//
+// Měsíc: poloměr 304 m, ikosaedr s frekvencí 33 → 10 892 hexů (hex ≈ 10 m), terén 240 dílků na stěnu
+// (~1,3 m) po kusech 5×5, prachová mapa 960 bodů na hranu stěny (bod ≈ 0,33 m).
+// Mars: 4× větší plocha (poloměr 608 m, jako skutečný poměr Mars/Měsíc), stejně velké hexy (43 562),
+// terén se stejně jemnými dílky, mapa prachu s body ≈ 0,44 m, gravitace 3,71 m/s², rezavé barvy a obloha.
+export const PLANETS = {
+  moon: {
+    id: 'moon', name: 'Měsíc', gen: 'Měsíce', loc: 'na Měsíci', acc: 'Měsíc',
+    radius: 304, hexFreq: 33, terrainSeg: 240, terrainChunks: 5, faceTexels: 960, gravity: 1.62,
+    craters: 300, seed: 1969, noise: 0,
+    clean: [226, 216, 196], done: [196, 224, 240], dirt: [0.44, 0.38, 0.31],
+    sky: 0x020306, skyDay: null, ambient: 0x1c2433, sun: 0xfff2dc, sunPower: 1.3, earth: true,
+  },
+  mars: {
+    id: 'mars', name: 'Mars', gen: 'Marsu', loc: 'na Marsu', acc: 'Mars',
+    radius: 608, hexFreq: 66, terrainSeg: 480, terrainChunks: 10, faceTexels: 1440, gravity: 3.71,
+    craters: 520, seed: 1976, noise: 517,
+    clean: [150, 92, 68], done: [196, 150, 124], dirt: [1.42, 1.02, 0.74],
+    sky: 0x07040a, skyDay: 0xc79a6e, ambient: 0x33231c, sun: 0xffe8cf, sunPower: 1.1, earth: false,
+  },
+};
+
+function pickPlanet() {
+  try {
+    const q = new URLSearchParams(globalThis.location?.search || '').get('planet');
+    if (PLANETS[q]) return q;
+  } catch { /* nic */ }
+  try {
+    const s = globalThis.sessionStorage?.getItem('ms2_planet');
+    if (PLANETS[s]) return s;
+  } catch { /* nic */ }
+  return 'moon';
+}
+export const PLANET = PLANETS[pickPlanet()];
+export const PLANET_KEY = 'ms2_planet';
+
+// Rozměry aktuální planety (jméno MOON zůstalo z doby, kdy byl jen Měsíc).
+export const MOON = { radius: PLANET.radius, hexFreq: PLANET.hexFreq, terrainSeg: PLANET.terrainSeg, terrainChunks: PLANET.terrainChunks };
 
 // Nejvyšší a nejnižší bod terénu (m) – pro rychlé konce paprsků stínů a dohled za obzor.
 export const RELIEF = { maxH: 50, minH: -40 };
 
-// Prachová mapa: 960 bodů na hranu stěny → bod ≈ 0,33 m. Hodnota = množství prachu (0–max).
-export const DUST = { faceTexels: 960, max: 100 };
+// Prachová mapa: body na hranu stěny ikosaedru. Hodnota = množství prachu (0–max).
+export const DUST = { faceTexels: PLANET.faceTexels, max: 100 };
 
 // Základna: střed na „přivrácené straně“. flat = poloměr roviny, clean = poloměr bez prachu,
 // noStations = kam nejde postavit stanici robota.
@@ -28,7 +66,7 @@ export const SAVE_KEY = 'moonsweep_v5';             // uložená hra verze 1 (je
 export const MAX_VEHICLES = 10;                      // parkovacích míst u garáže (flotila)
 
 // Fyzika: gravitace míří do středu Měsíce.
-export const MOON_GRAVITY = 1.62;                    // m/s²
+export const MOON_GRAVITY = PLANET.gravity;          // m/s² (Měsíc 1,62, Mars 3,71)
 export const JUMP_SPEED = 2.6;                       // m/s → skok ~2 m vysoko, ~3 s ve vzduchu
 export const WALK_SPEED = 5;                         // m/s
 export const AIR_CONTROL = 0.6;                      // jak moc jde ve vzduchu měnit směr (0–1)

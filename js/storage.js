@@ -2,7 +2,7 @@
 // Mapa prachu (9,2 mil. bodů) se neukládá celá: Měsíc se při startu vždy vygeneruje stejně
 // (pevné semínko) a uloží se jen ROZDÍL = kolik prachu kde ubylo. Rozdíl je skoro všude nula,
 // takže ho gzip v prohlížeči (CompressionStream) zmenší na desítky až stovky kB.
-import { SAVE_KEY } from './config.js';
+import { SAVE_KEY, PLANET } from './config.js';
 import { game, newGame, upgradeState, newUid } from './state.js';
 import { hexes, dustDiff, applyDustDiff } from './planet/dustmap.js';
 import { VEHICLES, STATION } from './catalog.js';
@@ -90,7 +90,7 @@ async function putRecord(rec) {
   const ok = await idb('readwrite', st => st.put(rec));
   if (ok !== undefined) return true;
   try {                                            // náhrada: localStorage (base64)
-    localStorage.setItem(LS_PREFIX + rec.id, JSON.stringify({ ...rec, dust: { gz: rec.dust.gz, b64: toBase64(rec.dust.bytes) } }));
+    localStorage.setItem(LS_PREFIX + rec.id, JSON.stringify({ ...rec, dust: rec.dust && { gz: rec.dust.gz, b64: toBase64(rec.dust.bytes) } }));
     return true;
   } catch { return false; }
 }
@@ -100,7 +100,7 @@ async function getRecord(id) {
   if (rec) return rec;
   try {
     const raw = JSON.parse(localStorage.getItem(LS_PREFIX + id));
-    if (raw) return { ...raw, dust: { gz: raw.dust.gz, bytes: fromBase64(raw.dust.b64) } };
+    if (raw) return { ...raw, dust: raw.dust && { gz: raw.dust.gz, bytes: fromBase64(raw.dust.b64) } };
   } catch { /* nic */ }
   return null;
 }
@@ -130,9 +130,31 @@ export async function listSaves() {
 let saving = false;
 let warned = false;
 
+// Po odletu na jinou planetu se už nesmí uložit starý stav přes nový (main.js switchPlanet).
+let locked = false;
+export const lockSaves = () => { locked = true; };
+
+// Planeta uložené hry ve slotu ('moon' / 'mars'), null = slot je prázdný.
+export async function savePlanet(slot) {
+  const rec = await getRecord(slot);
+  return rec?.s ? (rec.s.planet === 'mars' ? 'mars' : 'moon') : null;
+}
+
+// Uloží nový stav světa na jiné planetě bez mapy prachu (ta se po načtení vygeneruje čistá).
+export async function saveFresh(slot, s) {
+  const rec = {
+    id: slot,
+    v: 2,
+    meta: { title: s.title, savedAt: Date.now(), money: s.money, done: 0, total: 0, playMs: s.playMs || 0, planet: s.planet },
+    s,
+    dust: null,
+  };
+  return putRecord(rec);
+}
+
 // Uloží aktuální hru do slotu (výchozí = slot, ze kterého se hraje). Vrací true/false.
 export async function saveGame(slot = game.slot, onFail) {
-  if (saving || !game.s || !slot || game.mode === 'client') return false;
+  if (saving || locked || !game.s || !slot || game.mode === 'client') return false;
   saving = true;
   try {
     const now = Date.now();
@@ -144,7 +166,7 @@ export async function saveGame(slot = game.slot, onFail) {
       v: 2,
       meta: {
         title: game.s.title, savedAt: now, money: game.s.money,
-        done: hexes.doneCount, total: hexes.total, playMs: game.s.playMs,
+        done: hexes.doneCount, total: hexes.total, playMs: game.s.playMs, planet: game.s.planet,
       },
       s: game.s,
       dust: await packDust(),
@@ -171,7 +193,8 @@ export async function loadGame(slot) {
   try {
     const rec = await getRecord(slot);
     if (!rec?.s || rec.v !== 2) return false;
-    if (!(await unpackDust(rec.dust))) return false;
+    if ((rec.s.planet === 'mars' ? 'mars' : 'moon') !== PLANET.id) return false;
+    if (rec.dust && !(await unpackDust(rec.dust))) return false;      // bez mapy = čerstvě vygenerovaná planeta
     game.s = rec.s;
     upgradeState(game.s);
     game.slot = slot;

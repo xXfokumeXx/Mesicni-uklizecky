@@ -1,6 +1,7 @@
 // Stav hry. Prach se nosí v nástroji nebo ve vozidle, ne v astronautovi.
 // game.s = vše, co se ukládá (v multiplayeru u klienta jen jeho osobní část + kopie sdíleného světa).
-import { MOON, BASE } from './config.js';
+import { MOON, BASE, PRICE_PER_KG, HEX_BONUS, PLANET } from './config.js';
+import { MARKET, HEXUP } from './catalog.js';
 import { hexes, hexProgress } from './planet/dustmap.js';
 import { dirToCell } from './planet/hexgrid.js';
 import { angleBetween, tangentTo } from './planet/vec.js';
@@ -17,6 +18,7 @@ export const newToolState = () => ({ load: 0, lv: { width: 0, hopper: 0, power: 
 export function newGame(title = 'Nová směna', dust = game.dust) {
   game.s = {
     v: 2,
+    planet: PLANET.id,                            // 'moon' / 'mars' (config.js PLANETS)
     title,
     money: 0,
     p: SPAWN,                                     // pozice (jednotkový vektor)
@@ -35,6 +37,8 @@ export function newGame(title = 'Nová směna', dust = game.dust) {
     stations: [],                                 // { hex, robot }
     drones: [],                                   // UFO drony { p, t, hex, k, load, mode } (drones.js)
     depots: [],                                   // { hex, store, belt, to, transit: [[s, kg]] } (depots.js)
+    market: 0,                                    // úroveň burzy ve Výkupu (0–5) → cena prachu
+    hexup: 0,                                     // úroveň prémie za hex ve Výkupu (0–5)
     pstats: {},                                   // klíč hráče → { n, kg, e, sp } (sesbíráno / vyděláno / utraceno)
     won: false,
     playMs: 0,                                    // odehraný čas (pro seznam uložených her)
@@ -47,6 +51,8 @@ export const newUid = () => Math.random().toString(36).slice(2, 8).padEnd(6, '0'
 
 // Doplní pole, která starší uložené hry nemají (hra z předchozí verze se načte beze ztrát).
 export function upgradeState(s = game.s) {
+  s.planet = s.planet === 'mars' ? 'mars' : 'moon';
+  delete s.go;                                    // nedokončený odlet raketou se neobnovuje
   if (!Array.isArray(s.depots)) s.depots = [];
   if (!Array.isArray(s.drones)) s.drones = [];
   if (!s.pstats || typeof s.pstats !== 'object') s.pstats = {};
@@ -64,7 +70,14 @@ export function upgradeState(s = game.s) {
   s.jetpack = s.jetpack ? 1 : 0;
   if (!Array.isArray(s.hotbar)) s.hotbar = [s.tool || 'toothbrush'];
   s.sel = s.sel | 0;
+  s.market = Math.min(MARKET.max, Math.max(0, s.market | 0));
+  s.hexup = Math.min(HEXUP.max, Math.max(0, s.hexup | 0));
 }
+
+// Výkupní cena prachu ($/kg) podle burzy ve Výkupu.
+export const dustPrice = () => PRICE_PER_KG * (1 + MARKET.step * (game.s?.market | 0));
+// Prémie za dočištěný hex ($) podle vylepšení ve Výkupu.
+export const hexBonus = () => Math.round(HEX_BONUS * (1 + HEXUP.step * (game.s?.hexup | 0)));
 
 // Statistiky hráče: kg = nasbíraný prach, e = vydělané peníze, sp = utracené peníze.
 export function addStat(key, name, field, amount) {

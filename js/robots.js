@@ -1,8 +1,8 @@
 // Stanice robotů. Každá stanice má jednoho robota, který čistí hexy do vzdálenosti 2 hexů
 // od hexu stanice (19 hexů), projíždí je v řádcích jako sekačka a plný se vrací vyložit do stanice.
-import { MOON, BASE, PRICE_PER_KG, HEX_BONUS, UNITS_PER_KG } from './config.js';
+import { MOON, BASE, UNITS_PER_KG } from './config.js';
 import { STATION } from './catalog.js';
-import { game } from './state.js';
+import { game, dustPrice, hexBonus } from './state.js';
 import { stationPrice } from './equipment.js';
 import { grid, dirToCell, cellDir, HEX_SPACING } from './planet/hexgrid.js';
 import { hexes, sweepCapsule, clearHex } from './planet/dustmap.js';
@@ -47,7 +47,7 @@ export function moveStation(i, p) {
   const st = game.s.stations[i];
   if (!st || !canPlaceStation(p, i)) return false;
   const rb = st.robot;
-  if (rb.load > 0) game.s.money += rb.load * PRICE_PER_KG;
+  if (rb.load > 0) game.s.money += rb.load * dustPrice();
   st.hex = dirToCell(p);
   const home = cellDir(st.hex);
   st.robot = { p: home, t: home, hex: -1, k: -1, load: 0, mode: 'work' };
@@ -131,12 +131,12 @@ export function robotTick(st, dt) {
     const r = sweepCapsule(from, rb.p, STATION.width / 2, Math.round(STATION.power * dt * 10), limit);
     rb.load += r.got / UNITS_PER_KG;
     completed = r.completed;
-    game.s.money += completed.length * HEX_BONUS;
+    game.s.money += completed.length * hexBonus();
     if (dist <= 0.05) nextTarget(st);
   } else if (dist <= 0.3) {
     // ve stanici: vyložit a pokračovat
     if (rb.load > 0) {
-      game.s.money += rb.load * PRICE_PER_KG;
+      game.s.money += rb.load * dustPrice();
       rb.load = 0;
     }
     if (rb.mode === 'unload' || (rb.mode === 'idle' && nextOpenHex(st, rb.p) >= 0)) {
@@ -159,7 +159,7 @@ export function simulateOffline(seconds) {
       if (c < 0 || hexes.left[c] > budget) break;
       const { got, completed } = clearHex(c);
       budget -= Math.max(got, 1);
-      s.money += got / UNITS_PER_KG * PRICE_PER_KG + (completed ? HEX_BONUS : 0);
+      s.money += got / UNITS_PER_KG * dustPrice() + (completed ? hexBonus() : 0);
     }
     const rb = st.robot;
     rb.p = cellDir(st.hex);

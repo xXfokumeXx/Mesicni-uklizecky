@@ -1,18 +1,22 @@
-// Okna budov (Obchod s nástroji, Dílna, Garáž) a okno Úspěchy: mřížka karet vlevo, detail vpravo.
+// Okna budov (Obchod s nástroji, Dílna, Garáž, Výkup) a okno Úspěchy: mřížka karet vlevo, detail vpravo.
+// Výkup: hologram planety (scene/hologram.js) a burza s ekonomickými vylepšeními.
 // Obsah se skládá z dat (catalog.js + stav hry), akce volají equipment.js přes econ.js
 // (v multiplayeru schvaluje nákupy hostitel). Verze 2: Šatna v Dílně, Flotila v Garáži.
 import {
-  TOOLS, VEHICLES, TOOL_UPGRADES, VEHICLE_UPGRADES, GARAGE_PRICE, STATION, BOOTS, SILO, DRONE, BELT, JETPACK,
+  TOOLS, VEHICLES, TOOL_UPGRADES, VEHICLE_UPGRADES, GARAGE_PRICE, STATION, BOOTS, SILO, DRONE, BELT, JETPACK, MARKET, HEXUP,
   vehicleById, SUIT_COLORS, HELMET_PROPS, propById,
 } from './catalog.js';
-import { MOON, MAX_VEHICLES } from './config.js';
-import { game } from './state.js';
+import { MOON, MAX_VEHICLES, PRICE_PER_KG, HEX_BONUS, PLANET } from './config.js';
+import { game, dustPrice, hexBonus } from './state.js';
 import {
   toolStats, vehicleStats, ownsTool, buyTool, equipTool, toolUpgradeCost, upgradeTool,
   bootsLevel, walkSpeed, bootsUpgradeCost, upgradeBoots, vehicleCount, fleetFull,
   buildGarage, buyVehicle, vehicleUpgradeCost, upgradeVehicle, stationPrice,
   vehicleSellValue, sellVehicle, upgradeFits, beltLevel, beltUpgradeCost, upgradeBelt, ownsJetpack, buyJetpack,
+  marketLevel, marketUpgradeCost, upgradeMarket, hexupLevel, hexupUpgradeCost, upgradeHexup,
 } from './equipment.js';
+import { holoCounts } from './scene/hologram.js';
+import { cleanPercent } from './rocket.js';
 import { purchase, callVehicle } from './econ.js';
 import { vehicleTakenBy, isClient, seatsTaken } from './net.js';
 import { dronePrice, buyDrone } from './drones.js';
@@ -32,8 +36,9 @@ const m = v => (v < 1 ? `${Math.round(v * 100)} cm` : `${v.toFixed(2).replace(/\
 const kg = v => `${v < 10 ? v.toFixed(1) : Math.round(v)} kg`;
 const money = v => '$' + fmt(v);
 const hex = n => '#' + n.toString(16).padStart(6, '0');
+const fmtInt = n => n.toLocaleString('cs-CZ');
 
-const TITLES = { toolshop: 'Obchod s nástroji', workshop: 'Dílna', garage: 'Garáž', trophies: 'Úspěchy' };
+const TITLES = { toolshop: 'Obchod s nástroji', workshop: 'Dílna', garage: 'Garáž', trophies: 'Úspěchy', depot: 'Výkup prachu' };
 
 let thumb = null;            // generátor náhledů (scene/thumbs.js)
 let hooks = null;            // { onOpen, onClose, onChange, onPlaceStation, onLook, wardrobe, headModel }
@@ -373,6 +378,85 @@ function jetpackItem() {
   };
 }
 
+// ---------- Výkup: burza a hologram ----------
+
+// Ikona burzy (graf) / prémie (hex s dolarem) jako obrázek karty.
+function exchangeIcon(kind, lv) {
+  const on = lv > 0;
+  const fg = on ? '#7fd38a' : '#9aa3b2';
+  const body = kind === 'market'
+    ? `<polyline points="40,130 85,105 120,115 160,70 200,45" fill="none" stroke="${fg}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>`
+      + `<polygon points="200,30 212,58 184,52" fill="${fg}"/>`
+    : `<polygon points="120,22 177,55 177,120 120,153 63,120 63,55" fill="none" stroke="${fg}" stroke-width="9"/>`
+      + `<text x="120" y="108" font-size="62" font-weight="700" text-anchor="middle" fill="${fg}">$</text>`;
+  const pips = Array.from({ length: 5 }, (_, k) => `<circle cx="${84 + k * 18}" cy="160" r="5" fill="${k < lv ? '#f2b33d' : '#4a4f5c'}"/>`).join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="170" viewBox="0 0 240 170">${body}${pips}</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function exchangeItem(key, U, lv, cost, run, valueNow, valueNext, stats) {
+  const pct = l => `+${Math.round(l * U.step * 100)} %`;
+  return {
+    key,
+    name: U.name,
+    chip: [lv ? pct(lv) : 'ZÁKLAD', lv ? 'owned' : 'store'],
+    thumb: () => exchangeIcon(key, lv),
+    detail: {
+      eyebrow: `Výkup prachu · úroveň ${lv} z ${U.max}`,
+      title: U.name,
+      desc: U.desc,
+      stats,
+      upgrades: [{
+        name: `${U.name} (${pct(1)} za úroveň)`, lv, max: U.max,
+        effect: cost === null ? `${valueNow} · nejvyšší úroveň` : `${valueNow} → ${valueNext}`,
+        cost, run: () => purchase(key, [], cost, run),
+      }],
+    },
+  };
+}
+
+function marketTab() {
+  const ml = marketLevel(), hl = hexupLevel();
+  const price = l => `$${(PRICE_PER_KG * (1 + MARKET.step * l)).toFixed(2)} / kg`;
+  const bonus = l => `$${Math.round(HEX_BONUS * (1 + HEXUP.step * l))} za hex`;
+  return [
+    exchangeItem('market', MARKET, ml, marketUpgradeCost(), upgradeMarket, price(ml), price(ml + 1), [
+      ['Výkupní cena teď', `$${dustPrice().toFixed(2)} / kg`],
+      ['Základní cena', `$${PRICE_PER_KG} / kg`],
+      ['Další úroveň', ml >= MARKET.max ? '–' : price(ml + 1)],
+    ]),
+    exchangeItem('hexup', HEXUP, hl, hexupUpgradeCost(), upgradeHexup, bonus(hl), bonus(hl + 1), [
+      ['Prémie teď', `$${hexBonus()} za hex`],
+      ['Základní prémie', `$${HEX_BONUS} za hex`],
+      ['Další úroveň', hl >= HEXUP.max ? '–' : bonus(hl + 1)],
+    ]),
+  ];
+}
+
+function holoDetailHtml() {
+  const c = holoCounts();
+  const pc = n => (c.total ? `${(n / c.total * 100).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} %` : '–');
+  const row = (cls, label, n) => `
+    <div class="spec"><span class="spec__label"><span class="holo__dot holo__dot--${cls}"></span>${esc(label)}</span>
+      <span class="spec__value">${fmtInt(n)} · ${pc(n)}</span></div>`;
+  return `
+    <div class="detail__head">
+      <div class="detail__heading">
+        <p class="detail__eyebrow">Výkup prachu · hologram</p>
+        <h3 class="detail__title">${esc(PLANET.name)} z hexů</h3>
+      </div>
+    </div>
+    <p class="detail__desc">Každý hex planety ve skutečném stavu úklidu. Bílá tečka je raketa domů, modrá Výkup, blikající oranžová jsi ty.</p>
+    <div class="detail__specs">
+      ${row('done', 'Vyčištěné', c.done)}
+      ${row('started', 'Rozpracované', c.started)}
+      ${row('fresh', 'Nedotčené (0 %)', c.fresh)}
+      <div class="spec"><span class="spec__label">Hotovo celkem</span><span class="spec__value">${cleanPercent().toLocaleString('cs-CZ')} %</span></div>
+      <div class="spec"><span class="spec__label">Výkupní cena</span><span class="spec__value">$${dustPrice().toFixed(2)} / kg · $${hexBonus()} za hex</span></div>
+    </div>
+    <p class="wardrobe__hint">Táhni myší = otočit · kolečko = přiblížit</p>`;
+}
+
 // ---------- úspěchy ----------
 
 function trophiesTab() {
@@ -381,8 +465,9 @@ function trophiesTab() {
     const stats = [['Stav', on ? `Získáno ${new Date(profile.ach[a.id]).toLocaleDateString('cs-CZ')}` : 'Zatím zamčeno']];
     if (a.goal) {
       const v = Math.min(a.goal, profile.achStats[a.stat] || 0);
-      const f = x => (a.unit === '$' ? money(x) : `${fmt(x)}${a.unit ? ` ${a.unit}` : ''}`);
-      stats.push(['Postup', `${f(v)} / ${f(a.goal)}`]);
+      const num = x => (a.goal < 100 && x % 1 ? x.toLocaleString('cs-CZ', { maximumFractionDigits: a.goal < 50 ? 2 : 1 }) : fmt(x));
+      const f = x => (a.unit === '$' ? money(x) : `${num(x)}${a.unit ? ` ${a.unit}` : ''}`);
+      stats.push([a.rec ? 'Rekord' : 'Postup', `${f(v)} / ${f(a.goal)}`]);
     }
     return {
       key: a.id, name: a.name, chip: on ? ['ZÍSKÁNO', 'active'] : ['ZAMČENO', 'store'],
@@ -421,6 +506,7 @@ function tabsFor(id) {
     ];
   }
   if (id === 'trophies') return [['all', `Úspěchy (${achCount()}/${ACHIEVEMENTS.length})`, trophiesTab]];
+  if (id === 'depot') return [['holo', 'Hologram', null], ['market', 'Burza', marketTab]];
   if (id === 'garage') {
     return game.s.garage
       ? [['vehicles', 'Vozidla', vehiclesShopTab], ['fleet', `Flotila (${game.s.vehicles.length})`, fleetTab]]
@@ -513,6 +599,15 @@ function render() {
     return;
   }
   hooks.wardrobe.unmount();
+  if (view.tab === 'holo') {
+    current = null;
+    $('facility-grid').classList.add('facility__grid--plain');
+    $('facility-grid').innerHTML = '<div class="holo" id="holo-stage"></div>';
+    $('facility-detail').innerHTML = holoDetailHtml();
+    hooks.holo.mount($('holo-stage'));
+    return;
+  }
+  hooks.holo.unmount();
   $('facility-grid').classList.remove('facility__grid--plain');
 
   const items = tabs.find(t => t[0] === view.tab)[2]();
@@ -658,6 +753,7 @@ export function closeFacility() {
   if ($('facility').hidden) return;
   $('facility').hidden = true;
   hooks.wardrobe.unmount();
+  hooks.holo.unmount();
   hooks.onClose();
 }
 
@@ -666,4 +762,9 @@ export function refreshFacility() {
   if (!facilityOpen()) return;
   $('facility-money').textContent = money(game.s.money);
   if (view.tab === 'fleet') $('facility-summary').textContent = fleetSummary();
+  if (view.tab === 'holo' && performance.now() - holoAt > 1500) {           // počty hexů se mění, jak se uklízí
+    holoAt = performance.now();
+    $('facility-detail').innerHTML = holoDetailHtml();
+  }
 }
+let holoAt = 0;

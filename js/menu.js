@@ -167,7 +167,7 @@ function bindLobby() {
   });
 }
 
-// Připojení kódem (z pole v lobby nebo z odkazu …#kód). Lobby se načítá chvilku → počkat až 10 s.
+// Připojení kódem (z pole v lobby nebo z odkazu …#kód). Lobby se načítá chvilku → počkat až 30 s.
 async function joinByCode(raw) {
   const code = String(raw || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const err = $('lobby-code-error');
@@ -177,7 +177,7 @@ async function joinByCode(raw) {
   $('lobby-code').value = code;
   const t0 = Date.now();
   let w = findWorld(code);
-  while (!w && Date.now() - t0 < 10000) {
+  while (!w && Date.now() - t0 < 30000) {          // po odletu na jinou planetu hostitel chvíli startuje
     err.hidden = false;
     err.textContent = `Hledám svět ${code}…`;
     await new Promise(r => setTimeout(r, 400));

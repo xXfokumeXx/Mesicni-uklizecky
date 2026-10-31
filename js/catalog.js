@@ -31,8 +31,15 @@ export const VEHICLES = [
   { id: 'mega',  name: 'Mega vysávací rover',   kind: 'drive',     width: 5.0,  hopper: 2000, speed: 6,  power: 100, price: 75000,
     desc: 'Pětimetrová sací hlava. Hex za pár průjezdů.', front: 3.4, camera: 22 },
   { id: 'crew',  name: 'Přepravník posádky',    kind: 'transport', width: 0,    hopper: 0,    speed: 12, power: 0,   price: 4000,
-    desc: 'Nezametá, ale odveze řidiče a až 5 cestujících rychle na druhou stranu Měsíce.', front: 0, camera: 16, seats: 5 },
+    desc: 'Nezametá, ale odveze řidiče a až 5 cestujících rychle na druhou stranu Měsíce.', front: 0, camera: 16, seats: 5,
+    body: [1.2, 5, 3] },
 ];
+
+// Fyzika vozidla (physics.js createBody): [maxVr, grip, airG] – jak prudce vyletí z hřebene,
+// jak drží na zemi a kolikrát gravitace planety táhne vozidlo dolů ve vzduchu.
+// Bez „body“ drží vozidlo pevně u země (zametače). Přepravník z hřebenů vyskočí a letí
+// (ve vzduchu ~3× víc než dřív); úplně skutečná gravitace by ho při boostu vynesla na oběžnou dráhu.
+export const VEHICLE_BODY = [0.5, 8];
 
 // Měsíční boty (Dílna → Astronaut): rychlejší chůze, 3 úrovně. speed = násobek chůze na dané úrovni.
 export const BOOTS = {
@@ -78,6 +85,24 @@ export const boostFactor = lv => (lv > 0 ? 1.5 + VEHICLE_UPGRADES.boost.step * l
 
 export const GARAGE_PRICE = 2000;
 
+// Ekonomická vylepšení ve Výkupu (sdílená pro celý svět, hráče, roboty, drony i pásy).
+// market = burzovní cena prachu (+6 % za úroveň), hexup = prémie za dočištěný hex (+50 % za úroveň).
+export const MARKET = {
+  name: 'Burzovní cena prachu',
+  desc: 'Smlouva s pozemskou burzou: Výkup platí za každý kilogram prachu víc. Platí pro celý svět – pro hráče, roboty, drony i pásy.',
+  max: 5, step: 0.06,
+  price: 30000, priceMult: 2,   // 30 000 → 60 000 → 120 000 → 240 000 → 480 000
+};
+export const HEXUP = {
+  name: 'Prémie za dočištěný hex',
+  desc: 'Kontrakt s úklidovou agenturou: za každý dočištěný hexový sektor přijde vyšší prémie. Platí i pro hexy, které dočistí roboti a drony.',
+  max: 5, step: 0.5,
+  price: 30000, priceMult: 2,
+};
+const exchCost = (u, lv) => (lv >= u.max ? null : Math.round(u.price * u.priceMult ** lv));
+export const marketCost = lv => exchCost(MARKET, lv);
+export const hexupCost = lv => exchCost(HEXUP, lv);
+
 export const STATION = {
   price: 800, priceMult: 1.6,   // cena další stanice
   rings: 2,                     // robot čistí hexy do vzdálenosti 2 hexů od stanice
@@ -98,6 +123,7 @@ export const DRONE = {
 // až nadzemní pás, který ho odveze do Výkupu uprostřed základny.
 export const SILO = {
   price: 2000,
+  moveCost: 1000,               // přesun depa na jiné místo (pásy se samy přestaví)
   beltPerHex: 25,               // cena pásu za každý hex, přes který vede
   zone: 4.5,                    // poloměr vysýpací zóny kolem depa (m)
   beltRate: 12,                 // kolik kg za sekundu pás odebere z depa

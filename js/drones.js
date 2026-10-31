@@ -2,9 +2,9 @@
 // (který si nevzal jiný dron), přeletí k němu a čistí ho v řádcích jako robot – jen 4× rychleji.
 // Plný zásobník vyloží ve Výkupu nebo v nejbližším depu s pásem a letí zpátky do práce.
 // Režimy: 'fly' = přelet k hexu (nečistí), 'work' = čistí, 'unload' = letí vyložit, 'idle' = vše čisté.
-import { MOON, BASE, PRICE_PER_KG, HEX_BONUS, UNITS_PER_KG } from './config.js';
+import { MOON, BASE, UNITS_PER_KG } from './config.js';
 import { DRONE } from './catalog.js';
-import { game } from './state.js';
+import { game, dustPrice, hexBonus } from './state.js';
 import { grid, cellDir, HEX_SPACING } from './planet/hexgrid.js';
 import { hexes, sweepCapsule, clearHex } from './planet/dustmap.js';
 import { depositToDepot } from './depots.js';
@@ -98,7 +98,7 @@ export function droneTick(dr, dt) {
     const r = sweepCapsule(from, dr.p, DRONE.width / 2, Math.round(DRONE.power * dt * 10), limit);
     dr.load += r.got / UNITS_PER_KG;
     completed = r.completed;
-    game.s.money += completed.length * HEX_BONUS;
+    game.s.money += completed.length * hexBonus();
     if (hexes.done[dr.hex]) nextHex(dr);
     else if (arrived) {
       dr.k++;
@@ -112,7 +112,7 @@ export function droneTick(dr, dt) {
   } else if (dr.mode === 'unload' && arrived) {
     const drop = dr.drop || dropPoint(dr.p);
     if (drop.depot >= 0 && game.s.depots[drop.depot]?.belt) depositToDepot(drop.depot, dr.load);
-    else game.s.money += dr.load * PRICE_PER_KG;
+    else game.s.money += dr.load * dustPrice();
     dr.load = 0;
     dr.drop = null;
     if (dr.hex >= 0 && !hexes.done[dr.hex]) { dr.mode = 'fly'; dr.t = waypoint(dr) || cellDir(dr.hex); }
@@ -132,7 +132,7 @@ export function dronesOffline(seconds) {
       if (c < 0 || hexes.left[c] > budget) break;
       const { got, completed } = clearHex(c);
       budget -= Math.max(got, 1);
-      s.money += got / UNITS_PER_KG * PRICE_PER_KG + (completed ? HEX_BONUS : 0);
+      s.money += got / UNITS_PER_KG * dustPrice() + (completed ? hexBonus() : 0);
       dr.p = cellDir(c);
     }
     dr.load = 0;

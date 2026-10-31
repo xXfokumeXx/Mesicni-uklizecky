@@ -12,9 +12,11 @@ const MAX_SUBSTEP = 1 / 60;
 // maxVr = nejvyšší svislá rychlost, se kterou těleso vyletí z hřebene (tlumiče).
 // grip = přilnavost: kolikrát silněji než gravitace drží boty / pneumatiky na svahu.
 //   Bez ní by na Měsíci (g = 1,62) letělo všechno z každého boulí; s ní se odlepí jen na ostrém hřebeni.
-export function createBody(p, maxVr = 3, grip = 4) {
+// airG = kolikrát měsíční gravitace táhne těleso dolů, když nechtěně vyletí (výchozí = grip,
+//   tlumiče ho „stáhnou“; 1 = skutečná měsíční gravitace, dlouhé lety).
+export function createBody(p, maxVr = 3, grip = 4, airG = grip) {
   const r = R + heightAt(p);
-  return { p, r, g: r, vr: 0, v: [0, 0, 0], grounded: true, landed: 0, maxVr, grip };
+  return { p, r, g: r, vr: 0, v: [0, 0, 0], grounded: true, landed: 0, maxVr, grip, airG };
 }
 
 // Výška nad terénem (m).
@@ -54,7 +56,7 @@ function substep(b, dt, want, air) {
   b.g = ground;
   if (!b.grounded) {
     // skok = plná měsíční lehkost; nechtěný odskok z hrbolu tlumiče rychle „stáhnou“ zpět
-    b.vr -= MOON_GRAVITY * (b.jumped ? 1 : b.grip) * dt;
+    b.vr -= MOON_GRAVITY * (b.jumped ? 1 : b.airG) * dt;
     b.r += b.vr * dt;
     if (b.r <= ground) {
       b.landed = -b.vr;                                // rychlost dopadu (pro efekty)

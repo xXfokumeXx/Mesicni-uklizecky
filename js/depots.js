@@ -4,9 +4,9 @@
 // rychlostí SILO.beltSpeed. Prodá se, až dojede do Výkupu. Pás stojí SILO.beltPerHex za každý hex.
 // Pás může vést i do jiného depa (d.to = hex cílového depa, −1 = Výkup): prach se pak přisype
 // do jeho skladu a dál ho veze pás toho depa. Řetěz dep nesmí tvořit smyčku.
-import { MOON, BASE, PRICE_PER_KG } from './config.js';
+import { MOON, BASE } from './config.js';
 import { SILO } from './catalog.js';
-import { game } from './state.js';
+import { game, dustPrice } from './state.js';
 import { dirToCell, cellDir } from './planet/hexgrid.js';
 import { angleBetween, norm, anyTangent } from './planet/vec.js';
 
@@ -24,6 +24,25 @@ export function placeDepot(p) {
   if (game.s.money < SILO.price || !canPlaceDepot(p)) return false;
   game.s.money -= SILO.price;
   game.s.depots.push({ hex: dirToCell(p), store: 0, belt: false, to: -1, transit: [] });
+  return true;
+}
+
+// Přesun depa i na jiné místo za SILO.moveCost: sklad, pás i zboží na pásu zůstanou, pás se
+// přestaví po nové trase zdarma; pásy jiných dep, které do něj vedly, míří na nové místo.
+export function canMoveDepot(i, p) {
+  if (angleBetween(p, BASE.dir) * R < BASE.noStations) return false;
+  const hex = dirToCell(p);
+  if (hex === game.s.depots[i]?.hex) return false;                // stejné místo = žádný přesun
+  return !game.s.stations.some(st => st.hex === hex) && !game.s.depots.some((d, k) => k !== i && d.hex === hex);
+}
+
+export function moveDepot(i, p) {
+  const d = game.s.depots[i];
+  if (!d || game.s.money < SILO.moveCost || !canMoveDepot(i, p)) return false;
+  game.s.money -= SILO.moveCost;
+  const old = d.hex, hex = dirToCell(p);
+  for (const x of game.s.depots) if (x.to === old) x.to = hex;
+  d.hex = hex;
   return true;
 }
 
@@ -147,7 +166,7 @@ export function depotTick(dt) {
       const kg = d.transit.shift()[1];
       const next = d.to >= 0 ? depotByHex(d.to) : null;
       if (next) next.store += kg;                     // do dalšího depa v řetězu
-      else earned += kg * PRICE_PER_KG;
+      else earned += kg * dustPrice();
     }
   }
   game.s.money += earned;
@@ -174,7 +193,7 @@ export function depotsOffline(seconds) {
     d.transit = [];
     const next = d.to >= 0 ? depotByHex(d.to) : null;
     if (next) next.store += kg;
-    else earned += kg * PRICE_PER_KG;
+    else earned += kg * dustPrice();
   }
   game.s.money += earned;
   return earned;

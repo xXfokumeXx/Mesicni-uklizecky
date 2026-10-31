@@ -1,9 +1,9 @@
 // Hráč: chůze a jízda s fyzikou (gravitace do středu Měsíce), zametání a výkup prachu.
 import {
-  MOON, DEPOT, PRICE_PER_KG, HEX_BONUS, JUMP_SPEED, UNITS_PER_KG,
+  MOON, DEPOT, JUMP_SPEED, UNITS_PER_KG,
 } from './config.js';
-import { JETPACK, BOOST } from './catalog.js';
-import { game } from './state.js';
+import { JETPACK, BOOST, VEHICLE_BODY, vehicleById } from './catalog.js';
+import { game, dustPrice, hexBonus } from './state.js';
 import { activeEquipment, walkSpeed } from './equipment.js';
 import { createBody, stepBody, jumpBody, altitude } from './physics.js';
 import { sweepCapsule } from './planet/dustmap.js';
@@ -16,9 +16,8 @@ const R = MOON.radius;
 const TOOL_AHEAD = 0.95;                 // nástroj nese astronaut ~1 m před sebou
 const PUSH_GAP = 1.1;                    // u ručního vozíku jde astronaut za ním
 const SWEEP_ALT = 0.5;                   // zametá se i při malém odskoku (do 0,5 m nad zemí)
-// přilnavost a tlumiče (physics.js): astronaut se z hrbolu odlepí jen výjimečně, vozidla ještě méně
+// přilnavost a tlumiče (physics.js): astronaut se z hrbolu odlepí jen výjimečně, vozidla podle katalogu
 const WALK_BODY = [0.8, 6];
-const VEHICLE_BODY = [0.5, 8];
 const walkerBody = p => createBody(p, ...WALK_BODY);
 
 // Informace pro animace a efekty.
@@ -68,7 +67,7 @@ export function vehicleBody(i) {
   const v = game.s.vehicles[i];
   let b = vehicleBodies.get(i);
   if (!b || v.moved) {
-    b = createBody(v.p, ...VEHICLE_BODY);
+    b = createBody(v.p, ...(vehicleById(v.type)?.body || VEHICLE_BODY));
     vehicleBodies.set(i, b);
     v.moved = false;
   }
@@ -399,7 +398,7 @@ export function collect() {
       item.load = Math.min(eq.stats.hopper, item.load + r.got / UNITS_PER_KG);
       playerFx.swept = r.got;
       playerFx.completed = r.completed;
-      playerFx.bonus = r.completed.length * HEX_BONUS;
+      playerFx.bonus = r.completed.length * hexBonus();
       s.money += playerFx.bonus;
       const last = strokes.list[strokes.list.length - 1];
       if (r.got > 0 || (last && last.seq === strokes.seq && angleBetween(last.p, tool) * R > 0.05)) {   // tah pro ostatní hráče
@@ -414,21 +413,27 @@ export function collect() {
     prevTool = null;
   }
 
-  // výkup: stačí vstoupit / vjet do zóny uprostřed základny
-  const item = eq.item;
-  if (item.load > 0 && b.grounded && angleBetween(s.p, DEPOT.dir) * R < DEPOT.r) {
-    const earned = item.load * PRICE_PER_KG;
+  // výkup: stačí vstoupit / vjet do zóny uprostřed základny. Vysype se náklad v ruce (vozidlo / nástroj)
+  // i všech ostatních nástrojů v hotbaru.
+  if (!b.grounded) return 0;
+  const loads = [eq.item];
+  for (const id of s.hotbar || []) {
+    const t = typeof id === 'string' ? s.tools[id] : null;
+    if (t && !loads.includes(t)) loads.push(t);
+  }
+  const total = loads.reduce((a, it) => a + (it.load || 0), 0);
+  if (!(total > 0)) return 0;
+  if (angleBetween(s.p, DEPOT.dir) * R < DEPOT.r) {
+    const earned = total * dustPrice();
     s.money += earned;
-    item.load = 0;
+    for (const it of loads) it.load = 0;
     return earned;
   }
   // depo: náklad se vysype do skladu, peníze přinese pás (zpracuje main.js)
-  if (item.load > 0 && b.grounded) {
-    const i = depotAt(s.p);
-    if (i >= 0) {
-      playerFx.deposit = { i, kg: item.load };
-      item.load = 0;
-    }
+  const i = depotAt(s.p);
+  if (i >= 0) {
+    playerFx.deposit = { i, kg: total };
+    for (const it of loads) it.load = 0;
   }
   return 0;
 }

@@ -2,7 +2,8 @@
 // i v multiplayeru – každý hráč sbírá své vlastní. Kontroluje je main.js (achTick + události).
 import { profile, saveProfile } from './profile.js';
 
-// goal + stat = úspěch s postupem (profile.achStats[stat] / goal).
+// goal + stat = úspěch s postupem (profile.achStats[stat] / goal); rec = stat je rekord (nejvyšší hodnota),
+// ne součet – ukazuje se jako „Rekord“.
 export const ACHIEVEMENTS = [
   { id: 'orbit',     icon: '🛰️', name: 'Houstone, máme oběžnou dráhu', desc: 'Vyletěl(a) jsi 150 m nad povrch. Satelity ti mávaly.',
     hint: 'Dostaň se 150 m nad povrch Měsíce. Jak, to je tvoje věc… (vozidlo s boostem umí zázraky).' },
@@ -24,6 +25,31 @@ export const ACHIEVEMENTS = [
     hint: 'Prodej prach ve Výkupu v noci.' },
   { id: 'hexorcist', icon: '⬡', name: 'Hexorcista', desc: 'Sám (sama) jsi dočistil(a) 100 hexů. Prach z nich vymítán.',
     hint: 'Dočisti sám (sama) 100 hexů.', goal: 100, stat: 'hex', unit: '' },
+  // verze 2.3
+  { id: 'longjump',  icon: '🦘', name: 'Klokan v skafandru', desc: 'Doskočil(a) jsi 140 m daleko jedním skokem. Olympijský výbor podává protest.',
+    hint: 'Skoč 140 m daleko jedním skokem (jetpack se počítá, vozidlo ne – zkus to z kopce).', goal: 140, stat: 'jumpLen', unit: 'm', rec: true },
+  { id: 'highjump',  icon: '🎈', name: 'Kde je strop?', desc: 'Vyskočil(a) jsi 18 m nad povrch. Strop nenalezen, helma v pořádku.',
+    hint: 'Vyskoč 18 m nad povrch (skok + jetpack v nejvyšším bodě).', goal: 18, stat: 'jumpHigh', unit: 'm', rec: true },
+  { id: 'strike100', icon: '🎯', name: 'Kuželkový velmistr', desc: 'Srazil(a) jsi vozidlem 100 kolegů. Dopravní inspektorát má tvou fotku na nástěnce.',
+    hint: 'Sraz vozidlem 100× jiného hráče.', goal: 100, stat: 'hits', unit: '×' },
+  { id: 'dummy100',  icon: '🩹', name: 'Figurína na crash testy', desc: 'Srazilo tě vozidlo stokrát. Automobilky ti nabízejí smlouvu.',
+    hint: 'Nech se 100× srazit vozidlem.', goal: 100, stat: 'knocked', unit: '×' },
+  { id: 'marathon',  icon: '🏃', name: 'Měsíční maraton', desc: 'Ušel (ušla) jsi pěšky 42,195 km. Cílová páska se ve vakuu nevlní.',
+    hint: 'Ujdi pěšky 42,195 km (vozidla se nepočítají).', goal: 42.195, stat: 'walk', unit: 'km' },
+  { id: 'stowaway',  icon: '🎫', name: 'Černý pasažér', desc: 'Strávil(a) jsi 10 minut jako cestující v přepravníku. Jízdenku nikdo nechtěl.',
+    hint: 'Jezdi 10 minut jako cestující v přepravníku posádky.', goal: 10, stat: 'ride', unit: 'min' },
+  { id: 'rocketman', icon: '🔥', name: 'Rocket Man', desc: 'Vystřelil(a) ses jetpackem stokrát. Elton John tleská.',
+    hint: 'Použij jetpack 100×.', goal: 100, stat: 'jets', unit: '×' },
+  { id: 'stunt',     icon: '🤸', name: 'Kaskadér z kráteru', desc: 'Vozidlo letělo 3 sekundy vzduchem. Tohle pojišťovna neproplatí.',
+    hint: 'Proleť s vozidlem 3 s vzduchem (přepravník s boostem přes hřeben).', goal: 3, stat: 'vehAir', unit: 's', rec: true },
+  { id: 'wallstreet', icon: '📈', name: 'Vlk z Měsíční ulice', desc: 'Výkup platí za prach nejvyšší burzovní cenu. Prach je nové zlato.',
+    hint: 'Vylepši burzu ve Výkupu prachu na nejvyšší úroveň.' },
+  { id: 'vacuum',    icon: '🌀', name: 'Lidský vysavač', desc: 'Sám (sama) jsi nasbíral(a) 10 tun prachu. Výrobci vysavačů tě studují.',
+    hint: 'Nasbírej sám (sama) 10 000 kg prachu (nástrojem nebo vozidlem).', goal: 10000, stat: 'kg', unit: 'kg' },
+  { id: 'liftoff',   icon: '🚀', name: 'Poslední zhasne', desc: 'Měsíc je na 100 % čistý a ty jsi odletěl(a) domů raketou. Nezapomněl(a) jsi zhasnout?',
+    hint: 'Ukliďte celý Měsíc na 100 % a nastup do obrovské rakety na odvrácené straně.' },
+  { id: 'marsdone',  icon: '🔴', name: 'Marťan roku', desc: 'Uklidil(a) jsi i celý Mars a odletěl(a) domů na Zemi. Babička už peče buchty.',
+    hint: 'Ukliďte na 100 % i Mars a nastupte do rakety.' },
 ];
 
 export const achById = id => ACHIEVEMENTS.find(a => a.id === id);
@@ -46,6 +72,14 @@ export function addAchStat(stat, amount) {
   if (!(amount > 0)) return;
   profile.achStats[stat] = (profile.achStats[stat] || 0) + amount;
   for (const a of ACHIEVEMENTS) if (a.stat === stat && profile.achStats[stat] >= a.goal) unlock(a.id);
+  saveSoon();
+}
+
+// Rekord: uloží hodnotu, jen když je vyšší než dosavadní (nejdelší skok, nejvyšší skok…).
+export function recordAchStat(stat, value) {
+  if (!(value > (profile.achStats[stat] || 0))) return;
+  profile.achStats[stat] = value;
+  for (const a of ACHIEVEMENTS) if (a.stat === stat && value >= a.goal) unlock(a.id);
   saveSoon();
 }
 
