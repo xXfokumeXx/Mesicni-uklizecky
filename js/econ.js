@@ -5,9 +5,9 @@ import { profile } from './profile.js';
 import { net, request, vehicleTakenBy, reportParked, myStatKey } from './net.js';
 import { callBackVehicle } from './equipment.js';
 
-// Osobní nákupy (nástroje, boty) si klient po schválení použije sám; sdílené (garáž, vozidla,
+// Osobní nákupy (nástroje, boty, opasek, jetpack) si klient po schválení použije sám; sdílené (garáž, vozidla,
 // stanice, depa) provede hostitel a klient je uvidí v dalším sdíleném stavu.
-const PERSONAL = new Set(['tool', 'tup', 'boots']);
+const PERSONAL = new Set(['tool', 'tup', 'boots', 'gbelt', 'jet']);
 
 // kind = druh nákupu, args = parametry pro hostitele, cost = cena, local = funkce, která nákup
 // provede a strhne peníze (equipment.js). Vrací true / false, nebo Promise (čeká na hostitele).

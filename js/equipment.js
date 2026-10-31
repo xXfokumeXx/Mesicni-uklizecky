@@ -1,10 +1,11 @@
 // Vybavení: nástroje a vozidla – parametry, nákup, výběr a vylepšení.
 // Každý nástroj i vozidlo má vlastní zásobník na prach (load v kg).
 import {
-  TOOLS, TOOL_UPGRADES, VEHICLE_UPGRADES, VEHICLES, GARAGE_PRICE, STATION, BOOTS, SELL_REFUND,
-  toolById, vehicleById, upgradeCost,
+  TOOLS, TOOL_UPGRADES, VEHICLE_UPGRADES, VEHICLES, GARAGE_PRICE, STATION, BOOTS, SELL_REFUND, BELT, JETPACK,
+  toolById, vehicleById, upgradeCost, boostFactor,
 } from './catalog.js';
 import { game, newToolState, newUid } from './state.js';
+import { heldTool, heldKit, putTool, ensureHotbar, KIT_NAMES } from './hotbar.js';
 import { parkingSpot } from './base.js';
 import { WALK_SPEED, MAX_VEHICLES } from './config.js';
 import { tangentTo } from './planet/vec.js';
@@ -28,8 +29,15 @@ export function vehicleStats(v) {
     speed: base.speed * (1 + VEHICLE_UPGRADES.speed.step * v.lv.speed),
     hopper: base.hopper,
     power: base.power,
+    boost: boostFactor(v.lv.boost | 0),
   };
 }
+
+// Vylepšení jde koupit pro tento typ vozidla? (boost jen pro přepravník posádky)
+export const upgradeFits = (type, key) => !VEHICLE_UPGRADES[key].only || VEHICLE_UPGRADES[key].only.includes(type);
+
+const HANDS = { id: 'hands', name: 'Volné ruce', width: 0, hopper: 0, power: 0 };
+const NO_STATS = { width: 0, hopper: 0, power: 0 };
 
 // Co právě používáš: nástroj v ruce, nebo vozidlo.
 export function activeEquipment() {
@@ -39,8 +47,13 @@ export function activeEquipment() {
     const base = vehicleById(v.type);
     return { kind: 'vehicle', item: v, base, stats: vehicleStats(v), name: base.name };
   }
-  const base = toolById(s.tool);
-  return { kind: 'tool', item: s.tools[s.tool], base, stats: toolStats(s.tool), name: base.name };
+  const id = heldTool();
+  if (!id) {                                        // v ruce stavební sada nebo nic (hotbar.js)
+    const kit = heldKit();
+    return { kind: 'tool', item: { load: 0 }, base: HANDS, stats: NO_STATS, name: kit ? KIT_NAMES[kit.kit] : HANDS.name };
+  }
+  const base = toolById(id);
+  return { kind: 'tool', item: s.tools[id], base, stats: toolStats(id), name: base.name };
 }
 
 // ---------- nástroje ----------
@@ -52,13 +65,13 @@ export function buyTool(id) {
   if (ownsTool(id) || game.s.money < t.price) return false;
   game.s.money -= t.price;
   game.s.tools[id] = newToolState();
-  game.s.tool = id;
+  putTool(id);
   return true;
 }
 
 export function equipTool(id) {
   if (!ownsTool(id) || game.s.driving >= 0) return false;
-  game.s.tool = id;
+  putTool(id);
   return true;
 }
 
@@ -89,6 +102,29 @@ export function upgradeBoots() {
   return true;
 }
 
+// ---------- opasek a jetpack ----------
+
+export const beltLevel = () => game.s.belt || 0;
+export const beltUpgradeCost = () => BELT.levels[beltLevel() + 1]?.price ?? null;
+
+export function upgradeBelt() {
+  const c = beltUpgradeCost();
+  if (c === null || game.s.money < c) return false;
+  game.s.money -= c;
+  game.s.belt = beltLevel() + 1;
+  ensureHotbar();
+  return true;
+}
+
+export const ownsJetpack = () => !!game.s.jetpack;
+
+export function buyJetpack() {
+  if (ownsJetpack() || game.s.money < JETPACK.price) return false;
+  game.s.money -= JETPACK.price;
+  game.s.jetpack = 1;
+  return true;
+}
+
 // ---------- garáž a vozidla ----------
 
 export function buildGarage() {
@@ -116,7 +152,7 @@ export function buyVehicle(type) {
   game.s.money -= base.price;
   const k = freeSpot();
   const spot = parkingSpot(k);
-  game.s.vehicles.push({ uid: newUid(), type, spot: k, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: { width: 0, speed: 0 } });
+  game.s.vehicles.push({ uid: newUid(), type, spot: k, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: { width: 0, speed: 0, boost: 0 } });
   return true;
 }
 
@@ -157,7 +193,8 @@ export function callBackVehicle(i) {
 
 export function vehicleUpgradeCost(i, key) {
   const v = game.s.vehicles[i];
-  const lv = v.lv[key];
+  if (!v || !VEHICLE_UPGRADES[key] || !upgradeFits(v.type, key)) return null;
+  const lv = v.lv[key] | 0;
   return lv >= VEHICLE_UPGRADES[key].max ? null : upgradeCost(vehicleById(v.type).price, lv, 0.25);
 }
 
@@ -165,7 +202,7 @@ export function upgradeVehicle(i, key) {
   const c = vehicleUpgradeCost(i, key);
   if (c === null || game.s.money < c) return false;
   game.s.money -= c;
-  game.s.vehicles[i].lv[key]++;
+  game.s.vehicles[i].lv[key] = (game.s.vehicles[i].lv[key] | 0) + 1;
   return true;
 }
 

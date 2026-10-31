@@ -1,9 +1,9 @@
-// Okna budov (Obchod s nástroji, Dílna, Garáž): mřížka karet vlevo, detail vpravo.
+// Okna budov (Obchod s nástroji, Dílna, Garáž) a okno Úspěchy: mřížka karet vlevo, detail vpravo.
 // Obsah se skládá z dat (catalog.js + stav hry), akce volají equipment.js přes econ.js
 // (v multiplayeru schvaluje nákupy hostitel). Verze 2: Šatna v Dílně, Flotila v Garáži.
 import {
-  TOOLS, VEHICLES, TOOL_UPGRADES, VEHICLE_UPGRADES, GARAGE_PRICE, STATION, BOOTS, SILO, vehicleById,
-  SUIT_COLORS, HELMET_PROPS, propById,
+  TOOLS, VEHICLES, TOOL_UPGRADES, VEHICLE_UPGRADES, GARAGE_PRICE, STATION, BOOTS, SILO, DRONE, BELT, JETPACK,
+  vehicleById, SUIT_COLORS, HELMET_PROPS, propById,
 } from './catalog.js';
 import { MOON, MAX_VEHICLES } from './config.js';
 import { game } from './state.js';
@@ -11,16 +11,19 @@ import {
   toolStats, vehicleStats, ownsTool, buyTool, equipTool, toolUpgradeCost, upgradeTool,
   bootsLevel, walkSpeed, bootsUpgradeCost, upgradeBoots, vehicleCount, fleetFull,
   buildGarage, buyVehicle, vehicleUpgradeCost, upgradeVehicle, stationPrice,
-  vehicleSellValue, sellVehicle,
+  vehicleSellValue, sellVehicle, upgradeFits, beltLevel, beltUpgradeCost, upgradeBelt, ownsJetpack, buyJetpack,
 } from './equipment.js';
 import { purchase, callVehicle } from './econ.js';
-import { vehicleTakenBy, isClient } from './net.js';
+import { vehicleTakenBy, isClient, seatsTaken } from './net.js';
+import { dronePrice, buyDrone } from './drones.js';
+import { ACHIEVEMENTS, hasAch, achIcon, achCount } from './achievements.js';
 import { profile, saveProfile, sanitizeName } from './profile.js';
 import { parkingSpot, distanceToBase } from './base.js';
 import { angleBetween } from './planet/vec.js';
 import { buildToolModel, buildBootsModel } from './scene/toolModels.js';
 import { buildVehicle } from './scene/vehicles.js';
 import { buildStation, buildSilo, buildGarage as buildGarageModel } from './scene/buildings.js';
+import { buildDrone, buildJetpack, buildBelt as buildBeltModel } from './scene/models.js';
 import { fmt } from './format.js';
 
 const $ = id => document.getElementById(id);
@@ -30,7 +33,7 @@ const kg = v => `${v < 10 ? v.toFixed(1) : Math.round(v)} kg`;
 const money = v => '$' + fmt(v);
 const hex = n => '#' + n.toString(16).padStart(6, '0');
 
-const TITLES = { toolshop: 'Obchod s nástroji', workshop: 'Dílna', garage: 'Garáž' };
+const TITLES = { toolshop: 'Obchod s nástroji', workshop: 'Dílna', garage: 'Garáž', trophies: 'Úspěchy' };
 
 let thumb = null;            // generátor náhledů (scene/thumbs.js)
 let hooks = null;            // { onOpen, onClose, onChange, onPlaceStation, onLook, wardrobe, headModel }
@@ -137,7 +140,35 @@ function stationsTab() {
         run: () => { hooks.onPlaceDepot(); return 'close'; },
       },
     },
-  }];
+  }, droneItem()];
+}
+
+function droneItem() {
+  const price = dronePrice();
+  const n = game.s.drones.length;
+  return {
+    key: 'drone',
+    name: 'UFO dron',
+    chip: [n ? `${n}× LÉTÁ` : 'V OBCHODĚ', n ? 'owned' : 'store'],
+    thumb: () => thumb('drone', () => buildDrone().root),
+    detail: {
+      eyebrow: 'Automatizace · létající',
+      title: 'UFO dron',
+      desc: 'Autonomní dron bez stanice: vzlétne nad Výkupem, sám si najde nejbližší nedočištěný hex kdekoli na Měsíci '
+        + 'a uklidí ho 4× rychleji než robot ze stanice. Plný se vyloží ve Výkupu nebo v depu s pásem. Každý další dron je dražší.',
+      stats: [
+        ['Šířka pásu', m(DRONE.width)],
+        ['Rychlost čištění', `${DRONE.speed} m/s (přelet ${DRONE.cruise} m/s)`],
+        ['Zásobník', kg(DRONE.hopper)],
+        ['Ve vzduchu', `${n}`],
+      ],
+      action: {
+        label: `Koupit · ${money(price)}`,
+        disabled: game.s.money < price,
+        run: () => purchase('drone', [], price, buyDrone),
+      },
+    },
+  };
 }
 
 function vehiclesShopTab() {
@@ -169,6 +200,8 @@ function vehicleStatus(i) {
   if (game.s.driving === i) return { chip: ['ŘÍDÍŠ TY', 'active'], text: 'Právě s ním jedeš ty', home: false, busy: true };
   const by = vehicleTakenBy(i);
   if (by) return { chip: [`ŘÍDÍ ${by.toUpperCase()}`, 'active'], text: `Řídí ${by}`, home: false, busy: true };
+  const riders = seatsTaken(i).size;
+  if (riders) return { chip: ['CESTUJÍCÍ', 'active'], text: `Cestující: ${riders}`, home: false, busy: true };
   const spot = parkingSpot(v.spot ?? i);
   if (angleBetween(v.p, spot.dir) * MOON.radius < 3) return { chip: ['NA PARKOVIŠTI', 'store'], text: `Na parkovišti, místo ${(v.spot ?? i) + 1}`, home: true, busy: false };
   return { chip: ['VENKU', 'owned'], text: `Stojí venku · ${Math.round(distanceToBase(v.p))} m od základny`, home: false, busy: false };
@@ -181,7 +214,7 @@ function fleetTab() {
     const status = vehicleStatus(i);
     const stats = [['Stav', status.text]];
     if (v.hopper) stats.push(['Náplň', `${kg(veh.load)} / ${kg(st.hopper)}`], ['Šířka sání', m(st.width)]);
-    stats.push(['Max. rychlost', `${st.speed.toFixed(1)} m/s`], ['Vylepšení', `šířka ${veh.lv.width}/5 · rychlost ${veh.lv.speed}/5`]);
+    stats.push(['Max. rychlost', `${st.speed.toFixed(1)} m/s`], ['Vylepšení', upgradeSummary(veh)]);
     return {
       key: `v${i}`, name: vehicleName(i), chip: status.chip,
       thumb: () => thumb(`veh-${v.id}`, () => buildVehicle(v.id).root),
@@ -202,7 +235,7 @@ let sellArmed = null;                // uid vozidla, u kterého se čeká na pot
 function sellAction(i, busyVeh) {
   const veh = game.s.vehicles[i];
   const value = vehicleSellValue(i);
-  if (busyVeh) return { label: `Prodat · ${money(value)} (nejdřív z něj musí vystoupit)`, disabled: true, danger: true };
+  if (busyVeh) return { label: `Prodat · ${money(value)} (nejdřív z něj musí všichni vystoupit)`, disabled: true, danger: true };
   if (sellArmed !== veh.uid) {
     return { label: `Prodat za ${money(value)} (75 % ceny)`, danger: true, run: () => { sellArmed = veh.uid; return 'stay'; } };
   }
@@ -229,23 +262,39 @@ function fleetSummary() {
   return `${list.length} / ${MAX_VEHICLES} vozidel · zásobníky ${kg(cap)} · náplň ${kg(load)} · v jízdě ${moving} · venku ${out}`;
 }
 
+function upgradeSummary(veh) {
+  const v = vehicleById(veh.type);
+  const parts = [];
+  if (v.width) parts.push(`šířka ${veh.lv.width}/5`);
+  parts.push(`rychlost ${veh.lv.speed}/5`);
+  if (upgradeFits(veh.type, 'boost')) parts.push(`boost ${veh.lv.boost | 0}/${VEHICLE_UPGRADES.boost.max}`);
+  return parts.join(' · ');
+}
+
 function vehiclesUpgradeTab() {
   return game.s.vehicles.map((veh, i) => {
     const v = vehicleById(veh.type);
     const st = vehicleStats(veh);
     const ups = Object.entries(VEHICLE_UPGRADES)
-      .filter(([key]) => !(key === 'width' && !v.width))
+      .filter(([key]) => !(key === 'width' && !v.width) && upgradeFits(veh.type, key))
       .map(([key, u]) => {
-        const lv = veh.lv[key];
+        const lv = veh.lv[key] | 0;
         const cost = vehicleUpgradeCost(i, key);
-        const now = key === 'width' ? m(st.width) : `${st.speed.toFixed(1)} m/s`;
-        const after = key === 'width' ? m(v.width * (1 + u.step * (lv + 1))) : `${(v.speed * (1 + u.step * (lv + 1))).toFixed(1)} m/s`;
+        const pct = k => `${Math.round((1.5 + u.step * k) * 100)} %`;
+        const now = key === 'width' ? m(st.width) : key === 'boost' ? (lv ? pct(lv) : 'bez boostu') : `${st.speed.toFixed(1)} m/s`;
+        const after = key === 'width' ? m(v.width * (1 + u.step * (lv + 1)))
+          : key === 'boost' ? pct(lv + 1) : `${(v.speed * (1 + u.step * (lv + 1))).toFixed(1)} m/s`;
         return { name: u.name, lv, max: u.max, effect: cost === null ? now : `${now} → ${after}`, cost, run: () => purchase('vup', [i, key], cost, () => upgradeVehicle(i, key)) };
       });
     return {
       key: `v${i}`, name: vehicleName(i), chip: [game.s.driving === i ? 'POUŽÍVÁŠ' : 'VLASTNÍŠ', 'owned'],
       thumb: () => thumb(`veh-${v.id}`, () => buildVehicle(v.id).root),
-      detail: { eyebrow: 'Vozidlo', title: vehicleName(i), desc: v.desc, stats: [['Šířka sání', m(st.width)], ['Max. rychlost', `${st.speed.toFixed(1)} m/s`]], upgrades: ups },
+      detail: {
+        eyebrow: 'Vozidlo', title: vehicleName(i),
+        desc: upgradeFits(veh.type, 'boost') ? `${v.desc} Boost: podrž Shift a přepravník skokově zrychlí (vydrží 4 s, pak se dobíjí).` : v.desc,
+        stats: [['Šířka sání', v.width ? m(st.width) : '–'], ['Max. rychlost', `${st.speed.toFixed(1)} m/s`], ...(st.boost > 1 ? [['S boostem', `${(st.speed * st.boost).toFixed(1)} m/s`]] : [])],
+        upgrades: ups,
+      },
     };
   });
 }
@@ -275,7 +324,72 @@ function astronautTab() {
         cost, run: () => purchase('boots', [], cost, upgradeBoots),
       }],
     },
-  }];
+  }, beltItem(), jetpackItem()];
+}
+
+function beltItem() {
+  const lv = beltLevel();
+  const max = BELT.levels.length - 1;
+  const cost = beltUpgradeCost();
+  const slots = BELT.levels[lv].slots;
+  return {
+    key: 'belt',
+    name: BELT.name,
+    chip: [lv ? `${slots} POLÍČKA` : '1 POLÍČKO', lv ? 'owned' : 'store'],
+    thumb: () => thumb(`belt-${lv}`, () => buildBeltModel(lv)),
+    detail: {
+      eyebrow: 'Astronaut',
+      title: BELT.levels[lv].name,
+      desc: BELT.desc,
+      stats: [
+        ['Políček v hotbaru', `${slots}`],
+        ['Další úroveň', cost === null ? '–' : BELT.levels[lv + 1].name],
+      ],
+      upgrades: [{
+        name: 'Políčka hotbaru', lv, max,
+        effect: cost === null ? `${slots}` : `${slots} → ${BELT.levels[lv + 1].slots}`,
+        cost, run: () => purchase('gbelt', [], cost, upgradeBelt),
+      }],
+    },
+  };
+}
+
+function jetpackItem() {
+  const own = ownsJetpack();
+  return {
+    key: 'jetpack',
+    name: JETPACK.name,
+    chip: own ? ['NA ZÁDECH', 'owned'] : ['V NABÍDCE', 'store'],
+    thumb: () => thumb('jetpack', () => buildJetpack()),
+    detail: {
+      eyebrow: 'Astronaut',
+      title: JETPACK.name,
+      desc: JETPACK.desc,
+      stats: [['Rychlost výstřelu', `${JETPACK.speed} m/s`], ['Nabití', 'po každém dopadu na zem']],
+      action: own
+        ? { label: 'Máš ho na zádech · mezerník ve vzduchu', disabled: true }
+        : { label: `Koupit · ${money(JETPACK.price)}`, disabled: game.s.money < JETPACK.price, run: () => purchase('jet', [], JETPACK.price, buyJetpack) },
+    },
+  };
+}
+
+// ---------- úspěchy ----------
+
+function trophiesTab() {
+  return ACHIEVEMENTS.map(a => {
+    const on = hasAch(a.id);
+    const stats = [['Stav', on ? `Získáno ${new Date(profile.ach[a.id]).toLocaleDateString('cs-CZ')}` : 'Zatím zamčeno']];
+    if (a.goal) {
+      const v = Math.min(a.goal, profile.achStats[a.stat] || 0);
+      const f = x => (a.unit === '$' ? money(x) : `${fmt(x)}${a.unit ? ` ${a.unit}` : ''}`);
+      stats.push(['Postup', `${f(v)} / ${f(a.goal)}`]);
+    }
+    return {
+      key: a.id, name: a.name, chip: on ? ['ZÍSKÁNO', 'active'] : ['ZAMČENO', 'store'],
+      thumb: () => achIcon(a),
+      detail: { eyebrow: `Úspěch · ${achCount()} z ${ACHIEVEMENTS.length}`, title: a.name, desc: on ? a.desc : a.hint, stats },
+    };
+  });
 }
 
 function garageSiteTab() {
@@ -306,6 +420,7 @@ function tabsFor(id) {
       ['astronaut', 'Astronaut', astronautTab], ['wardrobe', 'Šatna', null],
     ];
   }
+  if (id === 'trophies') return [['all', `Úspěchy (${achCount()}/${ACHIEVEMENTS.length})`, trophiesTab]];
   if (id === 'garage') {
     return game.s.garage
       ? [['vehicles', 'Vozidla', vehiclesShopTab], ['fleet', `Flotila (${game.s.vehicles.length})`, fleetTab]]
@@ -442,7 +557,7 @@ function detailHtml(it) {
   const action2 = a2
     ? `<button class="detail__action detail__action--secondary${a2.danger ? ' detail__action--danger' : ''}${a2.armed ? ' detail__action--armed' : ''}" type="button" data-action2 ${busy || a2.disabled ? 'disabled' : ''}>${esc(a2.label)}</button>`
     : '';
-  const shared = isClient() ? '<p class="detail__note">Peníze jsou společné pro celý svět – nákup schvaluje hostitel.</p>' : '';
+  const shared = isClient() && (d.action || d.upgrades) ? '<p class="detail__note">Peníze jsou společné pro celý svět – nákup schvaluje hostitel.</p>' : '';
   return `
     <div class="detail__head">
       <div class="detail__heading">

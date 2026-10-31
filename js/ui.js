@@ -3,7 +3,7 @@ import { BASE } from './config.js';
 import { game, hexPct, currentHexPct, baseDistance, gameTime } from './state.js';
 import { activeEquipment } from './equipment.js';
 import { hexes } from './planet/dustmap.js';
-import { playerRight } from './player.js';
+import { playerRight, boostCharge, jetCharged } from './player.js';
 import { sunElevationDeg } from './planet/sun.js';
 import { dot, tangentTo } from './planet/vec.js';
 import { fmt } from './format.js';
@@ -63,7 +63,16 @@ export function updateUi() {
   $('meter-here').style.width = `${here}%`;
   $('stat-hexes').textContent = `${fmtInt(hexes.doneCount)} / ${fmtInt(hexes.total)}`;
   $('meter-hexes').style.width = Math.max(hexPct(), hexes.doneCount ? 0.4 : 0) + '%';
-  $('stat-stations').textContent = s.stations.length;
+  $('stat-stations').textContent = `${s.stations.length} · ${(s.drones || []).length}`;
+  const boost = s.driving >= 0 && eq.stats.boost > 1;
+  $('row-boost').hidden = !boost;
+  if (boost) {
+    const k = boostCharge();
+    $('stat-boost').textContent = `${Math.round(k * 100)} % · ×${eq.stats.boost}`;
+    $('meter-boost').style.width = `${k * 100}%`;
+  }
+  $('row-jet').hidden = !s.jetpack;
+  if (s.jetpack) $('stat-jet').textContent = jetCharged() ? 'připraven' : 'po dopadu';
   $('stat-sun').textContent = sunLabel();
   $('stat-base').textContent = dist < BASE.clean ? 'jsi doma' : Math.round(dist) + ' m';
   updateBaseArrow(dist);
@@ -105,6 +114,20 @@ export function floatText(text, x, y, kind = 'bonus') {
   layer.append(el);
   // odstranit vždy po 1,4 s – animationend nemusí přijít (vypnuté animace v systému, skrytá karta)
   setTimeout(() => el.remove(), 1400);
+}
+
+// Oznámení o odemčeném úspěchu (pruh nahoře na 6 s).
+let achTimer;
+export function showAchievement(a) {
+  $('ach-icon').textContent = a.icon;
+  $('ach-name').textContent = a.name;
+  $('ach-desc').textContent = a.desc;
+  const el = $('ach-banner');
+  el.hidden = true;
+  void el.offsetWidth;
+  el.hidden = false;
+  clearTimeout(achTimer);
+  achTimer = setTimeout(() => { el.hidden = true; }, 6500);
 }
 
 let toastTimer;

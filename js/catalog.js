@@ -31,7 +31,7 @@ export const VEHICLES = [
   { id: 'mega',  name: 'Mega vysávací rover',   kind: 'drive',     width: 5.0,  hopper: 2000, speed: 6,  power: 100, price: 75000,
     desc: 'Pětimetrová sací hlava. Hex za pár průjezdů.', front: 3.4, camera: 22 },
   { id: 'crew',  name: 'Přepravník posádky',    kind: 'transport', width: 0,    hopper: 0,    speed: 12, power: 0,   price: 4000,
-    desc: 'Nezametá, ale dostane tě rychle na druhou stranu Měsíce.', front: 0, camera: 16 },
+    desc: 'Nezametá, ale odveze řidiče a až 5 cestujících rychle na druhou stranu Měsíce.', front: 0, camera: 16, seats: 5 },
 ];
 
 // Měsíční boty (Dílna → Astronaut): rychlejší chůze, 3 úrovně. speed = násobek chůze na dané úrovni.
@@ -46,10 +46,35 @@ export const BOOTS = {
   ],
 };
 
+// Opasek (Dílna → Astronaut): víc políček v hotbaru dole na obrazovce.
+export const BELT = {
+  name: 'Opasek na nářadí',
+  desc: 'Víc políček v hotbaru dole: nástroje, stanice i depo máš po ruce a přepínáš klávesami 1–3.',
+  levels: [
+    { name: 'Bez opasku', slots: 1 },
+    { name: 'Opasek na nářadí', slots: 2, price: 1500 },
+    { name: 'Taktický opasek', slots: 3, price: 6000 },
+  ],
+};
+
+// Jetpack (Dílna → Astronaut): mezerník ve vzduchu vystřelí astronauta ve směru kamery.
+// Nabije se znovu, jakmile astronaut dopadne na zem.
+export const JETPACK = {
+  name: 'Jetpack',
+  desc: 'Mezerník ve vzduchu = výstřel vpřed ve směru kamery (mírně vzhůru). Po dopadu na zem se jetpack znovu nabije.',
+  price: 12000,
+  speed: 16,                    // rychlost výstřelu (m/s)
+  lift: 30,                     // nejmenší úhel nad obzor (°), aby astronaut nezaryl do země
+};
+
+// only = jen pro tyto typy vozidel. Boost: Shift = skokové zrychlení na 200 / 250 / 300 % rychlosti.
 export const VEHICLE_UPGRADES = {
   width: { name: 'Šířka sání',    max: 5, step: 0.1,  unit: 'm',   desc: '+10 % šířky sání za úroveň' },
   speed: { name: 'Rychlost vozu', max: 5, step: 0.12, unit: 'm/s', desc: '+12 % rychlosti za úroveň' },
+  boost: { name: 'Boost (Shift)', max: 3, step: 0.5,  unit: '×',   desc: 'Shift = skokově 200 % rychlosti, každá další úroveň +50 %', only: ['crew'] },
 };
+export const BOOST = { duration: 4, recharge: 10 };   // plný boost vydrží 4 s, z nuly se nabije za 10 s
+export const boostFactor = lv => (lv > 0 ? 1.5 + VEHICLE_UPGRADES.boost.step * lv : 1);
 
 export const GARAGE_PRICE = 2000;
 
@@ -58,6 +83,15 @@ export const STATION = {
   rings: 2,                     // robot čistí hexy do vzdálenosti 2 hexů od stanice
   hopper: 30, speed: 2.5, width: 1.0, power: 40, rowGap: 0.9,
   kgPerSec: 0.07,               // průměrný výkon pro offline výpočet
+};
+
+// UFO dron: létá nad terénem, sám si hledá nedočištěné hexy kdekoli na Měsíci a čistí je
+// 4× rychleji než robot ze stanice (2× širší pás při 2× vyšší rychlosti). Plný se vyloží
+// ve Výkupu nebo v nejbližším depu s pásem. Startuje nad Výkupem, žádnou stanici nepotřebuje.
+export const DRONE = {
+  price: 150000, priceMult: 1.6,
+  hopper: 150, speed: 5, cruise: 10, width: 2.0, power: 45, rowGap: 1.8, alt: 3.2,
+  kgPerSec: 0.28,               // průměrný výkon pro offline výpočet (4× robot)
 };
 
 // Depo: sklad prachu mimo základnu. Prach se do něj vysype jako do Výkupu, ale peníze přinese

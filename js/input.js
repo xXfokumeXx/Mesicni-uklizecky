@@ -1,5 +1,6 @@
 // Klávesnice, myš a dotyk.
-// W/S = vpřed/vzad (plyn/brzda ve vozidle), A/D = otáčení, mezerník = skok, E = akce, T = zrychlit čas.
+// W/S = vpřed/vzad (plyn/brzda ve vozidle), A/D = otáčení, mezerník = skok (ve vzduchu jetpack),
+// Shift = boost vozidla, E = akce, R = jiný cíl pásu, 1–3 = políčko hotbaru, T = zrychlit čas.
 export const input = {
   keys: {},
   target: null,        // cíl chůze: jednotkový vektor na kouli
@@ -25,15 +26,21 @@ export const input = {
   },
 
   get jump() { return !!this.keys[' ']; },
+  get boost() { return !!this.keys.shift; },
 };
 
-// onAction = klávesa E (jednorázově), onCancel = Esc
-export function bindInput(canvas, { pickDir, rotate, zoom, onAction, onCancel }) {
+// onAction = klávesa E (jednorázově), onCancel = Esc, onJump = nový stisk mezerníku (jetpack),
+// onAlt = R (jiný cíl pásu), onSlot(k) = klávesa 1–3 (políčko hotbaru)
+export function bindInput(canvas, { pickDir, rotate, zoom, onAction, onCancel, onJump, onAlt, onSlot }) {
   addEventListener('keydown', e => {
     if (!input.enabled) return;
     const key = e.key.toLowerCase();
     if (key === 'e' && !e.repeat) { onAction(); return; }
     if (key === 'escape') { onCancel(); return; }
+    if (key === ' ' && !e.repeat) onJump?.();
+    if (key === 'r' && !e.repeat) { onAlt?.(); return; }
+    // klávesy 1–9 podle polohy (česká klávesnice má nahoře +ěščř…)
+    if (/^(Digit|Numpad)[1-9]$/.test(e.code) && !e.repeat) { onSlot?.(Number(e.code.slice(-1)) - 1); return; }
     input.keys[key] = true;
     if (e.key.startsWith('Arrow') || e.key === ' ') e.preventDefault();
   });

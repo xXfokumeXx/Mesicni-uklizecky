@@ -25,11 +25,16 @@ export function newGame(title = 'Nová směna', dust = game.dust) {
     tools: { toothbrush: newToolState() },        // vlastněné nástroje
     tool: 'toothbrush',                           // nástroj v ruce
     boots: 0,                                     // úroveň měsíčních bot (0–3)
+    belt: 0,                                      // úroveň opasku (0–2) → políčka hotbaru
+    jetpack: 0,                                   // 1 = koupený jetpack
+    hotbar: ['toothbrush'],                       // políčka hotbaru: id nástroje, { kit } nebo null (hotbar.js)
+    sel: 0,                                       // vybrané políčko hotbaru
     garage: false,                                // postavená garáž
     vehicles: [],                                 // { type, spot, p, f, load, lv: { width, speed } }
     driving: -1,                                  // index vozidla, ve kterém sedíš
     stations: [],                                 // { hex, robot }
-    depots: [],                                   // { hex, store, belt, transit: [[s, kg]] } (depots.js)
+    drones: [],                                   // UFO drony { p, t, hex, k, load, mode } (drones.js)
+    depots: [],                                   // { hex, store, belt, to, transit: [[s, kg]] } (depots.js)
     pstats: {},                                   // klíč hráče → { n, kg, e, sp } (sesbíráno / vyděláno / utraceno)
     won: false,
     playMs: 0,                                    // odehraný čas (pro seznam uložených her)
@@ -43,13 +48,22 @@ export const newUid = () => Math.random().toString(36).slice(2, 8).padEnd(6, '0'
 // Doplní pole, která starší uložené hry nemají (hra z předchozí verze se načte beze ztrát).
 export function upgradeState(s = game.s) {
   if (!Array.isArray(s.depots)) s.depots = [];
+  if (!Array.isArray(s.drones)) s.drones = [];
   if (!s.pstats || typeof s.pstats !== 'object') s.pstats = {};
   for (const d of s.depots) {
     d.store = Number(d.store) || 0;
     d.belt = !!d.belt;
+    if (!Number.isInteger(d.to)) d.to = -1;
     if (!Array.isArray(d.transit)) d.transit = [];
   }
-  for (const v of s.vehicles) if (!v.uid) v.uid = newUid();
+  for (const v of s.vehicles) {
+    if (!v.uid) v.uid = newUid();
+    v.lv.boost = v.lv.boost | 0;
+  }
+  s.belt = Math.min(2, Math.max(0, s.belt | 0));
+  s.jetpack = s.jetpack ? 1 : 0;
+  if (!Array.isArray(s.hotbar)) s.hotbar = [s.tool || 'toothbrush'];
+  s.sel = s.sel | 0;
 }
 
 // Statistiky hráče: kg = nasbíraný prach, e = vydělané peníze, sp = utracené peníze.

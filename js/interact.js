@@ -1,14 +1,16 @@
-// Interakce klávesou E: otevření budovy, nastoupení/vystoupení, umístění a přesun stanice robota,
-// umístění depa a stavba pásu z depa do základny.
+// Interakce klávesou E: otevření budovy, nastoupení/vystoupení (i jako cestující do přepravníku),
+// umístění a přesun stanice robota, umístění depa a stavba pásu z depa do základny nebo do jiného depa.
+// Stavba = stavební sada ve vybraném políčku hotbaru (hotbar.js).
 import { MOON, INTERACT_RADIUS } from './config.js';
 import { vehicleById, SILO } from './catalog.js';
 import { game } from './state.js';
 import { BUILDINGS, nearDoor } from './base.js';
-import { enterVehicle, exitVehicle, isRagdoll } from './player.js';
+import { enterVehicle, exitVehicle, isRagdoll, riding, boardVehicle, leaveRide } from './player.js';
 import { purchase } from './econ.js';
-import { vehicleTakenBy, isClient, reportParked } from './net.js';
+import { vehicleTakenBy, isClient, reportParked, seatsTaken } from './net.js';
 import { canPlaceStation, placeStation, moveStation } from './robots.js';
-import { canPlaceDepot, placeDepot, buildBelt, beltCost, beltPath, beltLoad } from './depots.js';
+import { canPlaceDepot, placeDepot, buildBelt, beltCost, beltPath, beltLoad, beltTargets } from './depots.js';
+import { heldKit, putKit, clearKit } from './hotbar.js';
 import { stationPrice } from './equipment.js';
 import { cellDir } from './planet/hexgrid.js';
 import { madd, norm, angleBetween } from './planet/vec.js';
@@ -17,24 +19,30 @@ const R = MOON.radius;
 const encDir = p => [Math.round(p[0] * 1e6), Math.round(p[1] * 1e6), Math.round(p[2] * 1e6)];
 const kg = v => `${Math.round(v).toLocaleString('cs-CZ')} kg`;
 
-// Režim umisťování: kind = 'station' (nová stanice), 'move' (přesun stanice index), 'depot' (nové depo).
+// Režim umisťování (podle sady ve vybraném políčku hotbaru):
+// kind = 'station' (nová stanice), 'move' (přesun stanice index), 'depot' (nové depo).
 export const placing = { active: false, kind: 'station', index: -1, point: null, valid: false };
 
+// Stavební sada do hotbaru (do ruky); postaví se klávesou E.
 export function startPlacing(kind = 'station', index = -1) {
-  placing.active = true;
-  placing.kind = kind;
-  placing.index = index;
+  putKit({ kit: kind, i: index });
   placing.point = null;
 }
+// Zahodí sadu ve vybraném políčku (sebraná stanice zůstane, kde byla).
 export function cancelPlacing() {
+  clearKit();
   placing.active = false;
   placing.index = -1;
 }
 
 // Bod 5 m před astronautem, kam by se stavba postavila.
 export function updatePlacing() {
-  if (!placing.active) return;
   const s = game.s;
+  const kit = heldKit();
+  placing.active = !!kit && s.driving < 0 && !riding();
+  if (!placing.active) return;
+  placing.kind = kit.kit;
+  placing.index = kit.kit === 'move' ? kit.i : -1;
   placing.point = norm(madd(s.p, s.f, 5 / R));
   if (placing.kind === 'depot') placing.valid = canPlaceDepot(placing.point) && s.money >= SILO.price;
   else if (placing.kind === 'move') placing.valid = !!s.stations[placing.index] && canPlaceStation(placing.point, placing.index);
@@ -90,6 +98,22 @@ function nearStation(p) {
   return best;
 }
 
+// Cíl pásu, který se postaví u depa: index do beltTargets() (0 = Výkup). Mění se klávesou R.
+let beltPick = { depot: -1, k: 0 };
+export function cycleBeltTarget() {
+  const di = nearDepot(game.s.p);
+  if (di < 0 || game.s.depots[di].belt) return false;
+  const n = beltTargets(di).length;
+  beltPick = { depot: di, k: beltPick.depot === di ? (beltPick.k + 1) % n : 1 % n };
+  return true;
+}
+function beltTarget(di) {
+  const list = beltTargets(di);
+  if (beltPick.depot !== di) beltPick = { depot: di, k: 0 };
+  return list[beltPick.k % list.length] ?? -1;
+}
+const targetName = to => (to < 0 ? 'Výkup' : `depo ${game.s.depots.findIndex(d => d.hex === to) + 1}`);
+
 function nearDepot(p) {
   let best = -1, bestD = SILO.zone + 1;
   game.s.depots.forEach((d, i) => {
@@ -107,6 +131,11 @@ export function currentAction(openFacility) {
   if (isRagdoll()) return { label: 'Letíš vzduchem… za chvíli se zvedneš', key: '…', run: null };
 
   if (placing.active) return placeAction();
+
+  const ride = riding();
+  if (ride) {
+    return { label: `Vystoupit z přepravníku (sedadlo ${ride.seat + 1})`, key: 'E', run: () => { leaveRide(); } };
+  }
 
   if (s.driving >= 0) {
     const v = s.vehicles[s.driving];
@@ -126,6 +155,13 @@ export function currentAction(openFacility) {
   if (nearest >= 0) {
     const base = vehicleById(s.vehicles[nearest].type);
     const by = vehicleTakenBy(nearest);
+    if (by && base.seats) {                          // přepravník: přisednout jako cestující
+      const taken = seatsTaken(nearest);
+      let seat = 0;
+      while (taken.has(seat)) seat++;
+      if (seat >= base.seats) return { label: `${base.name} je plný (řídí ${by})`, key: 'E', run: null };
+      return { label: `Přisednout k řidiči ${by} (místo ${seat + 1} z ${base.seats})`, key: 'E', run: () => { boardVehicle(nearest, seat); } };
+    }
     if (by) return { label: `${base.name} právě řídí ${by}`, key: 'E', run: null };
     const label = base.kind === 'push' ? `Chopit se: ${base.name}` : `Nastoupit: ${base.name}`;
     return { label, key: 'E', run: () => enterVehicle(nearest) };
@@ -142,16 +178,18 @@ export function currentAction(openFacility) {
   if (di >= 0) {
     const d = s.depots[di];
     if (!d.belt) {
-      const cost = beltCost(di);
-      const hexes = beltPath(d.hex).hexes;
+      const to = beltTarget(di);
+      const cost = beltCost(di, to);
+      const hexes = beltPath(d.hex, to).hexes;
       const afford = s.money >= cost;
+      const more = beltTargets(di).length > 1 ? ' · R = jiný cíl' : '';
       return {
-        label: `Depo · ${kg(d.store)} · ${afford ? 'postavit' : 'na'} pás do základny (${hexes} hexů) · $${cost.toLocaleString('cs-CZ')}${afford ? '' : ' – zatím málo peněz'}`,
+        label: `Depo ${di + 1} · ${kg(d.store)} · ${afford ? 'postavit' : 'na'} pás → ${targetName(to)} (${hexes} hexů) · $${cost.toLocaleString('cs-CZ')}${afford ? '' : ' – zatím málo peněz'}${more}`,
         key: 'E',
-        run: afford ? () => outcome(purchase('belt', [di], cost, () => buildBelt(di)), 'belt') : null,
+        run: afford ? () => outcome(purchase('belt', [di, to], cost, () => buildBelt(di, to)), 'belt') : null,
       };
     }
-    return { label: `Depo · na skladě ${kg(d.store)} · na pásu ${kg(beltLoad(d))}`, key: 'E', run: null };
+    return { label: `Depo ${di + 1} · na skladě ${kg(d.store)} · na pásu ${kg(beltLoad(d))} → ${targetName(d.to ?? -1)}`, key: 'E', run: null };
   }
 
   // budovy

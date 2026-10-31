@@ -2,10 +2,12 @@
 import {
   MOON, DEPOT, PRICE_PER_KG, HEX_BONUS, JUMP_SPEED, UNITS_PER_KG,
 } from './config.js';
+import { JETPACK, BOOST } from './catalog.js';
 import { game } from './state.js';
 import { activeEquipment, walkSpeed } from './equipment.js';
 import { createBody, stepBody, jumpBody, altitude } from './physics.js';
 import { sweepCapsule } from './planet/dustmap.js';
+import { heightAt } from './planet/height.js';
 import { depotAt } from './depots.js';
 import { createRagdoll, stepRagdoll, ragdollPoints, encodeRagdoll, RG } from './ragdoll.js';
 import { cross, madd, norm, tangentTo, angleBetween, rotateAround, dot } from './planet/vec.js';
@@ -34,6 +36,8 @@ export const playerFx = {
   landed: 0,           // rychlost dopadu (jednorázově, pro efekty)
   landedAnim: false,
   deposit: null,       // { i, kg }: náklad právě vysypaný do depa i
+  jet: 0,              // čas posledního výstřelu jetpackem (performance.now), 0 = nic
+  boosting: false,     // vozidlo právě jede s boostem
 };
 
 let body = null;                         // těleso astronauta
@@ -45,6 +49,9 @@ export const strokes = { seq: 0, list: [] };
 const vehicleBodies = new Map();         // index vozidla → těleso
 let prevTool = null;
 let vehicleSpeed = 0;                    // aktuální rychlost řízeného vozidla (m/s, se znaménkem)
+let jetReady = true;                     // jetpack je nabitý (nabije se dopadem na zem)
+let boostLeft = BOOST.duration;          // zbývající boost vozidla (s)
+let ride = null;                         // cestující v přepravníku: { i, seat, uid }
 
 export function initPlayer() {
   body = walkerBody(game.s.p);
@@ -53,6 +60,7 @@ export function initPlayer() {
   vehicleBodies.clear();
   prevTool = null;
   vehicleSpeed = 0;
+  ride = null;
   playerFx.face = game.s.f;
 }
 
@@ -77,8 +85,77 @@ export function rotateHeading(angle) {
 }
 
 export function tryJump() {
-  if (game.s.driving >= 0 || rag) return;
+  if (game.s.driving >= 0 || rag || ride) return;
   jumpBody(body, JUMP_SPEED);
+}
+
+// Jetpack: ve vzduchu vystřelí astronauta ve směru kamery (look = [x,y,z] směr pohledu),
+// nejméně o JETPACK.lift stupňů nad obzor. Vrací true, když vystřelil.
+export function tryJet(look) {
+  const s = game.s;
+  if (!s.jetpack || !jetReady || s.driving >= 0 || rag || ride || body.grounded) return false;
+  const up = body.p;
+  let flat = tangentTo(up, look);
+  if (!Number.isFinite(flat[0]) || Math.hypot(...flat) < 1e-6) flat = s.f;
+  const lv = dot(look, up) / Math.hypot(...look);
+  const ang = Math.max(Math.asin(Math.max(-1, Math.min(1, lv))), JETPACK.lift * Math.PI / 180);
+  const v = JETPACK.speed;
+  body.v = flat.map(c => c * Math.cos(ang) * v);
+  body.vr = Math.sin(ang) * v;
+  body.jumped = true;                        // ve vzduchu plná měsíční lehkost (physics.js)
+  body.jet = true;
+  jetReady = false;
+  s.f = flat;
+  playerFx.jet = performance.now();
+  return true;
+}
+export const jetCharged = () => jetReady;
+
+// ---------- cestující v přepravníku ----------
+
+export const riding = () => ride;
+
+// Nastoupí do vozidla i na sedadlo cestujícího seat (řídí ho někdo jiný, nebo nikdo).
+export function boardVehicle(i, seat) {
+  const v = game.s.vehicles[i];
+  if (!v || game.s.driving >= 0 || rag) return false;
+  ride = { i, seat, uid: v.uid || '' };
+  prevTool = null;
+  return true;
+}
+
+export function leaveRide() {
+  if (!ride) return;
+  const s = game.s;
+  const v = s.vehicles[ride.i];
+  const p = v ? v.p : s.p, f = v ? v.f : s.f;
+  const side = norm(cross(f, p));
+  const out = norm(madd(p, side, (ride.seat % 2 ? 2.4 : -2.4) / R));   // vystoupí na svou stranu
+  ride = null;
+  body = walkerBody(out);
+  s.p = out;
+  s.f = tangentTo(out, f);
+}
+
+// Po prodeji / přečíslování vozidel: najít přepravník podle uid, zmizel-li, vystoupit.
+export function remapRide() {
+  if (!ride) return;
+  const i = game.s.vehicles.findIndex(v => (v.uid || '') === ride.uid);
+  if (i < 0) leaveRide();
+  else ride.i = i;
+}
+
+// Cestující jede s vozidlem: p, r = poloha vozidla (od řidiče nebo zaparkovaného).
+export function followRide(p, r) {
+  const s = game.s;
+  s.p = p;
+  s.f = tangentTo(p, s.f);
+  body.p = p;
+  body.r = r;
+  body.g = r;
+  body.vr = 0;
+  body.v = [0, 0, 0];
+  body.grounded = true;
 }
 
 // ---------- pohyb ----------
@@ -103,7 +180,9 @@ function walk(input, dt) {
   }
   if (dir && m) want = norm(dir).map(c => c * speed);
 
-  stepBody(body, dt, want);
+  if (body.grounded) body.jet = false;
+  stepBody(body, dt, want, body.jet ? 0.12 : undefined);   // po výstřelu jetpackem se ve vzduchu skoro neřídí
+  if (body.grounded) { body.jet = false; jetReady = true; }
   s.p = body.p;
   s.f = tangentTo(s.p, s.f);
   const sp = Math.hypot(body.v[0], body.v[1], body.v[2]);
@@ -117,7 +196,12 @@ function drive(input, dt) {
   const v = s.vehicles[s.driving];
   const b = vehicleBody(s.driving);
   const eq = activeEquipment();
-  const max = eq.stats.speed;
+  // boost (Shift): skokové zrychlení, dokud zbývá; nabíjí se, když se nepoužívá
+  const boost = eq.stats.boost || 1;
+  const boosting = boost > 1 && input.boost && boostLeft > 0 && b.grounded;
+  boostLeft = boosting ? Math.max(0, boostLeft - dt) : Math.min(BOOST.duration, boostLeft + dt * BOOST.duration / BOOST.recharge);
+  playerFx.boosting = boosting;
+  const max = eq.stats.speed * (boosting ? boost : 1);
 
   let throttle = 0;
   const m = input.move();
@@ -137,7 +221,9 @@ function drive(input, dt) {
     }
   }
 
+  if (boosting && throttle === 0 && !input.target) throttle = 1;  // boost jede vpřed i bez plynu
   const target = throttle * max * (throttle < 0 ? 0.5 : 1);
+  if (boosting && target > vehicleSpeed) vehicleSpeed = target;     // skokově, ne postupně
   const accel = (Math.abs(target) > Math.abs(vehicleSpeed) ? 3.5 : 6) * dt;   // brzdí rychleji, než zrychluje
   vehicleSpeed += Math.max(-accel, Math.min(accel, target - vehicleSpeed));
 
@@ -163,6 +249,7 @@ function drive(input, dt) {
 export const ragdollState = () => ragPts;
 export const ragdollEncoded = () => (rag ? encodeRagdoll(rag) : null);
 export const currentVehicleSpeed = () => vehicleSpeed;
+export const boostCharge = () => boostLeft / BOOST.duration;
 export const isRagdoll = () => !!rag;
 
 // pose = body ragdollu z aktuální pózy modelu, vel = rychlost odhození, spin = rotace (rad/s).
@@ -176,7 +263,7 @@ export function knockOut(pose, vel, spin) {
 
 // Vozidla v pohybu: [{ pos: [x,y,z], radius, vel: [x,y,z], speed }]. Při zásahu vrátí true.
 export function checkVehicleHits(movers, posePoints) {
-  if (rag || game.s.driving >= 0) return false;
+  if (rag || game.s.driving >= 0 || ride) return false;
   const b = body;
   const me = [b.p[0] * b.r, b.p[1] * b.r, b.p[2] * b.r];
   for (const m of movers) {
@@ -220,8 +307,27 @@ function flyRagdoll(dt) {
   }
 }
 
+// Výška nad terénem (m) – i v letu po srážce (ragdoll).
+export function currentAltitude() {
+  if (rag && ragPts) {
+    const pel = ragPts[RG.pelvis];
+    const l = Math.hypot(pel[0], pel[1], pel[2]);
+    return l - (R + heightAt([pel[0] / l, pel[1] / l, pel[2] / l]));
+  }
+  return body ? altitude(body) : 0;
+}
+
 export function movePlayer(input, dt) {
   if (rag) { flyRagdoll(dt); return; }
+  if (ride) {
+    playerFx.moving = false;
+    playerFx.speed = 0;
+    playerFx.face = game.s.f;
+    playerFx.airborne = false;
+    playerFx.alt = 0;
+    playerFx.vr = 0;
+    return;
+  }
   if (game.s.driving >= 0) drive(input, dt);
   else walk(input, dt);
   const b = activeBody();
@@ -238,6 +344,7 @@ export function movePlayer(input, dt) {
 
 export function enterVehicle(i) {
   const s = game.s;
+  if (ride) return;
   s.driving = i;
   const v = s.vehicles[i];
   s.p = v.p;
@@ -270,7 +377,7 @@ export function exitVehicle() {
 export function collect() {
   const s = game.s;
   playerFx.deposit = null;
-  if (rag) { playerFx.swept = 0; playerFx.bonus = 0; playerFx.completed = []; playerFx.tool = null; return 0; }
+  if (rag || ride) { playerFx.swept = 0; playerFx.bonus = 0; playerFx.completed = []; playerFx.tool = null; return 0; }
   const eq = activeEquipment();
   const b = activeBody();
   playerFx.swept = 0;

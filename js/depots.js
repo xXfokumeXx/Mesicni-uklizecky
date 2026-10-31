@@ -2,6 +2,8 @@
 // stejně jako do Výkupu. Peníze ale přinese až pás – vede po nejkratší cestě (hlavní kružnici)
 // z depa do Výkupu uprostřed základny, odebírá z depa SILO.beltRate kg/s a prach po něm jede
 // rychlostí SILO.beltSpeed. Prodá se, až dojede do Výkupu. Pás stojí SILO.beltPerHex za každý hex.
+// Pás může vést i do jiného depa (d.to = hex cílového depa, −1 = Výkup): prach se pak přisype
+// do jeho skladu a dál ho veze pás toho depa. Řetěz dep nesmí tvořit smyčku.
 import { MOON, BASE, PRICE_PER_KG } from './config.js';
 import { SILO } from './catalog.js';
 import { game } from './state.js';
@@ -21,7 +23,7 @@ export function canPlaceDepot(p) {
 export function placeDepot(p) {
   if (game.s.money < SILO.price || !canPlaceDepot(p)) return false;
   game.s.money -= SILO.price;
-  game.s.depots.push({ hex: dirToCell(p), store: 0, belt: false, transit: [] });
+  game.s.depots.push({ hex: dirToCell(p), store: 0, belt: false, to: -1, transit: [] });
   return true;
 }
 
@@ -32,10 +34,12 @@ function slerp(a, b, ang, t) {
   return norm([a[0] * wa + b[0] * wb, a[1] * wa + b[1] * wb, a[2] * wa + b[2] * wb]);
 }
 
-// Trasa pásu z depa do Výkupu: { points (bod každé ~2,5 m), length (m), hexes (kolik hexů pás přechází) }.
-export function beltPath(hex) {
-  if (pathCache.has(hex)) return pathCache.get(hex);
-  const a = cellDir(hex), b = BASE.dir;
+// Trasa pásu z depa do Výkupu (to = −1) nebo do depa na hexu to:
+// { points (bod každé ~2,5 m), length (m), hexes (kolik hexů pás přechází) }.
+export function beltPath(hex, to = -1) {
+  const key = `${hex}>${to}`;
+  if (pathCache.has(key)) return pathCache.get(key);
+  const a = cellDir(hex), b = to >= 0 ? cellDir(to) : BASE.dir;
   let legs = [[a, b]];
   if (angleBetween(a, b) > Math.PI - 0.02) {          // depo přesně naproti základně: oklikou přes rovník
     const m = anyTangent(b);
@@ -54,19 +58,48 @@ export function beltPath(hex) {
     length += len;
   }
   const path = { points, length, hexes: cells.size };
-  pathCache.set(hex, path);
+  pathCache.set(key, path);
   return path;
 }
 
-export const beltCost = i => beltPath(game.s.depots[i].hex).hexes * SILO.beltPerHex;
+export const beltCost = (i, to = -1) => beltPath(game.s.depots[i].hex, to).hexes * SILO.beltPerHex;
+export const depotByHex = hex => game.s.depots.find(d => d.hex === hex) || null;
 
-export function buildBelt(i) {
+// Může pás z depa i vést do cíle to? (Výkup vždy; depo jen jiné a takové, z něhož řetěz pásů nevede zpět)
+export function validBeltTarget(i, to) {
   const d = game.s.depots[i];
-  if (!d || d.belt) return false;
-  const cost = beltCost(i);
+  if (!d) return false;
+  if (to === -1) return true;
+  if (to === d.hex || !depotByHex(to)) return false;
+  for (let t = to, n = 0; t >= 0 && n < 64; n++) {
+    const x = depotByHex(t);
+    if (!x || !x.belt) return true;
+    if (x.to === d.hex) return false;
+    t = x.to;
+  }
+  return true;
+}
+
+// Možné cíle pásu z depa i: Výkup a ostatní depa (nejbližší první).
+export function beltTargets(i) {
+  const d = game.s.depots[i];
+  if (!d) return [];
+  const from = cellDir(d.hex);
+  const others = game.s.depots
+    .filter(x => x.hex !== d.hex && validBeltTarget(i, x.hex))
+    .sort((a, b) => angleBetween(from, cellDir(a.hex)) - angleBetween(from, cellDir(b.hex)))
+    .map(x => x.hex);
+  return [-1, ...others];
+}
+
+export function buildBelt(i, to = -1) {
+  const d = game.s.depots[i];
+  if (!d || d.belt || !validBeltTarget(i, to)) return false;
+  const cost = beltCost(i, to);
   if (game.s.money < cost) return false;
   game.s.money -= cost;
   d.belt = true;
+  d.to = to;
   return true;
 }
 
@@ -105,29 +138,43 @@ export function depotTick(dt) {
     d.acc = (d.acc || 0) + take;
     d.accT = (d.accT || 0) + dt;
     if (d.accT >= 1) {                                // náklad za každou sekundu jede jako jedna dávka
-      if (d.acc > 0) d.transit.push([beltPath(d.hex).length / SILO.beltSpeed, d.acc]);
+      if (d.acc > 0) d.transit.push([beltPath(d.hex, d.to).length / SILO.beltSpeed, d.acc]);
       d.acc = 0;
       d.accT = 0;
     }
     for (const e of d.transit) e[0] -= dt;
-    while (d.transit.length && d.transit[0][0] <= 0) earned += d.transit.shift()[1] * PRICE_PER_KG;
+    while (d.transit.length && d.transit[0][0] <= 0) {
+      const kg = d.transit.shift()[1];
+      const next = d.to >= 0 ? depotByHex(d.to) : null;
+      if (next) next.store += kg;                     // do dalšího depa v řetězu
+      else earned += kg * PRICE_PER_KG;
+    }
   }
   game.s.money += earned;
   return earned;
 }
 
+// Kolik pásů vede z depa do Výkupu (pro pořadí offline výpočtu: nejdřív depa na začátku řetězu).
+function chainDepth(d) {
+  let n = 0;
+  for (let x = d; x && x.belt && x.to >= 0 && n < 64; n++) x = depotByHex(x.to);
+  return n;
+}
+
 // Offline: pás za dobu nepřítomnosti doveze, co jede, a z depa odebere, co stihne.
 export function depotsOffline(seconds) {
   let earned = 0;
-  for (const d of game.s.depots) {
-    if (!d.belt) continue;
+  const order = game.s.depots.filter(d => d.belt).sort((a, b) => chainDepth(b) - chainDepth(a));
+  for (const d of order) {
     let kg = (d.acc || 0) + d.transit.reduce((a, e) => a + e[1], 0);
     const take = Math.min(d.store, SILO.beltRate * seconds);
     kg += take;
     d.store -= take;
     d.acc = 0;
     d.transit = [];
-    earned += kg * PRICE_PER_KG;
+    const next = d.to >= 0 ? depotByHex(d.to) : null;
+    if (next) next.store += kg;
+    else earned += kg * PRICE_PER_KG;
   }
   game.s.money += earned;
   return earned;

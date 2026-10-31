@@ -19,15 +19,17 @@
 import { MOON, HEX_BONUS, PRICE_PER_KG } from './config.js';
 import { game, newGame, addStat } from './state.js';
 import { profile, sanitizeName, validLook } from './profile.js';
-import { strokes, exitVehicle } from './player.js';
+import { strokes, exitVehicle, riding, remapRide, playerFx } from './player.js';
 import { hexes, sweepCapsule, clearHex } from './planet/dustmap.js';
 import { grid, cellDir } from './planet/hexgrid.js';
 import { norm, cross, anyTangent, dot, tangentTo } from './planet/vec.js';
-import { VEHICLES, STATION } from './catalog.js';
+import { VEHICLES, STATION, DRONE } from './catalog.js';
 import { packDust, unpackDust, toBase64, fromBase64 } from './storage.js';
 import { buildGarage, buyVehicle, upgradeVehicle, callBackVehicle, sellVehicle } from './equipment.js';
 import { placeStation, moveStation } from './robots.js';
 import { placeDepot, buildBelt, depositToDepot, beltLoad } from './depots.js';
+import { buyDrone } from './drones.js';
+import { ensureHotbar } from './hotbar.js';
 import { connectPlatform } from './platform/platform.js';
 
 const R = MOON.radius;
@@ -188,6 +190,8 @@ function myWorldPresence(fx, vehicleSpeed) {
     b: requests,
     pk: parkReport,
     g: ragdollEnc,
+    rd: riding() ? [riding().i, riding().seat] : null,        // cestující v přepravníku [vozidlo, sedadlo]
+    jp: s.jetpack ? (performance.now() - playerFx.jet < 700 ? 2 : 1) : 0,   // jetpack: 1 = na zádech, 2 = právě hoří
   };
 }
 
@@ -214,7 +218,7 @@ function remoteOf(peer) {
       sp: null, sr: R,                               // vyhlazená poloha pro vykreslení
       lastSeq: 0, lastPt: null, buffer: [],          // tahy koštětem
       chatSeq: -1, e: 0, pk: null, done: new Set(), rag: null, updated: 0,
-      tool: 'toothbrush', tw: 30,
+      tool: 'toothbrush', tw: 30, rd: null, jp: 0,
     };
     net.remotes.set(peer, r);
   }
@@ -235,6 +239,8 @@ function readRemote(peer, pr) {
   r.tool = typeof pr.tl === 'string' ? pr.tl : r.tool;
   r.tw = isNum(pr.tw) ? pr.tw : r.tw;
   r.rag = Array.isArray(pr.g) ? pr.g : null;
+  r.rd = okVec(pr.rd, 0, 2) && Number.isInteger(pr.rd[0]) && Number.isInteger(pr.rd[1]) ? [pr.rd[0], pr.rd[1]] : null;
+  r.jp = pr.jp | 0;
   if (!r.sp && r.p) { r.sp = r.p.slice(); r.sr = r.r; }
   r.updated = performance.now();
   if (!r.announced && pr.n) {
@@ -325,6 +331,17 @@ export function vehicleTakenBy(i) {
   for (const r of net.remotes.values()) if (r.d === i) return r.name;
   return null;
 }
+
+// Sedadla cestujících ve vozidle i, která má někdo obsazená (Set čísel sedadel; i moje).
+export function seatsTaken(i) {
+  const set = new Set();
+  for (const r of net.remotes.values()) if (r.rd && r.rd[0] === i) set.add(r.rd[1]);
+  const me = riding();
+  if (me && me.i === i) set.add(me.seat);
+  return set;
+}
+// Cestující ve vozidle i (vzdálení hráči) – pro úspěch „Plný autobus“.
+export const passengersOf = i => [...net.remotes.values()].filter(r => r.rd && r.rd[0] === i);
 
 // Vozidla v pohybu (pro srážky): [{ pos, radius, vel, speed }]
 export function movingVehicles(radiusOf) {
@@ -469,7 +486,7 @@ function hostReadPeer(r, pr) {
 function hostRequest(kind, a, cost, r) {
   const s = game.s;
   switch (kind) {
-    case 'tool': case 'tup': case 'boots':
+    case 'tool': case 'tup': case 'boots': case 'gbelt': case 'jet':
       if (!(cost >= 0) || s.money < cost) return false;
       s.money -= cost;
       return true;
@@ -479,9 +496,10 @@ function hostRequest(kind, a, cost, r) {
     case 'st': return okVec(a, 0) ? placeStation(decU(a)) : false;
     case 'stmove': return okVec(a, 1) ? moveStation(a[0] | 0, decU(a, 1)) : false;
     case 'call': return !vehicleTakenBy(a[0] | 0) && callBackVehicle(a[0] | 0);
-    case 'vsell': return s.driving !== (a[0] | 0) && !vehicleTakenBy(a[0] | 0) && vehicleUid(a[0] | 0) === String(a[1]) && sellVehicle(a[0] | 0);
+    case 'vsell': return s.driving !== (a[0] | 0) && !vehicleTakenBy(a[0] | 0) && !seatsTaken(a[0] | 0).size && vehicleUid(a[0] | 0) === String(a[1]) && sellVehicle(a[0] | 0);
     case 'dep': return okVec(a, 0) ? placeDepot(decU(a)) : false;
-    case 'belt': return buildBelt(a[0] | 0);
+    case 'belt': return buildBelt(a[0] | 0, Number.isInteger(a[1]) ? a[1] : -1);
+    case 'drone': return buyDrone();
     default: return false;
   }
 }
@@ -507,10 +525,11 @@ function hostState() {
     ts: Date.now(),
     g: s.garage ? 1 : 0,
     won: s.won ? 1 : 0,
-    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '']),
+    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '', v.lv.boost | 0]),
     st: s.stations.map(st => st.hex),
     b: s.stations.map(botEnc),
-    dp: s.depots.map(d => [d.hex, Math.round(d.store), d.belt ? 1 : 0, Math.round(beltLoad(d))]),
+    dr: s.drones.map(d => [...enc(d.p), d.mode === 'work' ? 1 : 0]),
+    dp: s.depots.map(d => [d.hex, Math.round(d.store), d.belt ? 1 : 0, Math.round(beltLoad(d)), d.to ?? -1]),
     ps: presentStats(),
     rc: [host.rcBase, ...host.rc],
     ack: host.acks,
@@ -569,6 +588,7 @@ let lastH = null;
 let lastRc = 0;
 const vehSig = [];                      // podpis polohy vozidel z H (aby se poloha přepsala jen při změně)
 const botPrev = [];
+const dronePrev = [];
 
 // Připojí se ke světu: počká na snímek mapy od hostitele, převezme stav. Vrací text chyby nebo null.
 export async function joinWorld(w, onStatus) {
@@ -657,12 +677,12 @@ function applyHostState(H) {
       if (!okVec(e, 0, 11) || !VEHICLES[e[0]]) return;
       let v = s.vehicles[i];
       if (!v) {
-        v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2] }, moved: true };
+        v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2], boost: e[12] | 0 }, moved: true };
         s.vehicles[i] = v;
         vehSig[i] = '';
       }
       v.type = VEHICLES[e[0]].id;
-      v.lv = { width: e[1] | 0, speed: e[2] | 0 };
+      v.lv = { width: e[1] | 0, speed: e[2] | 0, boost: e[12] | 0 };
       v.spot = e[3];
       if (s.driving === i) return;                   // řídím ho já → poloha je moje
       const sig = e.slice(4, 11).join(',');
@@ -698,7 +718,24 @@ function applyHostState(H) {
     });
   }
 
-  // depa a pásy: [hex, sklad kg, pás, kg na pásu]
+  // UFO drony: [poloha ×3, čistí]; ve „vizuální“ mapě prachu zametají jako roboti
+  // (Firebase prázdné pole neuloží → chybějící H.dr = žádné drony)
+  const hd = Array.isArray(H.dr) ? H.dr : [];
+  s.drones.length = Math.min(s.drones.length, hd.length);
+  hd.forEach((e, i) => {
+    if (!okVec(e, 0, 4)) return;
+    const p = decU(e);
+    const dr = s.drones[i] || (s.drones[i] = { p, t: p, hex: -1, k: -1, load: 0, mode: 'idle' });
+    const prev = dronePrev[i] || p;
+    const work = e[3] === 1;
+    if (work && dot(prev, p) > Math.cos(6 / R)) sweepCapsule(prev, p, DRONE.width / 2, DRONE.power * 3, 1e12);
+    dronePrev[i] = p;
+    if (dot(prev, p) < 0.9999999999) dr.t = norm([p[0] * 2 - prev[0], p[1] * 2 - prev[1], p[2] * 2 - prev[2]]);
+    dr.p = p;
+    dr.mode = work ? 'work' : 'fly';
+  });
+
+  // depa a pásy: [hex, sklad kg, pás, kg na pásu, cíl pásu (hex depa, −1 = Výkup)]
   if (Array.isArray(H.dp)) {
     s.depots = H.dp
       .filter(e => okVec(e, 0, 4) && Number.isInteger(e[0]) && e[0] >= 0 && e[0] < grid.cells)
@@ -707,6 +744,7 @@ function applyHostState(H) {
         d.store = Math.max(0, e[1]);
         d.belt = !!e[2];
         d.tk = Math.max(0, e[3]);
+        d.to = Number.isInteger(e[4]) ? e[4] : -1;
         return d;
       });
   }
@@ -748,13 +786,14 @@ function syncFleet(s, list) {
     let v = uids[i] && old.get(uids[i]);
     if (!v) {
       if (!okVec(e, 0, 11) || !VEHICLES[e[0]]) return null;
-      v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2] } };
+      v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2], boost: e[12] | 0 } };
     }
     v.uid = uids[i];
     v.moved = true;
     return v;
   }).filter(Boolean);
   if (drivenUid && s.driving >= 0) s.driving = s.vehicles.findIndex(v => v.uid === drivenUid);
+  remapRide();                                       // cestující: přepravník má nový index, nebo zmizel
   vehSig.length = 0;
 }
 
@@ -803,7 +842,9 @@ export function savePersonal() {
   if (net.mode !== 'client' || !game.s) return;
   const s = game.s;
   try {
-    localStorage.setItem(personalKey(), JSON.stringify({ tools: s.tools, tool: s.tool, boots: s.boots, p: s.p, f: s.f }));
+    localStorage.setItem(personalKey(), JSON.stringify({
+      tools: s.tools, tool: s.tool, boots: s.boots, belt: s.belt, jetpack: s.jetpack, hotbar: s.hotbar, sel: s.sel, p: s.p, f: s.f,
+    }));
   } catch { /* nic */ }
 }
 function loadPersonal() {
@@ -814,8 +855,13 @@ function loadPersonal() {
     if (d.tools && typeof d.tools === 'object') s.tools = d.tools;
     if (d.tool && s.tools[d.tool]) s.tool = d.tool;
     s.boots = Math.min(3, Math.max(0, d.boots | 0));
+    s.belt = Math.min(2, Math.max(0, d.belt | 0));
+    s.jetpack = d.jetpack ? 1 : 0;
+    s.hotbar = Array.isArray(d.hotbar) ? d.hotbar : [s.tool];
+    s.sel = d.sel | 0;
     if (okVec(d.p, 0) && okVec(d.f, 0)) { s.p = norm(d.p); s.f = tangentTo(s.p, d.f); }
   } catch { /* nic */ }
+  ensureHotbar(game.s);
 }
 
 // ---------- každý snímek ----------
