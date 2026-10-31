@@ -5,11 +5,12 @@
   z-index: 1;
   display: grid;
   grid-template-columns: minmax(0, 270px) 1fr minmax(0, 220px);
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   grid-template-areas:
     "stats  .      players"
     "chat   chat   ."
     "prompt prompt prompt"
+    "hotbar hotbar hotbar"
     "controls controls controls";
   gap: 12px;
   padding-top: calc(16px + env(safe-area-inset-top, 0px));
@@ -35,6 +36,12 @@
   grid-area: controls;
 }
 
+.hud__hotbar {
+  grid-area: hotbar;
+  justify-self: center;
+  pointer-events: auto;
+}
+
 @media (max-width: 720px) {
   .hud {
     grid-template-columns: minmax(0, 1fr);
@@ -43,6 +50,7 @@
       "players"
       "chat"
       "prompt"
+      "hotbar"
       "controls";
     gap: 8px;
   }
