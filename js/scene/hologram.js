@@ -128,7 +128,9 @@ export function createHoloGlobe() {
   shell.renderOrder = -1;                            // slupka první → zakryje hexy na odvrácené straně
   spin.add(shell);
   const pin = (color, size) => {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(size, 10, 8), new THREE.MeshBasicMaterial({ color }));
+    // průhledné jako slupka, ať se kreslí po ní a značky na odvrácené straně zakryje
+    const m = new THREE.Mesh(new THREE.SphereGeometry(size, 10, 8), new THREE.MeshBasicMaterial({ color, transparent: true }));
+    m.renderOrder = 1;
     spin.add(m);
     return m;
   };
