@@ -39,7 +39,7 @@ Bez tohoto kroku hra funguje, ale jen pro jednoho hráče.
 3. Kamarád odkaz otevře a připojí se sám. Kód jde zadat i ručně v lobby, pole **Připojit kódem**.
 4. Svět drží a ukládá hostitel. Když odejde, svět se zavře. Vybavení ostatních hráčů (nástroje, boty) zůstává v jejich prohlížeči.
 
-**Ovládání:** W/S chůze a plyn, A/D otáčení, mezerník skok, E akce, M mapa, T zrychlení času (v multiplayeru jen hostitel), Enter chat, Esc menu.
+**Ovládání:** W/S chůze a plyn, A/D otáčení, mezerník skok (ve vzduchu jetpack), Shift boost vozidla, 1–3 hotbar, E akce, R jiný cíl pásu, M mapa (WSAD / šipky otáčí, Q/E přibližuje), U úspěchy, T zrychlení času (v multiplayeru jen hostitel), Enter chat, Esc menu.
 
 ## Limity bezplatného tarifu
 
