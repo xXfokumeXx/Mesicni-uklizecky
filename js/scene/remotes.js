@@ -1,5 +1,5 @@
 // Ostatní hráči v multiplayeru: astronaut s jejich vzhledem, animace podle presence,
-// sedadlo ve vozidle, ragdoll a jmenovka nad hlavou.
+// sedadlo ve vozidle (řidič i cestující v přepravníku), jetpack, ragdoll a jmenovka nad hlavou.
 import { MOON } from '../config.js';
 import { SUIT_COLORS } from '../catalog.js';
 import { net } from '../net.js';
@@ -68,7 +68,8 @@ export function createRemotes(scene, camera, actors, layer) {
         a.applyRagdoll(pts);
       } else {
         if (a.ragdolling) a.endRagdoll();
-        const seat = r.d >= 0 ? actors.seatTransform(r.d, a.root) : false;
+        const seat = r.d >= 0 ? actors.seatTransform(r.d, a.root)
+          : r.rd && actors.passengerTransform(r.rd[0], r.rd[1], a.root) ? 'seat' : false;
         if (seat === 'seat') seated = true;
         else if (seat === 'push') pushing = true;
         else {
@@ -84,7 +85,8 @@ export function createRemotes(scene, camera, actors, layer) {
         landed: v.wasAir && !air, seated, pushing,
       });
       v.wasAir = air;
-      a.setToolSize(r.tw / 200);
+      a.setToolSize(seated ? 0 : r.tw / 200);
+      a.setJetpack(r.jp);
 
       // jmenovka
       _v.copy(a.root.position).addScaledVector(_up.set(r.sp[0], r.sp[1], r.sp[2]), 2.3);

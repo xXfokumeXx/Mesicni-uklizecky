@@ -1,6 +1,6 @@
 // Low-poly vozidla (bílá karoserie, oranžové rotační kartáče – styl úklidové techniky).
 // Model: „nahoru“ = +y, „dopředu“ = +z, kola na y = 0.
-// Vrací { root, brushes[], wheels[], seat: Vector3 | null, pusher: boolean, radius }.
+// Vrací { root, brushes[], wheels[], seat: Vector3 | null, pusher: boolean, radius, passengers?: Vector3[] }.
 
 const THREE = window.THREE;
 let M = null;
@@ -16,6 +16,7 @@ function materials() {
     orange: new THREE.MeshLambertMaterial({ color: 0xe8742a, emissive: 0x2a1004 }),
     hivis:  new THREE.MeshLambertMaterial({ color: 0xf2b33d, emissive: 0x3d2800 }),
     glass:  new THREE.MeshPhongMaterial({ color: 0x1d2a38, specular: 0x8fb3d9, shininess: 80 }),
+    cabin:  new THREE.MeshPhongMaterial({ color: 0x8fb3d9, specular: 0xffffff, shininess: 80, transparent: true, opacity: 0.28, depthWrite: false }),
     light:  new THREE.MeshBasicMaterial({ color: 0xfff1c4 }),
   };
   return M;
@@ -161,22 +162,27 @@ function megaRover() {
   return { root, wheels, brushes: [], seat: new THREE.Vector3(0, 2.05, -1.55), pusher: false, radius: 3.6, wheelR: 0.7 };
 }
 
+// Přepravník posádky: prosklená kabina, aby byli vidět řidič i cestující (5 sedadel vzadu a vedle řidiče).
 function crewTransport() {
   const m = materials();
   const root = new THREE.Group();
   root.add(
     box(2.0, 0.9, 4.3, m.orange, 0, 0.95, 0),
-    box(2.0, 0.85, 4.3, m.body, 0, 1.82, 0),
-    box(2.02, 0.45, 3.2, m.glass, 0, 1.95, -0.3),          // boční okna
-    box(1.8, 0.5, 0.06, m.glass, 0, 1.95, 2.16),
-    box(1.6, 0.1, 2.8, m.dark, 0, 2.3, -0.3),              // střešní nosič
-    box(1.0, 0.25, 0.9, m.shade, 0.2, 2.48, -0.8),
+    box(2.0, 0.12, 4.3, m.body, 0, 2.26, 0),               // střecha
+    box(1.98, 0.8, 4.26, m.cabin, 0, 1.8, 0),              // okna kolem dokola
+    box(1.6, 0.1, 2.8, m.dark, 0, 2.37, -0.3),             // střešní nosič
+    box(1.0, 0.25, 0.9, m.shade, 0.2, 2.55, -0.8),
     box(0.3, 0.12, 0.06, m.light, -0.65, 1.15, 2.16),
     box(0.3, 0.12, 0.06, m.light, 0.65, 1.15, 2.16),
   );
+  for (const x of [-0.95, 0.95]) for (const z of [-2.1, 0, 2.1]) root.add(box(0.1, 0.8, 0.1, m.body, x, 1.8, z));
   const wheels = [wheel(0.4, 0.3, -0.98, 1.35), wheel(0.4, 0.3, 0.98, 1.35), wheel(0.4, 0.3, -0.98, -1.35), wheel(0.4, 0.3, 0.98, -1.35)];
   root.add(...wheels);
-  return { root, wheels, brushes: [], seat: new THREE.Vector3(-0.45, 0.85, 1.1), pusher: false, radius: 2.4, wheelR: 0.4 };
+  const at = (x, z) => new THREE.Vector3(x, 0.85, z);
+  return {
+    root, wheels, brushes: [], seat: at(-0.45, 1.3), pusher: false, radius: 2.4, wheelR: 0.4,
+    passengers: [at(0.45, 1.3), at(-0.45, 0.1), at(0.45, 0.1), at(-0.45, -1.1), at(0.45, -1.1)],
+  };
 }
 
 const BUILDERS = { push: pushSweeper, rideon: rideOn, lunar: lunarSweeper, mega: megaRover, crew: crewTransport };

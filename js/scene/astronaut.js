@@ -7,6 +7,7 @@ import { JUMP_SPEED } from '../config.js';
 import { SUIT_COLORS, DEFAULT_LOOK } from '../catalog.js';
 import { RG, RG_COUNT } from '../ragdoll.js';
 import { buildProp } from './props.js';
+import { buildJetpack } from './models.js';
 
 const THREE = window.THREE;
 
@@ -275,7 +276,7 @@ export function createAstronaut(look = DEFAULT_LOOK) {
     // zametání: nástroj kmitá do stran, ve vzduchu se drží u těla
     tool.rotation.y = Math.sin(time * 11) * 0.22 * sweepAmp;
     tool.rotation.x = -0.35 * airAmp;
-    tool.visible = !st.seated && !st.pushing;
+    tool.visible = !st.seated && !st.pushing && !toolOff;
     shadow.visible = !st.seated;
 
     // stín se zmenšuje s výškou skoku
@@ -284,14 +285,30 @@ export function createAstronaut(look = DEFAULT_LOOK) {
     shadow.position.y = 0.05 - st.alt;
   }
 
-  // Šířka hlavy nástroje = šířka zametaného pásu (radius v m).
+  // Šířka hlavy nástroje = šířka zametaného pásu (radius v m); 0 = v ruce není nástroj.
+  let toolOff = false;
   function setToolSize(radius) {
+    toolOff = !(radius > 0);
     const width = Math.max(0.3, radius * 2);
     toolHead.scale.set(width / 0.3, 1, width > 1 ? 1.5 : 1);
     toolHead.position.z = width > 1 ? 1.05 : 0.95;
   }
 
   const tip = new THREE.Vector3();
+
+  // Jetpack na zádech (přes batoh): state 0 = není, 1 = na zádech, 2 = právě hoří.
+  let jetpack = null;
+  function setJetpack(state) {
+    if (!state && !jetpack) return;
+    if (!jetpack) {
+      jetpack = buildJetpack();
+      jetpack.position.set(0, 0.36, -0.48);
+      torso.add(jetpack);
+    }
+    jetpack.visible = !!state;
+    jetpack.userData.flame.visible = state === 2;
+    if (state === 2) jetpack.userData.flame.scale.y = 0.8 + Math.random() * 0.5;
+  }
 
   // ---------- ragdoll ----------
   // Body ragdollu odpovídají kloubům modelu (pánev = počátek skupiny hips).
@@ -388,6 +405,7 @@ export function createAstronaut(look = DEFAULT_LOOK) {
     endRagdoll,
     get ragdolling() { return ragdolling; },
     setToolSize,
+    setJetpack,
     setLamp: k => { lamp.intensity = k * 1.4; },
     lampIntensity: () => lamp.intensity,
     lampPosition: out => lamp.getWorldPosition(out),

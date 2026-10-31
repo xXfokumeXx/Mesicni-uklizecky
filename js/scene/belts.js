@@ -1,4 +1,4 @@
-// Nadzemní pásy z dep do Výkupu. Pás vede ve výšce SILO.beltHeight nad terénem (vyhlazeně, aby
+// Nadzemní pásy z dep do Výkupu (nebo do jiného depa). Pás vede ve výšce SILO.beltHeight nad terénem (vyhlazeně, aby
 // nekopíroval každý hrbol), takže pod ním projde astronaut i vozidla. Každých ~10 m je jeden kus
 // pásu (jedna sloučená geometrie se sloupem); kus, který zakrývá výhled kamery na hráče, se
 // pro tohoto hráče zprůhlední. Po pásu jedou hroudy prachu, když na něm nějaký prach je.
@@ -71,7 +71,7 @@ function segmentDistance(p1, q1, p2, q2) {
 // Postaví pás pro depo: { group, sections: [{ mesh, a, b, center }], cargo, path… }.
 function buildBelt(depot) {
   const M = materials();
-  const path = beltPath(depot.hex).points;
+  const path = beltPath(depot.hex, depot.to ?? -1).points;
   const n = path.length;
   // výška: nejvyšší terén v okolí ±2 bodů, pak průměr → pás nekopíruje každý hrbol
   const th = path.map(p => heightAt(p));
@@ -131,7 +131,7 @@ function buildBelt(depot) {
     sections.push({ mesh, a: P[k].clone(), b: P[last].clone(), center: P[Math.floor((k + last) / 2)].clone(), faded: false });
   }
 
-  // násypka nad Výkupem na konci pásu
+  // násypka nad Výkupem (nebo nad cílovým depem) na konci pásu
   const end = path[n - 1];
   q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(end[0], end[1], end[2]));
   const funnel = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 0.35, 1.2, 12), M.solid.clone());
@@ -149,7 +149,7 @@ function buildBelt(depot) {
   cargo.visible = false;
   group.add(cargo);
 
-  return { hex: depot.hex, group, sections, cargo, P, cum, segQuat, length, count, near: false };
+  return { hex: depot.hex, to: depot.to ?? -1, group, sections, cargo, P, cum, segQuat, length, count, near: false };
 }
 
 export function createBelts(scene) {
@@ -182,7 +182,7 @@ export function createBelts(scene) {
   }
 
   function update(time, viewRange, playerPos) {
-    const k = game.s.depots.map(d => `${d.hex}${d.belt ? 'b' : ''}`).join(',');
+    const k = game.s.depots.map(d => `${d.hex}${d.belt ? `b${d.to ?? -1}` : ''}`).join(',');
     if (k !== key) { key = k; rebuild(); }
     const range2 = (viewRange + 15) ** 2;
     for (const b of belts) {

@@ -1,17 +1,19 @@
 // Všechno, co se ve scéně hýbe nebo patří k základně: astronaut, vozidla, budovy,
-// stanice s roboty, hologram při umisťování stanice, kruh nástroje a obrys hexu.
+// stanice s roboty, UFO drony, hologram při umisťování stanice, kruh nástroje a obrys hexu.
 import { MOON } from '../config.js';
+import { DRONE } from '../catalog.js';
 import { game } from '../state.js';
 import { activeEquipment } from '../equipment.js';
-import { activeBody, vehicleBody, pusherOffset, ragdollState } from '../player.js';
+import { activeBody, vehicleBody, pusherOffset, ragdollState, riding } from '../player.js';
 import { placing } from '../interact.js';
+import { carriedStation } from '../hotbar.js';
 import { hexArea } from '../robots.js';
 import { BUILDINGS } from '../base.js';
 import { grid, dirToCell } from '../planet/hexgrid.js';
 import { norm, cross, anyTangent, madd } from '../planet/vec.js';
 import { heightAt } from '../planet/height.js';
 import { createAstronaut } from './astronaut.js';
-import { buildBot } from './models.js';
+import { buildBot, buildDrone } from './models.js';
 import { buildVehicle } from './vehicles.js';
 import { buildDepot, buildWorkshop, buildToolshop, buildGarage, buildStation, buildSilo, buildBasePad } from './buildings.js';
 import { createBelts } from './belts.js';
@@ -266,7 +268,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       }
       surface(rb.p, _a);
       if (!v.placed) { p.copy(_a); v.placed = true; } else p.lerp(_a, k);
-      const carried = placing.active && placing.kind === 'move' && placing.index === i;   // hráč ji právě nese
+      const carried = carriedStation(i);              // hráč ji právě nese (v hotbaru)
       const near = !carried && p.distanceTo(astro.root.position) < viewRange;
       v.bot.root.visible = near;
       v.station.root.visible = near;
@@ -275,6 +277,36 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       p.copy(_b).multiplyScalar(R + heightAt([_b.x, _b.y, _b.z]));
       orient(v.bot.root, _b, _a.set(rb.t[0], rb.t[1], rb.t[2]).sub(_b));
       v.bot.brush.rotation.y += (rb.mode === 'work' ? 14 : 0) * dt;
+    });
+  }
+
+  // ---------- UFO drony ----------
+  const droneViews = [];
+
+  function syncDrones(dt, time, viewRange) {
+    const list = game.s.drones || [];
+    while (droneViews.length < list.length) {
+      const view = buildDrone();
+      scene.add(prepare(view.root));
+      droneViews.push({ view, placed: false });
+    }
+    const k = 1 - Math.exp(-dt * 6);
+    droneViews.forEach((v, i) => {
+      const dr = list[i];
+      if (!dr) { v.view.root.visible = false; return; }
+      const p = v.view.root.position;
+      const bob = Math.sin(time * 2.1 + i * 1.7) * 0.18;
+      surface(dr.p, _a, DRONE.alt + bob);
+      if (!v.placed) { p.copy(_a); v.placed = true; } else p.lerp(_a, k);
+      v.view.root.visible = p.distanceTo(astro.root.position) < viewRange + 30;
+      if (!v.view.root.visible) return;
+      _b.copy(p).normalize();
+      orient(v.view.root, _b, _f.set(dr.t[0], dr.t[1], dr.t[2]).sub(_b));
+      v.view.body.rotation.y += dt * (dr.mode === 'work' ? 3 : 1.2);
+      const working = dr.mode === 'work';
+      v.view.beam.visible = working;
+      if (working) v.view.beam.scale.set(1, DRONE.alt + bob, 1);
+      v.view.lights.forEach((l, n) => { l.visible = (Math.floor(time * 4) + n) % 3 !== 0; });
     });
   }
 
@@ -331,6 +363,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     views.garage.setBuilt(s.garage);
     syncVehicles(dt, viewRange);
     syncStations(dt, viewRange);
+    syncDrones(dt, time, viewRange);
     syncDepots(viewRange);
     belts.update(time, viewRange, astro.root.position);
     updatePlacement();
@@ -342,8 +375,11 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     const seated = driving && !pushing;
 
     const rag = ragdollState();
+    const ride = riding();
     if (rag) {
       astro.applyRagdoll(rag);                       // ragdoll po srážce s vozidlem
+    } else if (ride && passengerTransform(ride.i, ride.seat, astro.root)) {
+      // cestující sedí v přepravníku
     } else if (seated) {
       // astronaut sedí ve vozidle
       const view = vehicleViews[s.driving];
@@ -370,16 +406,18 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     }
 
     if (!rag && astro.ragdolling) astro.endRagdoll();
+    const sits = seated || !!ride;
     astro.update(dt, time, {
-      moving: fx.moving && !seated, speed: fx.speed, swept: fx.swept && !driving,
+      moving: fx.moving && !sits, speed: fx.speed, swept: fx.swept && !driving,
       airborne: fx.airborne && !driving, alt: driving ? 0 : fx.alt, vel: fx.vr,
-      landed: fx.landedAnim && !driving, seated, pushing,
+      landed: fx.landedAnim && !driving, seated: sits, pushing,
     });
     fx.landedAnim = false;
-    astro.blob.visible = !shadowsOn && !seated && !rag;
+    astro.blob.visible = !shadowsOn && !sits && !rag;
+    astro.setJetpack(s.jetpack ? (performance.now() - fx.jet < 700 ? 2 : 1) : 0);
 
     lastTool = fx.tool;
-    if (!driving) astro.setToolSize(eq.stats.width / 2);
+    if (!driving) astro.setToolSize(ride ? 0 : eq.stats.width / 2);
     updateRing(fx.tool, eq.stats.width / 2);
     updateHexLine(dirToCell(s.p));
   }
@@ -402,16 +440,32 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     return 'seat';
   }
 
+  // Sedadlo cestujícího seat v přepravníku i (pro mě i pro astronauty ostatních hráčů).
+  function passengerTransform(i, seat, obj) {
+    const view = vehicleViews[i];
+    const at = view?.passengers?.[seat];
+    if (!at) return false;
+    view.root.updateMatrixWorld();
+    obj.position.copy(at).add(_a.set(0, -astro.hipHeight, 0));
+    view.root.localToWorld(obj.position);
+    obj.quaternion.copy(view.root.quaternion);
+    return true;
+  }
+
   return {
     update,
     fadeOccluders: belts.fade,
     seatTransform,
+    passengerTransform,
     vehicleRadius: i => vehicleViews[i]?.radius ?? 1,
     vehicleWorld: i => vehicleViews[i]?.root.position,
     ragdollPose: astro.ragdollPose,
     setLook: astro.setLook,
     // kam míří kamera: na vozidlo, nebo na astronauta
-    focusPosition: () => (game.s.driving >= 0 ? vehicleViews[game.s.driving]?.root.position || astro.root.position : astro.root.position),
+    focusPosition: () => {
+      const i = game.s.driving >= 0 ? game.s.driving : riding()?.i ?? -1;
+      return i >= 0 ? vehicleViews[i]?.root.position || astro.root.position : astro.root.position;
+    },
     feetPosition: () => surface(game.s.p, new THREE.Vector3()),
     toolTip: () => (game.s.driving >= 0 && lastTool ? surface(lastTool, new THREE.Vector3(), 0.3) : astro.toolTip()),
     setLamp: astro.setLamp,

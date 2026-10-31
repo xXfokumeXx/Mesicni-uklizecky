@@ -1,6 +1,6 @@
 // Mapa celého Měsíce (klávesa M): zjednodušený glóbus se stejnou texturou prachu jako terén,
-// takže jsou vidět vyčištěné pásy i hotové hexy. Tažením myši (prstem) se glóbus otáčí,
-// kolečkem přibližuje. Glóbus se postaví až při prvním otevření (~25 000 vrcholů).
+// takže jsou vidět vyčištěné pásy i hotové hexy. Tažením myši (prstem) nebo WSAD / šipkami se glóbus
+// otáčí, kolečkem, +/− nebo Q/E přibližuje. Glóbus se postaví až při prvním otevření (~25 000 vrcholů).
 import { MOON, BASE, DUST } from '../config.js';
 import { FACES } from '../planet/icosa.js';
 import { heightAt } from '../planet/height.js';
@@ -45,6 +45,9 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
   const depotMat = new THREE.MeshBasicMaterial({ color: 0xb48cf0 });
   const beltMat = new THREE.LineBasicMaterial({ color: 0xb48cf0 });
   let depotPins = [], beltLines = [], depotKey = '';
+  // UFO drony (azurové, létají)
+  const droneMat = new THREE.MeshBasicMaterial({ color: 0x6ff0e0 });
+  const dronePins = [];
 
   function buildGlobe() {
     const perFace = (N + 1) * (N + 2) / 2;
@@ -116,7 +119,7 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
   }
 
   function placeDepots() {
-    const key = game.s.depots.map(d => `${d.hex}${d.belt ? 'b' : ''}`).join(',');
+    const key = game.s.depots.map(d => `${d.hex}${d.belt ? `b${d.to ?? -1}` : ''}`).join(',');
     if (key === depotKey) return;
     depotKey = key;
     for (const o of [...depotPins, ...beltLines]) group.remove(o);
@@ -128,7 +131,7 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
       return pin;
     });
     beltLines = game.s.depots.filter(d => d.belt).map(d => {
-      const pts = beltPath(d.hex).points.map(p => {
+      const pts = beltPath(d.hex, d.to ?? -1).points.map(p => {
         const r = R + heightAt(p) + 1.5;
         return new THREE.Vector3(p[0] * r, p[1] * r, p[2] * r);
       });
@@ -164,6 +167,7 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
   function close() {
     group.visible = false;
     active = false;
+    keys.clear();
   }
 
   function rotate(dx, dy) {
@@ -177,6 +181,32 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
 
   function zoom(factor) {
     targetDist = Math.max(MIN_DIST, Math.min(MAX_DIST, R + (targetDist - R) * factor));
+  }
+
+  // ovládání klávesnicí (jen když je mapa otevřená): WSAD / šipky = otáčení, +/− a Q/E = přiblížení.
+  // Klávesy podle polohy (e.code), takže fungují i s českou klávesnicí.
+  const KEY_MOVE = {
+    KeyW: [0, 1], ArrowUp: [0, 1], KeyS: [0, -1], ArrowDown: [0, -1],
+    KeyA: [1, 0], ArrowLeft: [1, 0], KeyD: [-1, 0], ArrowRight: [-1, 0],
+  };
+  const KEY_ZOOM = { KeyE: -1, Equal: -1, NumpadAdd: -1, PageUp: -1, KeyQ: 1, Minus: 1, Slash: 1, NumpadSubtract: 1, PageDown: 1 };
+  const keys = new Set();
+  addEventListener('keydown', e => {
+    if (!active || e.target.matches?.('input, textarea')) return;
+    if (KEY_MOVE[e.code] || KEY_ZOOM[e.code]) { keys.add(e.code); e.preventDefault(); }
+  });
+  addEventListener('keyup', e => keys.delete(e.code));
+  addEventListener('blur', () => keys.clear());
+
+  function keyControl(dt) {
+    let dx = 0, dy = 0, dz = 0;
+    for (const k of keys) {
+      if (KEY_MOVE[k]) { dx += KEY_MOVE[k][0]; dy += KEY_MOVE[k][1]; }
+      if (KEY_ZOOM[k]) dz += KEY_ZOOM[k];
+    }
+    const px = 520 * dt;                                // jako tažení myší rychlostí ~520 px/s
+    if (dx || dy) rotate(Math.sign(dx) * px, Math.sign(dy) * px);
+    if (dz) zoom(Math.exp(Math.sign(dz) * 1.4 * dt));
   }
 
   // ovládání myší / prstem (jen když je mapa otevřená): tažení = otáčení, klik = cíl cesty
@@ -214,6 +244,7 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
 
   function update(dt, playerPos) {
     if (!active) return;
+    keyControl(dt);
     dist += (targetDist - dist) * (1 - Math.exp(-dt * 6));
     camera.position.set(0, 0, dist).applyQuaternion(quat);
     camera.quaternion.copy(quat);
@@ -229,6 +260,12 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
     for (const pin of stationPins) placePin(pin, pin.userData.dir, size * 0.8, size * 0.8);
     for (const pin of depotPins) placePin(pin, pin.userData.dir, size * 0.9, size * 0.9);
     if (target) placePin(targetPin, target, size * 0.9, size * 0.9);
+    const drones = game.s.drones || [];
+    while (dronePins.length < drones.length) { const pin = new THREE.Mesh(pinGeo, droneMat); group.add(pin); dronePins.push(pin); }
+    dronePins.forEach((pin, i) => {
+      pin.visible = i < drones.length;
+      if (pin.visible) placePin(pin, drones[i].p, size * 0.75, size * 2.2);
+    });
 
     recolorTimer -= dt;
     if (recolorTimer <= 0) { recolorTimer = 1; recolor(); placeDepots(); }   // roboti mezitím dočistili hexy
