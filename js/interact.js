@@ -1,7 +1,7 @@
 // Interakce klávesou E: otevření budovy, nastoupení/vystoupení (i jako cestující do přepravníku),
 // umístění a přesun stanice robota, umístění depa a stavba pásu z depa do základny nebo do jiného depa.
 // Stavba = stavební sada ve vybraném políčku hotbaru (hotbar.js).
-import { MOON, INTERACT_RADIUS, PLANET } from './config.js';
+import { MOON, INTERACT_RADIUS, PLANET, DEPOT } from './config.js';
 import { nearRocket, rocketReady, cleanPercent, launchSeconds } from './rocket.js';
 import { vehicleById, SILO } from './catalog.js';
 import { game } from './state.js';
@@ -169,8 +169,11 @@ export function currentAction(openFacility) {
     };
   }
 
+  // Výkup: otevře se kdekoli v jeho zóně (kruh 5 m); vozidlo zaparkované u něj má přednost, jen když stojíš přímo u něj
+  const inDepot = angleBetween(s.p, DEPOT.dir) * R < DEPOT.r;
+
   // vozidla v dosahu
-  let nearest = -1, best = INTERACT_RADIUS + 1.5;
+  let nearest = -1, best = inDepot ? 2.2 : INTERACT_RADIUS + 1.5;
   s.vehicles.forEach((v, i) => {
     const d = angleBetween(s.p, v.p) * R;
     if (d < best) { best = d; nearest = i; }
@@ -231,9 +234,9 @@ export function currentAction(openFacility) {
   }
 
   // budovy (do Výkupu: hologram planety a burza)
+  if (inDepot) return { label: 'Výkup prachu · hologram a burza', key: 'E', run: () => openFacility('depot') };
   for (const b of BUILDINGS) {
-    if (!nearDoor(s.p, b)) continue;
-    if (b.id === 'depot') return { label: 'Výkup prachu · hologram a burza', key: 'E', run: () => openFacility('depot') };
+    if (b.id === 'depot' || !nearDoor(s.p, b)) continue;
     if (b.id === 'garage' && !s.garage) {
       return { label: 'Staveniště garáže', key: 'E', run: () => openFacility('garage') };
     }
