@@ -119,8 +119,13 @@ export async function cloudMeta(code) {
 
 // Uloží stav světa (rychlé, každých ~20 s) a s full = true i mapu prachu (pomalejší, ~1× za minutu).
 // sv = číslo snímku mapy, extra = { seqs, rc } pro hráče, kteří se právě připojují.
+// Pojistka: když je svět v cloudu novější a na jiné planetě než to, co hraju, nesmím ho přepsat.
+let blocked = false;
+export const blockCloud = on => { blocked = !!on; };
+export const cloudBlocked = () => blocked;
+
 export async function saveCloud(code, { full = false, sv = 0, extra = {} } = {}) {
-  if (!ok() || !code || !game.s) return false;
+  if (!ok() || !code || !game.s || blocked) return false;
   const s = game.s;
   try {
     if (full) {

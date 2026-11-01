@@ -20,7 +20,7 @@ import { initFacility, openFacility, facilityOpen, refreshFacility } from './fac
 import { input, bindInput } from './input.js';
 import { updateUi, setPrompt, flashMoney, floatText, toast, updatePlayers, showAchievement } from './ui.js';
 import { saveGame, loadGame, importV1, lockSaves, savePlanet, peekSave, saveFresh } from './storage.js';
-import { cloudMeta, loadCloud, cloudHasMap, hostOf, releaseHost, resetCloudMap, setWorldPassword, checkAccess } from './cloud.js';
+import { cloudMeta, loadCloud, cloudHasMap, hostOf, releaseHost, resetCloudMap, setWorldPassword, checkAccess, blockCloud } from './cloud.js';
 import { fmt } from './format.js';
 import { settings, loadSettings, matchPreset } from './settings.js';
 import { initSettingsMenu } from './settingsMenu.js';
@@ -793,7 +793,7 @@ function build() {
 
   bindInput(canvas, {
     pickDir,
-    rotate: a => { if (!isRagdoll()) rotateHeading(a); },
+    rotate: a => cam.orbit(-a),                               // orbit kamery kolem astronauta (směr postavy se nemění)
     tilt: dy => cam.tilt(dy),
     zoom: f => (map.active ? map.zoom(f) : cam.zoom(f)),
     onAction: doAction,
@@ -903,9 +903,10 @@ async function launch(spec) {
     if (!(await loadCloud(spec.cloud))) { launchError('Svět se z cloudu nepodařilo načíst.'); return; }
     if (!loadPersonal(spec.cloud)) resetPersonal(game.s);     // moje vybavení a poloha, ne po předchozím hostiteli
     if (!hadMap) {
-      setTimeout(() => toast('V cloudu chybí mapa prachu tohoto světa – Měsíc je zatím zasypaný. Vyčištění se vrátí, až svět otevře původní hostitel ze svého slotu.', 14000), 2500);
+      setTimeout(() => toast(`V cloudu chybí mapa prachu tohoto světa – ${PLANET.name} je zatím zasypaný. Vyčištění se vrátí, až svět otevře původní hostitel ze svého slotu.`, 14000), 2500);
     }
-    game.slot = null;
+    game.slot = spec.slot || null;
+    if (spec.slot) setTimeout(() => toast(`Svět mezitím pokračoval ${PLANET.loc} – načetl jsem ho z cloudu a tvůj slot se teď ukládá s ním.`, 10000), 2500);
     game.s.netPublic = spec.public !== false && game.s.netPublic !== false;
   } else {
     if (spec.action === 'load') {
@@ -921,7 +922,14 @@ async function launch(spec) {
           if (w) { launching = false; launch({ mode: 'client', world: w }); return; }
         }
         const meta = await cloudMeta(peek.netCode);
-        const cloudNewer = meta?.at > peek.last + 5000 && (meta.pn || 'moon') === PLANET.id;
+        const cloudPlanet = meta?.pn === 'mars' ? 'mars' : 'moon';
+        if (meta?.at > peek.last + 5000 && cloudPlanet !== PLANET.id) {
+          // kamarádi mezitím odletěli na jinou planetu → načíst svět z cloudu na jeho planetě (slot se pak přepíše jím)
+          showLoading(`Svět mezitím odletěl ${cloudPlanet === 'mars' ? 'na Mars' : 'na Měsíc'} – načítám ho z cloudu…`);
+          switchPlanet(cloudPlanet, { mode: 'host', cloud: peek.netCode, planet: cloudPlanet, slot: spec.slot, public: spec.public !== false });
+          return;
+        }
+        const cloudNewer = meta?.at > peek.last + 5000 && cloudPlanet === PLANET.id;
         const cloudMapBetter = cloudNewer && Number.isFinite(meta.d) && meta.d >= peek.done && (await cloudHasMap(peek.netCode));
         if (cloudMapBetter && (await loadCloud(peek.netCode))) {
           putPersonal(game.s, peek.personal);                    // moje vybavení a poloha ze slotu
@@ -956,6 +964,14 @@ async function launch(spec) {
   running = true;
 
   if (spec.mode === 'host') {
+    // pojistka (ještě před prvním uložením): novější svět v cloudu na jiné planetě se nepřepíše
+    if (game.s.netCode && (await initLobby())) {
+      const before = await cloudMeta(game.s.netCode);
+      if (before && (before.pn === 'mars' ? 'mars' : 'moon') !== PLANET.id && before.at > (game.s.last || 0) + 5000) {
+        blockCloud(true);
+        setTimeout(() => toast(`Pozor: svět ${game.s.netCode} je v cloudu novější a ${before.pn === 'mars' ? 'na Marsu' : 'na Měsíci'}. Tahle hra ho nepřepíše – odejdi do menu a otevři svět znovu.`, 15000), 3000);
+      }
+    }
     const ok = (await initLobby()) && (await startHost());
     if (typeof ok === 'string' && ok.startsWith('taken:')) {
       // svět mezitím otevřel někdo jiný → připojit se k němu jako hráč
