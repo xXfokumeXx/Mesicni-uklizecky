@@ -80,7 +80,8 @@
   <section class="chat hud__chat" id="chat" aria-label="Chat" hidden>
     <ul class="chat__log" id="chat-log" aria-live="polite"></ul>
     <form class="chat__form" id="chat-form" hidden autocomplete="off">
-      <input class="chat__input" id="chat-input" type="text" maxlength="140" placeholder="Napiš zprávu a stiskni Enter" aria-label="Zpráva do chatu">
+      <input class="chat__input" id="chat-input" type="text" maxlength="140" placeholder="Napiš zprávu…" aria-label="Zpráva do chatu">
+      <button class="chat__send" type="submit" aria-label="Odeslat">↵</button>
     </form>
     <button class="chat__open" id="chat-open" type="button"><kbd>Enter</kbd> Chat</button>
   </section>
@@ -285,14 +286,14 @@
         <dl class="keys">
           <dt><kbd>W</kbd> <kbd>S</kbd></dt><dd>chůze / plyn a brzda</dd>
           <dt><kbd>A</kbd> <kbd>D</kbd></dt><dd>otáčení</dd>
-          <dt>Klik</dt><dd>jdi (jeď) na místo · pravé tlačítko + tažení = otočit kameru · kolečko = přiblížení</dd>
+          <dt>Klik</dt><dd>jdi (jeď) na místo · pravé tlačítko + tažení = otáčet kamerou (do stran i nahoru / dolů) · kolečko = přiblížení</dd>
           <dt><kbd>Mezerník</kbd></dt><dd>skok, ve vzduchu jetpack</dd>
           <dt><kbd>Shift</kbd></dt><dd>boost přepravníku</dd>
           <dt><kbd>E</kbd></dt><dd>akce: budovy, Výkup (hologram, burza, statistiky), vozidla, stavby, raketa</dd>
           <dt><kbd>1</kbd>–<kbd>3</kbd></dt><dd>políčko hotbaru · <kbd>X</kbd> = vyprázdnit políčko</dd>
           <dt><kbd>R</kbd> · <kbd>G</kbd></dt><dd>jiný cíl pásu z depa · přesunout depo</dd>
           <dt><kbd>L</kbd></dt><dd>světla vozidla a čelovka zapnout / vypnout</dd>
-          <dt><kbd>M</kbd></dt><dd>mapa (WSAD / šipky otáčí, Q / E přibližuje, klik = jdi tam)</dd>
+          <dt><kbd>M</kbd></dt><dd>pohled: ptačí perspektiva (hraješ dál) → celá planeta (WSAD / šipky otáčí, Q / E přibližuje, klik = jdi tam) → zpátky za postavu</dd>
           <dt><kbd>U</kbd></dt><dd>úspěchy</dd>
           <dt><kbd>T</kbd></dt><dd>zrychlit čas (v multiplayeru jen hostitel)</dd>
           <dt><kbd>Enter</kbd></dt><dd>chat</dd>

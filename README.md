@@ -41,7 +41,7 @@ Bez tohoto kroku hra funguje, ale jen pro jednoho hráče.
 5. **Heslo ke světu:** hostitel ho nastaví v menu (Esc) → **Heslo světa…**. Kamarádi ho zadají jednou při připojení. Heslo hlídají pravidla databáze, takže bez něj nejde svět ani přečíst. Kdo je ve světě ve chvíli nastavení hesla, hraje dál.
 6. Hostitel kontroluje výdělky: peníze za prach uzná jen za prach, který hráč opravdu nasbíral, a jen u Výkupu.
 
-**Ovládání** (přehled je i ve hře: Esc → Ovládání): W/S chůze a plyn, A/D otáčení, mezerník skok (ve vzduchu jetpack), Shift boost vozidla, 1–3 hotbar, X vyprázdnit políčko hotbaru, E akce (u Výkupu hologram, burza a statistiky), R jiný cíl pásu, G přesunout depo, L světla, M mapa (WSAD / šipky otáčí, Q/E přibližuje), U úspěchy, T zrychlení času (v multiplayeru jen hostitel), Enter chat, Esc menu.
+**Ovládání** (přehled je i ve hře: Esc → Ovládání): W/S chůze a plyn, A/D otáčení, mezerník skok (ve vzduchu jetpack), Shift boost vozidla, 1–3 hotbar, X vyprázdnit políčko hotbaru, E akce (u Výkupu hologram, burza a statistiky), R jiný cíl pásu, G přesunout depo, L světla, M pohled (ptačí perspektiva → celá planeta, kde WSAD / šipky otáčí a Q/E přibližuje → zpátky), pravé tlačítko + tažení = otáčení kamery do stran i nahoru/dolů, U úspěchy, T zrychlení času (v multiplayeru jen hostitel), Enter chat, Esc menu.
 
 ## Limity bezplatného tarifu
 
