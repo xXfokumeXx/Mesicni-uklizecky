@@ -50,6 +50,9 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
   // UFO drony (azurové, létají)
   const droneMat = new THREE.MeshBasicMaterial({ color: 0x6ff0e0 });
   const dronePins = [];
+  // ostatní hráči (barva skafandru, bílý okraj, ať jdou rozeznat od staveb)
+  const otherPins = [];
+  const otherRingMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
 
   function buildGlobe() {
     const perFace = (N + 1) * (N + 2) / 2;
@@ -244,7 +247,8 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
     pin.scale.setScalar(size);
   }
 
-  function update(dt, playerPos) {
+  // others = [{ p: jednotkový vektor, color: 0xRRGGBB }] – ostatní hráči ve světě
+  function update(dt, playerPos, others = []) {
     if (!active) return;
     keyControl(dt);
     dist += (targetDist - dist) * (1 - Math.exp(-dt * 6));
@@ -268,6 +272,22 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
     dronePins.forEach((pin, i) => {
       pin.visible = i < drones.length;
       if (pin.visible) placePin(pin, drones[i].p, size * 0.75, size * 2.2);
+    });
+    while (otherPins.length < others.length) {
+      const pin = new THREE.Mesh(pinGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      const halo = new THREE.Mesh(new THREE.RingGeometry(1.15, 1.5, 24), otherRingMat);
+      group.add(pin, halo);
+      otherPins.push({ pin, halo });
+    }
+    otherPins.forEach(({ pin, halo }, i) => {
+      const o = others[i];
+      pin.visible = halo.visible = !!o;
+      if (!o) return;
+      pin.material.color.setHex(o.color);
+      placePin(pin, o.p, size * 0.95, size);
+      halo.position.copy(pin.position);
+      halo.lookAt(0, 0, 0);
+      halo.scale.setScalar(size);
     });
 
     recolorTimer -= dt;
