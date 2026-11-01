@@ -162,7 +162,7 @@ export function createAstronaut(look = DEFAULT_LOOK) {
 
   // čelovka: jen kotva na helmě (světlo je reflektor ze společné sady scene/lights.js, intenzitu řídí main.js)
   const lamp = new THREE.Object3D();
-  lamp.position.set(0, 0.25, 0.12);
+  lamp.position.set(0, 0.25, 0.42);                     // kousek před hledím – helma nesmí zastínit vlastní světlo
   head.add(lamp);
   let lampK = 0;
 

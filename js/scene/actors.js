@@ -497,8 +497,9 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       const view = vehicleViews[i];
       if (!view?.headlight || !view.root.visible) return false;
       view.root.updateMatrixWorld();
-      pos.copy(view.headlight).applyMatrix4(view.root.matrixWorld);
       dir.set(0, 0, 1).transformDirection(view.root.matrixWorld);
+      // zdroj kousek před světlomety, aby karoserie nezastínila vlastní kužel (stíny světel)
+      pos.copy(view.headlight).applyMatrix4(view.root.matrixWorld).addScaledVector(dir, 0.7);
       return true;
     },
     setShadows,

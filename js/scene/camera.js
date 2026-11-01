@@ -1,5 +1,6 @@
 // Kamera z pohledu třetí osoby na kouli: „nahoru“ je vždy od středu Měsíce k hráči.
-// Náklon (elevace) jde měnit tažením pravým tlačítkem nahoru / dolů (tilt). Ptačí pohled (setBird)
+// Pravé tlačítko + tažení = orbit kolem astronauta: do stran obíhá (orbit), nahoru / dolů mění náklon (tilt);
+// natočení astronauta se nemění. Ptačí pohled (setBird)
 // = kamera vysoko nad hráčem, skoro kolmo dolů; hráč se dál ovládá normálně (klávesa M, main.js).
 import { MOON, CAMERA } from '../config.js';
 import { heightAt } from '../planet/height.js';
@@ -21,6 +22,8 @@ export function createFollowCamera(camera) {
   const want = new THREE.Vector3(), wantLook = new THREE.Vector3();
   const wantUp = new THREE.Vector3(), heading = new THREE.Vector3(), camUp = new THREE.Vector3();
   let userElev = ELEV.start;                                       // náklon, který si hráč nastavil
+  let yaw = 0, targetYaw = 0;                                      // oběh kolem astronauta vůči jeho směru (rad)
+  const side = new THREE.Vector3(), dir = new THREE.Vector3();
 
   const applyTarget = () => {
     targetDist = bird ? birdDist : clamp(base * zoomK, CAMERA.minDistance, CAMERA.maxDistance);
@@ -46,6 +49,10 @@ export function createFollowCamera(camera) {
       userElev = clamp(userElev + dy * 0.005, ELEV.min, ELEV.max);
       applyTarget();
     },
+    // tažení pravým tlačítkem do stran (rad): kamera obíhá kolem astronauta
+    orbit(a) {
+      targetYaw += a;
+    },
     setBird(on) {
       bird = !!on;
       applyTarget();
@@ -58,6 +65,11 @@ export function createFollowCamera(camera) {
       elev += (targetElev - elev) * k8;
       wantUp.set(p[0], p[1], p[2]);
       heading.set(f[0], f[1], f[2]);
+      // oběh: směr kamery = směr astronauta otočený kolem svislice o yaw
+      yaw += (targetYaw - yaw) * k8;
+      side.crossVectors(heading, wantUp);
+      dir.copy(heading).multiplyScalar(Math.cos(yaw)).addScaledVector(side, Math.sin(yaw)).normalize();
+      heading.copy(dir);
 
       // kamera za hráčem v úhlu elev nad obzorem
       want.copy(playerPos)
