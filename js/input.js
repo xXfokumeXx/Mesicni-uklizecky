@@ -32,7 +32,8 @@ export const input = {
 // onAction = klávesa E (jednorázově), onCancel = Esc, onJump = nový stisk mezerníku (jetpack),
 // onAlt = R (jiný cíl pásu), onSlot(k) = klávesa 1–3 (políčko hotbaru), onDrop = X / Delete (vyprázdnit políčko)
 // onMove = G (přesunout depo), onLights = L (světla zapnout / vypnout)
-export function bindInput(canvas, { pickDir, rotate, zoom, onAction, onCancel, onJump, onAlt, onSlot, onDrop, onMove, onLights }) {
+// tilt(dy) = tažení pravým tlačítkem nahoru / dolů (náklon kamery)
+export function bindInput(canvas, { pickDir, rotate, tilt, zoom, onAction, onCancel, onJump, onAlt, onSlot, onDrop, onMove, onLights }) {
   addEventListener('keydown', e => {
     if (!input.enabled) return;
     const key = e.key.toLowerCase();
@@ -60,7 +61,7 @@ export function bindInput(canvas, { pickDir, rotate, zoom, onAction, onCancel, o
   canvas.addEventListener('pointerdown', e => {
     if (!input.enabled) return;                // mapa / otevřené okno
     canvas.setPointerCapture(e.pointerId);
-    if (e.button === 2) {                // pravé tlačítko = otáčení kamery
+    if (e.button === 2) {                // pravé tlačítko = otáčení kamery (do stran i nahoru / dolů)
       rotating = true;
       return;
     }
@@ -73,6 +74,7 @@ export function bindInput(canvas, { pickDir, rotate, zoom, onAction, onCancel, o
     if (!input.enabled) return;
     if (rotating) {
       rotate(-e.movementX * 0.006);
+      tilt?.(e.movementY);
     } else if (input.pointerDown) {
       const d = pickDir(e.clientX, e.clientY);
       if (d) input.target = d;

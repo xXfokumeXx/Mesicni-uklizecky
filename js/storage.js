@@ -3,7 +3,7 @@
 // (pevné semínko) a uloží se jen ROZDÍL = kolik prachu kde ubylo. Rozdíl je skoro všude nula,
 // takže ho gzip v prohlížeči (CompressionStream) zmenší na desítky až stovky kB.
 import { SAVE_KEY, PLANET } from './config.js';
-import { game, newGame, upgradeState, newUid } from './state.js';
+import { game, newGame, upgradeState, newUid, pickPersonal } from './state.js';
 import { hexes, dustDiff, applyDustDiff } from './planet/dustmap.js';
 import { VEHICLES, STATION } from './catalog.js';
 import { parkingSpot } from './base.js';
@@ -140,11 +140,14 @@ export async function savePlanet(slot) {
   return (await peekSave(slot))?.planet || null;
 }
 
-// Krátký pohled do uložené hry bez načtení mapy: { planet, netCode, last } nebo null.
+// Krátký pohled do uložené hry bez načtení mapy: { planet, netCode, last, done (hotové hexy) } nebo null.
 export async function peekSave(slot) {
   const rec = await getRecord(slot);
   if (!rec?.s) return null;
-  return { planet: rec.s.planet === 'mars' ? 'mars' : 'moon', netCode: rec.s.netCode || null, last: rec.s.last || 0 };
+  return {
+    planet: rec.s.planet === 'mars' ? 'mars' : 'moon', netCode: rec.s.netCode || null, last: rec.s.last || 0, done: rec.meta?.done ?? 0,
+    personal: pickPersonal(rec.s),                             // moje vybavení a poloha z vlastního slotu
+  };
 }
 
 // Uloží nový stav světa na jiné planetě bez mapy prachu (ta se po načtení vygeneruje čistá).

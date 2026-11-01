@@ -80,6 +80,21 @@ export const dustPrice = () => PRICE_PER_KG * (1 + MARKET.step * (game.s?.market
 // Prémie za dočištěný hex ($) podle vylepšení ve Výkupu.
 export const hexBonus = () => Math.round(HEX_BONUS * (1 + HEXUP.step * (game.s?.hexup | 0)));
 
+// Osobní část stavu (vybavení, poloha) – patří hráči, ne světu. Ve stavu světa v cloudu je osobní část
+// posledního hostitele; kdo svět převezme, ji nahradí svou (net.js loadPersonal) nebo začne s výchozí.
+export const PERSONAL_KEYS = ['p', 'f', 'tools', 'tool', 'boots', 'belt', 'jetpack', 'hotbar', 'sel'];
+export const pickPersonal = s => Object.fromEntries(PERSONAL_KEYS.map(k => [k, s[k]]));
+export function putPersonal(s, data) {
+  for (const k of PERSONAL_KEYS) if (data?.[k] !== undefined) s[k] = data[k];
+  s.driving = -1;
+}
+export function resetPersonal(s) {
+  putPersonal(s, {
+    p: SPAWN, f: tangentTo(SPAWN, SPAWN_FACING), tools: { toothbrush: newToolState() }, tool: 'toothbrush',
+    boots: 0, belt: 0, jetpack: 0, hotbar: ['toothbrush'], sel: 0,
+  });
+}
+
 // Statistiky hráče: kg = nasbíraný prach, e = vydělané peníze, sp = utracené peníze.
 export function addStat(key, name, field, amount) {
   if (!key || !(amount > 0)) return;

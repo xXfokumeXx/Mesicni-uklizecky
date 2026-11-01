@@ -1,10 +1,13 @@
 // Chat v multiplayeru: Enter = psát, Enter = odeslat, Esc = zavřít.
-// Zprávy se ukazují vlevo dole a po chvíli vyblednou; při psaní je vidět celá historie.
+// Panel vlevo dole: po každé nové zprávě se na PEEK_MS ukáže poslední historie (kolik se vejde do okna)
+// a pak plynule zmizí; při psaní je vidět celá historie a dá se v ní posouvat.
 import { SUIT_COLORS } from './catalog.js';
 
 const $ = id => document.getElementById(id);
-const MAX = 50, FADE_MS = 14000;
+const MAX = 60, PEEK_MS = 5000;
 let hooks = null;
+let peekTimer = 0;
+const hhmm = t => new Date(t).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
 
 export function initChat(h) {
   hooks = h;                                   // { send(text) → bool, onOpen, onClose }
@@ -21,7 +24,14 @@ export function initChat(h) {
     if (e.key === 'Escape') { input.value = ''; closeChat(); }
   });
   input.addEventListener('keyup', e => e.stopPropagation());
-  setInterval(fade, 1000);
+}
+
+// Na chvíli ukázat poslední zprávy (po nové zprávě).
+function peek() {
+  const chat = $('chat');
+  chat.classList.add('chat--peek');
+  clearTimeout(peekTimer);
+  peekTimer = setTimeout(() => chat.classList.remove('chat--peek'), PEEK_MS);
 }
 
 export function showChat(on) {
@@ -46,31 +56,30 @@ export function closeChat() {
   hooks.onClose?.();
 }
 
-export function addMessage({ name, color, text, system }) {
+export function addMessage({ name, color, text, system, me }) {
   const log = $('chat-log');
   const li = document.createElement('li');
-  li.className = 'chat__msg' + (system ? ' chat__msg--system' : '');
-  li.dataset.t = String(Date.now());
+  li.className = 'chat__msg' + (system ? ' chat__msg--system' : '') + (me ? ' chat__msg--me' : '');
   if (system) {
     li.textContent = text;
   } else {
+    li.style.setProperty('--who', '#' + (SUIT_COLORS[color]?.hex ?? 0xeceae3).toString(16).padStart(6, '0'));
+    const head = document.createElement('span');
+    head.className = 'chat__head';
     const who = document.createElement('span');
     who.className = 'chat__name';
-    who.textContent = name;
-    who.style.setProperty('--who', '#' + (SUIT_COLORS[color]?.hex ?? 0xeceae3).toString(16).padStart(6, '0'));
+    who.textContent = me ? `${name} (ty)` : name;
+    const time = document.createElement('time');
+    time.className = 'chat__time';
+    time.textContent = hhmm(Date.now());
+    head.append(who, time);
     const body = document.createElement('span');
     body.className = 'chat__text';
     body.textContent = text;
-    li.append(who, body);
+    li.append(head, body);
   }
   log.append(li);
   while (log.children.length > MAX) log.firstChild.remove();
   log.scrollTop = log.scrollHeight;
-}
-
-function fade() {
-  const now = Date.now();
-  for (const li of $('chat-log').children) {
-    li.classList.toggle('chat__msg--old', now - Number(li.dataset.t) > FADE_MS);
-  }
+  peek();
 }

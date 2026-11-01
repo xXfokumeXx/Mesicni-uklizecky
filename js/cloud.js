@@ -3,7 +3,8 @@
 // hráč ve světě, a když nikdo nehostuje, může svět otevřít kdokoli z party (s heslem, pokud ho svět má).
 //
 // Cesty v databázi (pravidla v database.rules.json):
-//   w/<kód>/meta     { t: název, pn: planeta, at: kdy uloženo, lk: 1 = s heslem } – vidí každý (seznam, menu)
+//   w/<kód>/meta     { t: název, pn: planeta, at: kdy uloženo, lk: 1 = s heslem, d: dočištěné hexy v uložené mapě }
+//                    – vidí každý (seznam, menu); d se zapisuje jen s mapou → podle něj se vybírá lepší mapa
 //   w/<kód>/state    stav světa game.s jako JSON text (Firebase by jinak zahodil prázdná pole)
 //   w/<kód>/head     hlavička snímku mapy prachu { sv, parts, gz, seqs, rc, at }
 //   w/<kód>/parts/pN kousky snímku mapy (base64)
@@ -16,6 +17,7 @@ import { profile } from './profile.js';
 import { PLANET } from './config.js';
 import { net } from './net.js';
 import { packDust, unpackDust, toBase64, fromBase64 } from './storage.js';
+import { hexes } from './planet/dustmap.js';
 
 export const PART = 400000;                     // velikost kousku snímku mapy (znaků base64)
 const w = code => `w/${code}`;
@@ -128,6 +130,7 @@ export async function saveCloud(code, { full = false, sv = 0, extra = {} } = {})
       const updates = {};
       for (let i = 0; i < parts; i++) updates[`parts/p${i}`] = { sv, d: b64.slice(i * PART, (i + 1) * PART) };
       updates.head = { sv, parts, gz: packed.gz, seqs: extra.seqs || {}, rc: extra.rc ?? 0, at: Date.now() };
+      updates['meta/d'] = hexes.doneCount;                     // kolik hexů je v téhle mapě hotových
       await net.fb.ref(w(code)).update(updates);
     }
     s.last = Date.now();
@@ -153,8 +156,15 @@ export async function resetCloudMap(code) {
   } catch { return false; }
 }
 
+// Je v cloudu uložená mapa prachu? (bez ní by se svět načetl se zasypaným Měsícem)
+export async function cloudHasMap(code) {
+  if (!ok() || !code) return false;
+  try { return !!(await net.fb.ref(`${w(code)}/head`).get()).val()?.parts; } catch { return false; }
+}
+
 // Načte svět z cloudu do čerstvě vygenerované planety (game.dust). Vrací true / false.
-export async function loadCloud(code) {
+// map = false → jen stav světa (mapa prachu zůstane, jak je – třeba ze slotu hostitele).
+export async function loadCloud(code, { map = true } = {}) {
   if (!ok()) return false;
   try {
     const [stateSnap, headSnap] = await Promise.all([net.fb.ref(`${w(code)}/state`).get(), net.fb.ref(`${w(code)}/head`).get()]);
@@ -162,7 +172,7 @@ export async function loadCloud(code) {
     if (typeof raw !== 'string') return false;
     const s = JSON.parse(raw);
     if (!s || typeof s !== 'object' || (s.planet === 'mars' ? 'mars' : 'moon') !== PLANET.id) return false;
-    const head = headSnap.val();
+    const head = map ? headSnap.val() : null;
     if (head?.parts) {
       let b64 = '';
       for (let i = 0; i < head.parts; i++) {

@@ -468,6 +468,7 @@ export async function startHost() {
     return `taken:${lock}`;
   }
   pushHostState();
+  scheduleSnapshot();                                         // mapa prachu do cloudu hned na začátku
   return true;
 }
 
@@ -946,9 +947,11 @@ export function reportParked(i) {
 }
 
 // Osobní postup klienta v cizím světě (nástroje, boty, poloha) – v prohlížeči hráče.
-const personalKey = () => `ms2_mp_${net.code}${PLANET.id === 'moon' ? '' : `_${PLANET.id}`}`;   // na Marsu od nuly
+// Ukládá se u klienta i u hostitele: kdo svět převezme (nebo se k němu vrátí jako hráč), dostane své
+// vlastní vybavení a polohu, ne ty, které jsou ve stavu světa po předchozím hostiteli.
+const personalKey = (code = net.code) => `ms2_mp_${code}${PLANET.id === 'moon' ? '' : `_${PLANET.id}`}`;   // na Marsu od nuly
 export function savePersonal() {
-  if (net.mode !== 'client' || !game.s) return;
+  if (net.mode === 'off' || !game.s || !net.code) return;
   const s = game.s;
   try {
     localStorage.setItem(personalKey(), JSON.stringify({
@@ -956,10 +959,11 @@ export function savePersonal() {
     }));
   } catch { /* nic */ }
 }
-function loadPersonal() {
+// Moje osobní část světa code z prohlížeče do game.s. Vrací true, když jsem ji tu měl uloženou.
+export function loadPersonal(code = net.code) {
   try {
-    const d = JSON.parse(localStorage.getItem(personalKey()));
-    if (!d) return;
+    const d = JSON.parse(localStorage.getItem(personalKey(code)));
+    if (!d) { ensureHotbar(game.s); return false; }
     const s = game.s;
     if (d.tools && typeof d.tools === 'object') s.tools = d.tools;
     if (d.tool && s.tools[d.tool]) s.tool = d.tool;
@@ -969,8 +973,9 @@ function loadPersonal() {
     s.hotbar = Array.isArray(d.hotbar) ? d.hotbar : [s.tool];
     s.sel = d.sel | 0;
     if (okVec(d.p, 0) && okVec(d.f, 0)) { s.p = norm(d.p); s.f = tangentTo(s.p, d.f); }
-  } catch { /* nic */ }
+  } catch { ensureHotbar(game.s); return false; }
   ensureHotbar(game.s);
+  return true;
 }
 
 // ---------- každý snímek ----------
@@ -988,7 +993,7 @@ export function netTick(dt, fx, vehicleSpeed) {
     if (host.timer <= 0) { host.timer = 1 / HOST_HZ; pushHostState(); }
     host.cloudTimer -= dt;
     host.mapTimer -= dt;
-    if (host.mapTimer <= 0) scheduleSnapshot();                          // i mapa prachu do cloudu
+    if (host.mapTimer <= 0) { host.mapTimer = CLOUD_MAP_S; scheduleSnapshot(); }   // i mapa prachu do cloudu (1× za minutu)
     else if (host.cloudTimer <= 0) { host.cloudTimer = CLOUD_STATE_S; saveWorldNow(false); }
   }
 }

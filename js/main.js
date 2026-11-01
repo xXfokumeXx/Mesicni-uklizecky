@@ -1,7 +1,7 @@
 // Vstupní bod: hlavní menu → příprava Měsíce → hra (sám, jako hostitel, nebo připojený hráč).
 // Propojí logiku, 3D scénu, budovy, síť, chat a nastavení; spustí smyčku a ukládání.
 import { TICK_MS, WIN_LEFT, OFFLINE_CAP_S, SUN, CAMERA, UNITS_PER_KG, MOON, BASE, PLANET, PLANET_KEY } from './config.js';
-import { game, newGame, gameTime, addStat, dustPrice } from './state.js';
+import { game, newGame, gameTime, addStat, dustPrice, pickPersonal, putPersonal, resetPersonal } from './state.js';
 import { activeEquipment } from './equipment.js';
 import { robotTick, simulateOffline } from './robots.js';
 import { droneTick, dronesOffline } from './drones.js';
@@ -14,13 +14,13 @@ import { currentAction, placing, startPlacing, cancelPlacing, updatePlacing, cyc
 import { ensureHotbar, selectSlot, dropSlot } from './hotbar.js';
 import { initHotbar, updateHotbar } from './hotbarUi.js';
 import { initAchievements, unlock, addAchStat, recordAchStat } from './achievements.js';
-import { MARKET } from './catalog.js';
+import { MARKET, SUIT_COLORS } from './catalog.js';
 import { launchRocket, launchSeconds, ROCKET } from './rocket.js';
 import { initFacility, openFacility, facilityOpen, refreshFacility } from './facility.js';
 import { input, bindInput } from './input.js';
 import { updateUi, setPrompt, flashMoney, floatText, toast, updatePlayers, showAchievement } from './ui.js';
 import { saveGame, loadGame, importV1, lockSaves, savePlanet, peekSave, saveFresh } from './storage.js';
-import { cloudMeta, loadCloud, hostOf, releaseHost, resetCloudMap, setWorldPassword, checkAccess } from './cloud.js';
+import { cloudMeta, loadCloud, cloudHasMap, hostOf, releaseHost, resetCloudMap, setWorldPassword, checkAccess } from './cloud.js';
 import { fmt } from './format.js';
 import { settings, loadSettings, matchPreset } from './settings.js';
 import { initSettingsMenu } from './settingsMenu.js';
@@ -29,6 +29,7 @@ import {
   net, initLobby, startHost, joinWorld, netTick, addEarned, sendChat, players, movingVehicles,
   vehicleOverride, hostRobotCompleted, setRagdollPresence, savePersonal, inviteLink,
   addCollected, reportDeposit, myStatKey, passengersOf, request, hostOwnDust, saveWorldNow, setWorldLocked, worldLocked, findWorld,
+  loadPersonal,
 } from './net.js';
 import { initChat, showChat, addMessage, openChat, chatOpen } from './chat.js';
 import { initMenu, initPause, showLoading, hideMenu, setMoonStatus } from './menu.js';
@@ -434,6 +435,14 @@ function collectSpots(dark, t) {
   return [me, ...others.slice(0, SPOTS - 1)];
 }
 
+// Ostatní hráči pro mapu (M): poloha a barva skafandru.
+function mapOthers() {
+  if (net.mode === 'off') return [];
+  const out = [];
+  for (const r of net.remotes.values()) if (r.sp) out.push({ p: r.sp, color: SUIT_COLORS[r.look?.color]?.hex ?? 0xeceae3 });
+  return out;
+}
+
 // ---------- měření výkonu ----------
 
 const perf = { frames: 0, since: 0, samples: [], warned: false };
@@ -568,10 +577,10 @@ function frame(now) {
   cam.setBaseDistance(s.driving >= 0 ? eq.base.camera : isRagdoll() || riding() ? 16 : CAMERA.distance);
   cam.update(rdt, actors.focusPosition(), s.p, s.f);
   const director = cutscene.update();
-  compass.update(s.p, !director && !map.active && angleBetween(s.p, BASE.dir) * MOON.radius >= BASE.clean, now / 1000);
+  compass.update(s.p, !director && !map.active && angleBetween(s.p, BASE.dir) * MOON.radius >= BASE.clean, now / 1000, rdt);
   actors.fadeOccluders(world.camera.position, actors.focusPosition());
   if (map.active) map.setTarget(input.target);
-  map.update(rdt, focus);
+  map.update(rdt, focus, map.active ? mapOthers() : undefined);
   world.renderer.render(world.scene, world.camera);
   trackFps(now);
 }
@@ -599,6 +608,18 @@ function applySettings(next, before) {
   perf.samples = [];
 }
 
+// ---------- pohledy (M): třetí osoba → ptačí pohled → celá planeta → zpátky ----------
+
+function cycleView() {
+  if (map.active) { toggleMap(false); return; }               // z planety zpátky za hráče
+  if (!cam.bird) {
+    cam.setBird(true);
+    toast('Ptačí pohled – postavu ovládáš dál. M = celá planeta, kolečko = výška.', 4000);
+    return;
+  }
+  toggleMap(true);
+}
+
 // ---------- mapa celého Měsíce (M) ----------
 
 const settingsOpen = () => !document.getElementById('settings').hidden;
@@ -613,11 +634,12 @@ function toggleMap(on = !map.active) {
     input.target = null;
     terrain.setHidden(true);
     map.open(game.s.p, game.s.f);
-    toast(`Mapa ${PLANET.gen}: WSAD / šipky nebo tažení myší = otáčení, kolečko / Q / E = přiblížení, klik = jdi tam, M nebo Esc = zpět.`, 7000);
+    toast(`Mapa ${PLANET.gen}: WSAD / šipky nebo tažení myší = otáčení, kolečko / Q / E = přiblížení, klik = jdi tam, M = zpět za hráče, Esc = zavřít.`, 7000);
   } else {
     map.close();
     terrain.setHidden(false);
     input.enabled = true;
+    cam.setBird(false);                                       // po mapě zpátky do pohledu třetí osoby
   }
   mapButton().setAttribute('aria-pressed', String(on));
   mapButton().classList.toggle('controls__button--active', on);
@@ -647,8 +669,8 @@ async function saveNow(slot) {
 }
 
 async function toMenu() {
-  if (net.mode === 'client') savePersonal();
-  else await saveGame(game.slot);
+  savePersonal();
+  if (net.mode !== 'client') await saveGame(game.slot);
   if (net.mode === 'host') {
     showLoading('Ukládám svět do cloudu…');
     await saveWorldNow(true);
@@ -695,7 +717,7 @@ function bindButtons() {
   on('cam-right', () => (map.active ? map.rotate(120, 0) : rotateHeading(-Math.PI / 4)));
   on('zoom-in', () => (map.active ? map.zoom(1 / 1.25) : cam.zoom(1 / 1.25)));
   on('zoom-out', () => (map.active ? map.zoom(1.25) : cam.zoom(1.25)));
-  on('map-toggle', () => toggleMap());
+  on('map-toggle', () => cycleView());
   on('trophies-open', () => { if (!modalOpen() && !map.active) openFacility('trophies'); });
   on('menu-open', () => pause.open());
   on('chat-open', () => openChat());
@@ -717,7 +739,7 @@ function bindButtons() {
       openChat();
       return;
     }
-    if (e.key.toLowerCase() === 'm' && !modalOpen() && !chatOpen()) toggleMap();
+    if (e.key.toLowerCase() === 'm' && !modalOpen() && !chatOpen()) cycleView();
     else if (e.key.toLowerCase() === 'u' && !modalOpen() && !chatOpen() && !map.active) openFacility('trophies');
     else if (e.key === 'Escape' && map.active && !modalOpen()) toggleMap(false);
   }, true);
@@ -732,8 +754,8 @@ function bindVisibility() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       hiddenAt = Date.now();
-      if (net.mode === 'client') savePersonal();
-      else saveGame(game.slot, toast);
+      savePersonal();
+      if (net.mode !== 'client') saveGame(game.slot, toast);
       if (net.mode === 'host') saveWorldNow(false);           // stav světa do cloudu (kdyby se karta zavřela)
     } else if (hiddenAt) {
       if (net.mode === 'sp') catchUp(hiddenAt);
@@ -760,7 +782,8 @@ function build() {
   const pickDir = createPicker(canvas, world.camera);
   map = createMoonMap(world.scene, world.camera, canvas, terrain.texture, { onPick: (x, y) => goTo(pickDir(x, y)) });
   terrain.linkUniforms(map.uniforms);
-  if (net.mode !== 'off') remotes = createRemotes(world.scene, world.camera, actors, document.getElementById('nametag-layer'));
+  // hostitel se připojí k síti až po stavbě scény (net.mode je tu ještě 'off') → podle game.mode, jinak by ostatní neviděl
+  if (net.mode !== 'off' || game.mode === 'host') remotes = createRemotes(world.scene, world.camera, actors, document.getElementById('nametag-layer'));
   actors.update(0.016, 0, playerFx, 120);
   cam.update(1, actors.focusPosition(), game.s.p, game.s.f);
   terrain.updateVisibility(world.camera.position, Infinity);
@@ -771,6 +794,7 @@ function build() {
   bindInput(canvas, {
     pickDir,
     rotate: a => { if (!isRagdoll()) rotateHeading(a); },
+    tilt: dy => cam.tilt(dy),
     zoom: f => (map.active ? map.zoom(f) : cam.zoom(f)),
     onAction: doAction,
     onCancel: cancel,
@@ -875,13 +899,19 @@ async function launch(spec) {
     // svět z cloudu: hostitel teď není online, hostovat ho budu já
     showLoading('Načítám svět z cloudu…');
     if (!(await initLobby())) { launchError('Multiplayer tu nejde připojit.'); return; }
+    const hadMap = await cloudHasMap(spec.cloud);
     if (!(await loadCloud(spec.cloud))) { launchError('Svět se z cloudu nepodařilo načíst.'); return; }
+    if (!loadPersonal(spec.cloud)) resetPersonal(game.s);     // moje vybavení a poloha, ne po předchozím hostiteli
+    if (!hadMap) {
+      setTimeout(() => toast('V cloudu chybí mapa prachu tohoto světa – Měsíc je zatím zasypaný. Vyčištění se vrátí, až svět otevře původní hostitel ze svého slotu.', 14000), 2500);
+    }
     game.slot = null;
     game.s.netPublic = spec.public !== false && game.s.netPublic !== false;
   } else {
     if (spec.action === 'load') {
       showLoading('Načítám uloženou hru…');
-      // hostování ze slotu: když mezitím hráli kamarádi bez tebe (svět v cloudu je novější), vezme se cloud;
+      // hostování ze slotu: když mezitím hráli kamarádi bez tebe (svět v cloudu je novější), vezme se stav
+      // z cloudu; mapa prachu ta, která je dál (víc hotových hexů – slot, nebo cloud);
       // když svět právě hostuje někdo jiný, připojíš se k němu
       const peek = spec.mode === 'host' ? await peekSave(spec.slot) : null;
       if (peek?.netCode && (await initLobby())) {
@@ -891,10 +921,22 @@ async function launch(spec) {
           if (w) { launching = false; launch({ mode: 'client', world: w }); return; }
         }
         const meta = await cloudMeta(peek.netCode);
-        if (meta?.at > peek.last + 5000 && (meta.pn || 'moon') === PLANET.id && (await loadCloud(peek.netCode))) {
+        const cloudNewer = meta?.at > peek.last + 5000 && (meta.pn || 'moon') === PLANET.id;
+        const cloudMapBetter = cloudNewer && Number.isFinite(meta.d) && meta.d >= peek.done && (await cloudHasMap(peek.netCode));
+        if (cloudMapBetter && (await loadCloud(peek.netCode))) {
+          putPersonal(game.s, peek.personal);                    // moje vybavení a poloha ze slotu
           game.slot = spec.slot;
           setTimeout(() => toast('Kamarádi mezitím hráli bez tebe – načetl jsem novější stav světa z cloudu.', 9000), 2500);
-        } else if (!(await loadGame(spec.slot))) { launchError('Uloženou hru se nepodařilo načíst.'); return; }
+        } else {
+          if (!(await loadGame(spec.slot))) { launchError('Uloženou hru se nepodařilo načíst.'); return; }
+          // mapa prachu ze slotu (je dál), stav světa (peníze, vozidla…) z cloudu, pokud je novější
+          const mine = pickPersonal(game.s);
+          if (cloudNewer && (await loadCloud(peek.netCode, { map: false }))) {
+            putPersonal(game.s, mine);
+            game.slot = spec.slot;
+            setTimeout(() => toast('Načetl jsem novější stav světa z cloudu a vyčištění Měsíce z tvého slotu (je dál než v cloudu).', 10000), 2500);
+          }
+        }
       } else if (!(await loadGame(spec.slot))) { launchError('Uloženou hru se nepodařilo načíst.'); return; }
     } else {
       if (spec.action === 'v1') importV1(spec.title);
@@ -979,12 +1021,12 @@ async function launch(spec) {
     checkSharedAchievements();
   }, 250);
   setInterval(() => {
-    if (net.mode === 'client') savePersonal();
-    else saveGame(game.slot, toast);
+    savePersonal();
+    if (net.mode !== 'client') saveGame(game.slot, toast);
   }, 30000);
   addEventListener('beforeunload', () => {
-    if (net.mode === 'client') savePersonal();
-    else saveGame(game.slot);
+    savePersonal();
+    if (net.mode !== 'client') saveGame(game.slot);
     if (net.mode === 'host') saveWorldNow(false);             // stav světa do cloudu (stihne-li se odeslat)
   });
 
