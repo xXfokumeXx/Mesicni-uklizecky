@@ -177,6 +177,28 @@ export function applyDustDiff(diff) {
   return true;
 }
 
+// Sloučí rozdíl do mapy, která už se hraje (4. 11.: mapa od hostitele stažená až po vstupu do hry): v každém bodě
+// nechá méně prachu z obou – nic, co už je zametené, se znovu nezasype.
+export function mergeDustDiff(diff) {
+  if (!diff || diff.length !== dust.length) return false;
+  const left = hexes.left;
+  forEachTexel((i, f, s, t) => {
+    const dv = diff[i];
+    if (!dv) return;
+    const v = (origin[i] - dv) & 255;
+    if (v >= dust[i]) return;
+    left[hexAtParam(f, s, t)] -= dust[i] - v;
+    dust[i] = v;
+  });
+  hexes.doneCount = 0;
+  for (let c = 0; c < grid.cells; c++) {
+    hexes.done[c] = hexes.init[c] && left[c] <= hexes.init[c] * HEX_DONE_LEFT ? 1 : 0;
+    hexes.doneCount += hexes.done[c];
+  }
+  dirty.full = true;
+  return true;
+}
+
 // Spočítá prach v hexech. init = uložené původní hodnoty (nebo null → vezme současný stav).
 export function recountHexes(init) {
   const left = new Int32Array(grid.cells);
