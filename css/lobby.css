@@ -206,6 +206,28 @@
 .lobby-plate b { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; }
 .lobby-plate span { display: block; margin-top: 2px; font-size: 12px; line-height: 1.25; color: var(--lb-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lobby-plate i { display: block; margin-top: 3px; font: 500 11px var(--font-mono); font-style: normal; color: var(--lb-green); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Najetí myší na hráče nebo jeho štítek: štítek se plynule (250 ms) roztáhne na celý text, po odjetí se stáhne zpět.
+   Napříč prohlížeči: menu.js (fitPlate) změří při najetí přirozenou šířku textu do --full (px), CSS animuje šířku
+   mezi dvěma pevnými délkami (žádné max-content / interpolate-size). Obrázek hráče je v HTML hned před štítkem (+),
+   ::after přemostí mezeru mezi štítkem a hlavou hráče. Text se nezalamuje (výška by během animace poskakovala),
+   během roztahování se postupně odkrývá; „…“ zůstane jen nad stropem šířky (pojistka). */
+.lobby-plate {
+  width: max(140px, 8.2cqw);
+  min-width: 0;
+  transition: width 250ms ease, background-color 250ms ease;
+}
+.lobby-plate::after { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 44px; }
+.lobby-player:hover + .lobby-plate,
+.lobby-plate:hover {
+  width: min(max(var(--full, 0px), 140px, 8.2cqw), max(380px, 24cqw));
+  z-index: 5;
+  background: rgba(13, 16, 23, 0.98);
+}
+/* base.css při „omezit pohyb“ (Windows: vypnuté animační efekty) vypíná všechny přechody – tohle jemné roztažení
+   štítku si hráč přál mít plynulé i tak */
+@media (prefers-reduced-motion: reduce) {
+  .lobby-plate { transition: width 250ms ease, background-color 250ms ease !important; }
+}
 .lobby-tag { flex: none; padding: 1px 4px; font: 600 10px var(--font-mono); color: #17120a; background: var(--hivis); border-radius: 3px; }
 .lobby-free {
   position: absolute;
