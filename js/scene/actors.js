@@ -4,7 +4,7 @@ import { MOON, BUYBACK } from '../config.js';
 import { DRONE, batteryCap } from '../catalog.js';
 import { game } from '../state.js';
 import { activeEquipment } from '../equipment.js';
-import { activeBody, vehicleBody, pusherOffset, ragdollState, riding, toolPoint } from '../player.js';
+import { activeBody, vehicleBody, pusherOffset, ragdollState, riding, toolPoint, walkFacing } from '../player.js';
 import { placing } from '../interact.js';
 import { carriedStation } from '../hotbar.js';
 import { hexArea } from '../robots.js';
@@ -19,7 +19,7 @@ import { createRocketSite } from './rocket.js';
 import { createStructures } from './structures.js';
 import { createClickMarker } from './clickMarker.js';
 import { createBasePlaza } from './basePlaza.js';
-import { build } from '../build.js';
+import { build, hammerActive } from '../build.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
@@ -469,7 +469,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       const b = activeBody();
       astro.root.position.set(b.p[0] * b.r, b.p[1] * b.r, b.p[2] * b.r);
       _up.set(...s.p);
-      const target = fx.moving && fx.face ? _a.set(...fx.face) : _a.set(...s.f);
+      const target = fx.moving && fx.face ? _a.set(...fx.face) : _a.set(...walkFacing());   // stojí: kam naposled šel (i myší)
       face.lerp(target, 1 - Math.exp(-dt * (fx.airborne ? 2 : 10)));
       face.addScaledVector(_up, -face.dot(_up));
       if (face.lengthSq() < 1e-6) face.set(...s.f);
@@ -491,7 +491,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     const tp = toolPoint();                          // poloha nástroje v tomto snímku (zametání samo je 10× za s)
     lastTool = tp;
     if (!driving) astro.setToolSize(ride ? 0 : eq.stats.width / 2);
-    astro.setHammer(game.hammer && !driving && !ride && !rag);
+    astro.setHammer(hammerActive() && !ride && !rag);
     if (build.hits !== lastHits) { lastHits = build.hits; astro.hammerSwing(); }
     updateRing(tp, eq.stats.width / 2);
     updateHexLine(dirToCell(s.p));
