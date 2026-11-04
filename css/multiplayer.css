@@ -139,9 +139,7 @@
 
 /* panel hráčů ve hře (vpravo nahoře) */
 .hud__players {
-  grid-area: players;
-  justify-self: end;
-  align-self: start;
+  align-self: stretch;
   min-width: 180px;
   pointer-events: auto;
 }

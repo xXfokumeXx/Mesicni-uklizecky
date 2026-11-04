@@ -1,0 +1,80 @@
+/* Výzkumné centrum (D-10): strom technologií ve třech sloupcích, uzel = tlačítko se stavem. */
+.item-card__chip--locked {
+  color: var(--muted);
+  background: rgba(141, 146, 160, 0.14);
+}
+
+.tree {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.tree__col {
+  display: grid;
+  gap: 6px;
+}
+
+.tree__heading {
+  margin: 0 0 2px;
+  font: 600 var(--step--1) / 1.3 var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tech {
+  display: grid;
+  gap: 3px;
+  margin-left: calc(var(--depth, 0) * 14px);
+  padding: 8px 10px;
+  font: inherit;
+  text-align: left;
+  color: var(--regolith);
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.tech { position: relative; }
+.tech[style*="--depth:1"]::before {             /* spojnice k předchozímu výzkumu */
+  content: "";
+  position: absolute;
+  left: -10px; top: -7px;
+  width: 8px; height: 50%;
+  border-left: 1px solid var(--panel-line);
+  border-bottom: 1px solid var(--panel-line);
+}
+.tech:hover { border-color: var(--muted); }
+.tech--selected, .tech--selected:hover { border-color: var(--orange); }
+.tech--done { border-left-color: var(--bot); }
+.tech--running, .tech--queued { border-left-color: var(--hivis); }
+.tech--available { border-left-color: var(--depot); }
+.tech--locked { opacity: 0.6; }
+
+.tech__name { font-weight: 600; font-size: var(--step--1); }
+.tech__meta { font: 400 0.6875rem / 1.3 var(--font-mono); color: var(--muted); }
+
+.tech__bar {
+  height: 4px;
+  background: rgba(242, 179, 61, 0.18);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.tech__fill {
+  display: block;
+  height: 100%;
+  background: var(--hivis);
+  transition: width 0.9s linear;
+}
+
+@media (max-width: 720px) {
+  .tree { grid-template-columns: 1fr; }
+}
+
+/* informační řádek nad kartami (průběh výzkumu + stav sítě na dvou řádcích) */
+.facility__summary { white-space: pre-line; }

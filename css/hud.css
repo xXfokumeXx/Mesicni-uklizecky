@@ -40,6 +40,55 @@
   grid-area: nav;
 }
 
+/* pravý sloupec: panel hráčů (multiplayer) a pod ním energie celé soustavy (⚡ + In / Out v ⚡/s) */
+.hud__right {
+  grid-area: players;
+  justify-self: end;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+.hud__power {
+  pointer-events: auto;
+}
+/* pevná šířka a číslice stejné šíře – panel se při změně hodnot nehýbe */
+.power {
+  box-sizing: border-box;
+  width: 210px;
+  display: grid;
+  grid-template-columns: 1.6rem 3ch 1fr;
+  grid-template-rows: repeat(4, auto);
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 8px 12px;
+}
+.power[hidden] { display: none; }
+.power__icon {
+  grid-row: 1 / 5;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--hivis);
+}
+.power__label {
+  font: 500 var(--step--1) / 1.2 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.power__value {
+  font: 600 var(--step-0) / 1.2 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--regolith);
+}
+.power__value--store { font-size: var(--step--1); color: var(--depot); }
+.power__value--surplus { color: var(--bot); }
+.power__value--in { color: var(--bot); }
+.power__value--deficit { color: var(--danger); }
+
 .hud__hotbar {
   grid-area: hotbar;
   justify-self: center;

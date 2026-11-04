@@ -20,3 +20,69 @@
 .meter__fill--progress {
   background: var(--hivis);
 }
+
+/* baterie vozidla pod 20 % (L-01) a blikání pod 5 % (L-02) */
+.meter__fill--progress.meter__fill--low {
+  background: var(--orange);
+}
+
+.stats__row--blink {
+  animation: battery-blink 0.8s steps(2, jump-none) infinite;
+}
+
+@keyframes battery-blink {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stats__row--blink { animation: none; }
+}
+
+/* baterie vozidla v HUD jako baterie (5 článků + plíšek): zelená > 50 %, žlutá 20–50 %, oranžová pod 20 %,
+   prázdná = červený obrys; blesk = právě se nabíjí (nabíječka, výměník, solární střecha) */
+.batt {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.batt__body {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 3px;
+  height: 20px;
+  padding: 3px;
+  border: 2px solid var(--regolith);
+  border-radius: 4px;
+}
+.batt__nub {
+  width: 4px;
+  height: 9px;
+  background: var(--regolith);
+  border-radius: 0 2px 2px 0;
+}
+.batt__cell {
+  background: var(--surface-raised);
+  border-radius: 1px;
+  background-image: linear-gradient(90deg, var(--batt) var(--fill, 0%), transparent var(--fill, 0%));
+}
+.batt { --batt: #7fd38a; }
+.batt--mid { --batt: var(--hivis); }
+.batt--low { --batt: var(--orange); }
+.batt--empty .batt__body { border-color: var(--danger); }
+.batt__bolt {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+  opacity: 0;
+}
+.batt--charging .batt__bolt { opacity: 1; animation: batt-pulse 1.2s ease-in-out infinite; }
+@keyframes batt-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .batt--charging .batt__bolt { animation: none; } }

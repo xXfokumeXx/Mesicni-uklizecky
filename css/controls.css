@@ -66,6 +66,23 @@
   }
 }
 
+/* ladicí výpis výkonu (F3, debug.js) */
+.debug-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 5;
+  margin: 0;
+  padding: 8px 10px;
+  font: 500 12px / 1.35 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  color: var(--bot);
+  background: var(--panel);
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+
 .fps {
   position: fixed;
   right: 16px;
