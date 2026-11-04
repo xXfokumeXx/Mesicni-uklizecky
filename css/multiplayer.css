@@ -403,6 +403,13 @@
   border-bottom: 2px solid var(--tag, var(--hivis));
   border-radius: 4px;
   will-change: transform;
+  text-align: center;
+}
+.nametag__rank {
+  display: block;
+  font: 500 0.6875rem / 1.2 var(--font-mono);
+  color: var(--hivis);
+  letter-spacing: 0.02em;
 }
 
 @media (max-width: 720px) {

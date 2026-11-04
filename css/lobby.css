@@ -97,6 +97,7 @@
   color: var(--lb-text);
   font: 500 17px var(--font-body);
 }
+.menu__rank { margin: 6px 0 0; font: 600 13px var(--font-mono); color: var(--hivis); letter-spacing: 0.02em; cursor: help; }
 .menu__outfit {
   margin: 0;
   display: flex;
@@ -201,6 +202,7 @@
   border-radius: 6px;
 }
 .lobby-plate--me { border-color: var(--hivis); }
+.lobby-plate em { display: block; margin-bottom: 2px; font: 500 11px var(--font-mono); font-style: normal; color: var(--hivis); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lobby-plate b { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; }
 .lobby-plate span { display: block; margin-top: 2px; font-size: 12px; line-height: 1.25; color: var(--lb-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lobby-plate i { display: block; margin-top: 3px; font: 500 11px var(--font-mono); font-style: normal; color: var(--lb-green); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
