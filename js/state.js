@@ -12,8 +12,7 @@ const R = MOON.radius;
 const DEV_START_MONEY = 10000;                    // jen na localhost (FIREBASE_DEV), ostrá hra začíná s $0
 
 // net.mode: 'sp' = jeden hráč, 'host' = hostitel světa, 'client' = připojený hráč
-// hammer = kladivo právě v ruce (jen za běhu, Q)
-export const game = { s: null, dust: null, slot: null, mode: 'sp', clockOffset: 0, started: 0, hammer: false };
+export const game = { s: null, dust: null, slot: null, mode: 'sp', clockOffset: 0, started: 0 };
 
 export const newToolState = () => ({ load: 0, lv: { width: 0, hopper: 0, power: 0 } });
 
@@ -37,7 +36,7 @@ export function newGame(title = 'Nová směna', dust = game.dust) {
     garage: false,                                // (v2) postavená garáž – ve v3 jsou garáže stavby v buildings
     buildings: [],                                // stavby 3.0 { id, type, p, yaw, lv, paid, data } (structures.js)
     gfree: false,                                 // první garáž zdarma už využitá
-    hammer: 0,                                    // 1 = koupené kladivo (osobní, Dílna)
+    hammer: 0,                                    // 1 = koupené kladivo (osobní, Dílna; v hotbaru jako 'hammer')
     cables: [],                                   // kabely vedení [[id stavby, id stavby], …] (energy.js)
     research: { done: [], current: null, queue: [] },   // výzkum (fáze 4)
     bricks: 0,                                    // zásoba cihel (fáze 3)

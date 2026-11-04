@@ -1,5 +1,6 @@
 // Stavební režim s kladivem (L-10, D-07, D-08):
-//   Q = kladivo do ruky / odložit, V = stavební lišta, X = bourání (bez kladiva X dál vyprázdní políčko hotbaru).
+//   Kladivo zabírá políčko hotbaru (1–3 / Q = na něj přepnout a zpět), V = stavební lišta, X = bourání
+//   (bez kladiva v ruce X nic nedělá; nástroj / kladivo zničí jen × v jeho políčku hotbaru).
 //   Stavění: hologram na místě kurzoru (do 25 m), jinak 6 m před hráčem. R + kolečko otáčí po 1° (Shift po 15°),
 //   , / . otáčí plynule 90°/s. Klik / E postaví, Esc / pravé tlačítko zruší. Stejná stavba zůstane vybraná.
 //   Bourání: kurzor na stavbu, podržet E nebo levé tlačítko 1 s.
@@ -11,6 +12,7 @@ import {
   structureAt, structureById, yawFor, BUILD_REACH, AHEAD,
 } from './structures.js';
 import { ownsHammer } from './equipment.js';
+import { heldHammer, hammerSlot, previousSlot, selectSlot, putTool, hotbarSlots, HAMMER_ID } from './hotbar.js';
 import { autoConnect, cableCheck, addCable, removeCable } from './energy.js';
 import { nearestSocket, socketByRef, fullPath, checkPath, addBelt, cutBelt, beltSegmentAt, BELT } from './logistics.js';
 
@@ -54,16 +56,28 @@ export const build = {
 };
 const bump = () => { build.version++; };
 
-export const hammerActive = () => !!game.hammer && game.s.driving < 0;
+// Kladivo v ruce = vybrané políčko hotbaru s kladivem (hotbar.js), pěšky.
+export const hammerActive = () => heldHammer() && ownsHammer() && game.s.driving < 0;
 
-// Q: kladivo do ruky / odložit. Vrací text pro hlášku, nebo null.
+// Q: přepne na políčko s kladivem / zpátky na předchozí políčko. Kladivo bez políčka (vytlačil ho nástroj)
+// se dá do prázdného, jinak do vybraného políčka. Vrací text pro hlášku, nebo null.
 export function toggleHammer() {
   if (!ownsHammer()) return 'Kladivo si kup v Dílně (záložka Astronaut).';
   if (game.s.driving >= 0) return 'Z vozidla se nestaví – nejdřív vystup.';
-  game.hammer = !game.hammer;
-  if (!game.hammer) closeAll();
+  const k = hammerSlot();
+  if (k >= 0 && k === game.s.sel) {                            // odložit = zpátky na předchozí políčko
+    const n = hotbarSlots();
+    let back = previousSlot();
+    if (back === k || back >= n) back = Array.from({ length: n }, (_, i) => i).find(i => i !== k) ?? -1;
+    if (back < 0) return 'Kladivo zabírá tvoje jediné políčko hotbaru. Nástroj vezmeš do ruky v Obchodě, další políčka přidá opasek v Dílně.';
+    selectSlot(back);
+    closeAll();
+    return null;
+  }
+  if (k >= 0) selectSlot(k);
+  else putTool(HAMMER_ID);
   bump();
-  return game.hammer ? 'Kladivo v ruce: V = stavební menu, X = bourání, Q = zpět k nástroji.' : null;
+  return `Kladivo v ruce (políčko ${hammerSlot() + 1}): V = stavební menu, X = bourání, Q = zpět.`;
 }
 
 export function closeAll() {
@@ -371,5 +385,5 @@ export function buildHud() {
   if (build.mode === 'cable') return 'Kabel   klikni na cílovou kotvu nebo stavbu · Esc / pravé tlačítko = zrušit';
   if (build.mode === 'belt') return `Pás   $${BELT.price}/m · výstupní zásuvka → klikání = ohyby → vstupní zásuvka · nejvýš ${BELT.maxLen} m, 25° · V = jiná stavba · Esc = krok zpět`;
   if (build.menu) return 'Stavební menu   vyber stavbu · V = zavřít · X = bourání';
-  return 'Kladivo   V = stavět · X = bourat · klik na kotvu = kabel · Q = zpět k nástroji';
+  return 'Kladivo   V = stavět · X = bourat · klik na kotvu = kabel · Q = zpět na předchozí políčko';
 }

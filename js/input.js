@@ -1,6 +1,6 @@
 // Klávesnice, myš a dotyk.
 // W/S = vpřed/vzad (plyn/brzda ve vozidle), A/D = otáčení, mezerník = skok (ve vzduchu jetpack),
-// Shift = boost vozidla, E = akce, R = jiný cíl pásu, G = přesunout depo, L = světla, 1–3 = políčko hotbaru, X = vyprázdnit políčko, T = zrychlit čas.
+// Shift = boost vozidla, E = akce, R = jiný cíl pásu, G = přesunout depo, L = světla, 1–3 = políčko hotbaru, X = bourání (s kladivem v ruce), Q = kladivo, T = zrychlit čas.
 // 3.0: Q = kladivo, V = stavební lišta, X s kladivem = bourání, R + kolečko / , . = otočit stavbu, C = autopilot vozidla.
 export const input = {
   keys: {},
@@ -47,7 +47,7 @@ export const input = {
 };
 
 // onAction = klávesa E (jednorázově), onCancel = Esc, onJump = nový stisk mezerníku (jetpack),
-// onAlt = R (jiný cíl pásu), onSlot(k) = klávesa 1–3 (políčko hotbaru), onDrop = X / Delete (vyprázdnit políčko)
+// onAlt = R (jiný cíl pásu), onSlot(k) = klávesa 1–3 (políčko hotbaru), onDrop = X (s kladivem = bourání; nástroj se ničí jen × v políčku hotbaru)
 // onMove = G (přesunout depo), onLights = L (světla zapnout / vypnout)
 // tilt(dy) = tažení pravým tlačítkem nahoru / dolů (náklon kamery)
 export function bindInput(canvas, { pickDir, rotate, tilt, zoom, onAction, onCancel, onJump, onAlt, onSlot, onDrop, onMove, onLights, onHammer, onBuildMenu, onAuto }) {
@@ -61,7 +61,7 @@ export function bindInput(canvas, { pickDir, rotate, tilt, zoom, onAction, onCan
     if (key === 'escape') { onCancel(); return; }
     if (key === ' ' && !e.repeat) onJump?.();
     if (key === 'r' && !e.repeat) { onAlt?.(); return; }
-    if ((key === 'x' || key === 'delete') && !e.repeat) { onDrop?.(); return; }
+    if (key === 'x' && !e.repeat) { onDrop?.(); return; }             // X = bourání s kladivem (nástroje ničí jen × v hotbaru)
     if (key === 'g' && !e.repeat) { onMove?.(); return; }
     if (key === 'l' && !e.repeat) { onLights?.(); return; }
     if (key === 'c' && !e.repeat) { onAuto?.(); return; }

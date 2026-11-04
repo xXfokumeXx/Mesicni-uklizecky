@@ -30,7 +30,7 @@ export const CATEGORIES = [
 
 export const HAMMER = {
   name: 'Kladivo', price: 500,
-  desc: 'Stavební kladivo se žlutou rukojetí. Q = vzít do ruky / odložit, V = stavební menu, X = bourání. Kladivem se nezametá.',
+  desc: 'Stavební kladivo se žlutou rukojetí. Zabírá jedno políčko hotbaru jako nástroj. Q (nebo číslo políčka) = vzít do ruky / zpět, V = stavební menu, X = bourání. × na políčku kladivo zničí – nové se koupí tady. Kladivem se nezametá.',
 };
 export const REFUND = 0.6;                 // bourání vrátí 60 % ceny stavby i rozšíření (L-14)
 // m výškového rozdílu pod podstavcem. L-12 chtěl 1,5 m, ale mimo rovnou základnu to splní jen ~1 % míst

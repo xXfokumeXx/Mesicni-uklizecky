@@ -167,6 +167,7 @@ export const SILO = {
 
 // Prodej vozidla: vrátí se 75 % kupní ceny včetně zaplacených vylepšení.
 export const SELL_REFUND = 0.75;
+export const TOOL_SELL = 0.3;                    // prodej ručního nástroje v Obchodě: 30 % ceny a zaplacených vylepšení
 
 export const toolById = id => TOOLS.find(t => t.id === id);
 export const vehicleById = id => VEHICLES.find(v => v.id === id);

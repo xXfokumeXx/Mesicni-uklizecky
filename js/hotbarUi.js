@@ -1,9 +1,10 @@
 // Hotbar dole na obrazovce: políčka s nástroji a stavebními sadami (hotbar.js), klik nebo 1–3 = vybrat,
-// × / pravé tlačítko / X = vyprázdnit. Zamčená políčka jsou úzká a jen ukazují, že je odemkne opasek v Dílně.
+// × v políčku = zničit nástroj / kladivo (znovu se koupí), zahodit sadu. Klávesa X ani pravé tlačítko nic nemažou. Zamčená políčka jsou úzká a jen ukazují, že je odemkne opasek v Dílně.
 import { BELT, toolById } from './catalog.js';
 import { game } from './state.js';
 import { toolStats } from './equipment.js';
-import { hotbarSlots, KIT_NAMES } from './hotbar.js';
+import { hotbarSlots, KIT_NAMES, HAMMER_ID } from './hotbar.js';
+import { HAMMER } from './structures.js';
 import { jetCharged } from './player.js';
 import { instantiate } from './assets/models.js';
 
@@ -30,14 +31,11 @@ export function initHotbar(renderThumb, onSelect, onDrop) {
     }
     b?.blur();
   });
-  bar.addEventListener('contextmenu', e => {
-    e.preventDefault();
-    const b = e.target.closest('[data-slot]');
-    if (b && !b.disabled) onDrop(Number(b.dataset.slot));
-  });
+  bar.addEventListener('contextmenu', e => e.preventDefault());   // pravé tlačítko nic nemaže (jen ×)
 }
 
 function slotView(e) {
+  if (e === HAMMER_ID) return { name: HAMMER.name, img: thumb('hammer', () => instantiate('hammer').root), hammer: true };
   if (typeof e === 'string') {
     const t = toolById(e);
     const item = game.s.tools[e];
@@ -66,7 +64,7 @@ export function updateHotbar() {
       <span class="hotbar__key">${k + 1}</span>
       ${v.img ? `<img class="hotbar__img" src="${v.img}" alt="">` : '<span class="hotbar__img hotbar__img--empty"></span>'}
       <span class="hotbar__name">${esc(v.name)}</span>
-      ${s.hotbar[k] != null ? '<span class="hotbar__drop" data-drop title="Odebrat z hotbaru (X)">×</span>' : ''}
+      ${s.hotbar[k] != null ? `<span class="hotbar__drop" data-drop title="${v.kit ? 'Odebrat z hotbaru' : v.hammer ? 'Zničit kladivo (nové v Dílně)' : 'Zničit nástroj – znovu ho koupíš v Obchodě'}">×</span>` : ''}
       ${v.fill !== undefined ? `<span class="hotbar__load"><span style="width:${Math.round(v.fill * 100)}%"></span></span>` : ''}
     </button>`;
   }).join('');

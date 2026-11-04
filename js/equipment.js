@@ -1,11 +1,11 @@
 // Vybavení: nástroje a vozidla – parametry, nákup, výběr a vylepšení.
 // Každý nástroj i vozidlo má vlastní zásobník na prach (load v kg).
 import {
-  TOOLS, TOOL_UPGRADES, VEHICLE_UPGRADES, VEHICLES, GARAGE_PRICE, STATION, BOOTS, SELL_REFUND, BELT, JETPACK,
+  TOOLS, TOOL_UPGRADES, VEHICLE_UPGRADES, VEHICLES, GARAGE_PRICE, STATION, BOOTS, SELL_REFUND, TOOL_SELL, BELT, JETPACK,
   MARKET, HEXUP, toolById, vehicleById, upgradeCost, boostFactor, marketCost, hexupCost, batteryCap,
 } from './catalog.js';
 import { game, newToolState, newUid } from './state.js';
-import { heldTool, heldKit, putTool, ensureHotbar, KIT_NAMES } from './hotbar.js';
+import { heldTool, heldKit, heldHammer, putTool, forgetTool, ensureHotbar, KIT_NAMES, HAMMER_ID } from './hotbar.js';
 import { WALK_SPEED } from './config.js';
 import { fleetFull, freeGarageSlot, homeSpot, HAMMER, hasResearch } from './structures.js';
 import { tangentTo } from './planet/vec.js';
@@ -48,7 +48,7 @@ export function activeEquipment() {
     const base = vehicleById(v.type);
     return { kind: 'vehicle', item: v, base, stats: vehicleStats(v), name: base.name };
   }
-  if (game.hammer) return { kind: 'tool', item: { load: 0 }, base: HAMMER_TOOL, stats: NO_STATS, name: HAMMER.name };   // kladivem se nezametá
+  if (heldHammer()) return { kind: 'tool', item: { load: 0 }, base: HAMMER_TOOL, stats: NO_STATS, name: HAMMER.name };   // kladivem se nezametá
   const id = heldTool();
   if (!id) {                                        // v ruce stavební sada nebo nic (hotbar.js)
     const kit = heldKit();
@@ -75,6 +75,29 @@ export function equipTool(id) {
   if (!ownsTool(id) || game.s.driving >= 0) return false;
   putTool(id);
   return true;
+}
+
+// Prodej v Obchodě: 30 % ceny nástroje a všech zaplacených vylepšení (lv = úrovně, výchozí = vlastní).
+export function toolSellValue(id, lv = game.s.tools[id]?.lv) {
+  const t = toolById(id);
+  if (!t || !lv) return 0;
+  let paid = t.price;
+  for (const key in TOOL_UPGRADES) for (let k = 0; k < (lv[key] | 0); k++) paid += upgradeCost(t.price, k, 0.45);
+  return Math.round(paid * TOOL_SELL);
+}
+
+// Nejvíc, kolik může prodej nástroje id vynést (plně vylepšený) – hostitel tím ověří žádost klienta.
+export function toolSellMax(id) {
+  const lv = {};
+  for (const key in TOOL_UPGRADES) lv[key] = TOOL_UPGRADES[key].max;
+  return toolSellValue(id, lv);
+}
+
+// Prodá nástroj (i s náplní zásobníku): peníze ×0,3, nástroj zmizí z hotbaru a jde koupit znovu.
+export function sellTool(id) {
+  if (!ownsTool(id)) return false;
+  game.s.money += toolSellValue(id);
+  return forgetTool(id);
 }
 
 export function toolUpgradeCost(id, key) {
@@ -154,12 +177,15 @@ export function buyJetpack() {
 // ---------- garáž a vozidla ----------
 
 // ---------- kladivo (L-10) ----------
+// Kladivo zabírá políčko hotbaru jako nástroj; X / × ho zničí (s.hammer = 0) a znovu se koupí tady (Dílna).
 
 export const ownsHammer = () => !!game.s.hammer;
 export function buyHammer() {
   if (ownsHammer() || game.s.money < HAMMER.price) return false;
   game.s.money -= HAMMER.price;
   game.s.hammer = 1;
+  if (game.s.driving < 0) putTool(HAMMER_ID);      // rovnou do ruky (prázdné políčko, jinak místo vybraného)
+  else ensureHotbar();
   return true;
 }
 

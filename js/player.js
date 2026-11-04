@@ -58,6 +58,21 @@ let vehicleSpeed = 0;                    // aktuální rychlost řízeného vozi
 let jetReady = true;                     // jetpack je nabitý (nabije se dopadem na zem)
 let boostLeft = BOOST.duration;          // zbývající boost vozidla (s)
 let ride = null;                         // cestující v přepravníku: { i, seat, uid }
+// Směr postavy po chůzi myší (klik / držení): s.f (= kamera) se při ní nemění, aby se cíl na obrazovce neutíkal.
+// Postava ale hledí ve směru chůze – první klávesa A/D/W/S (i šipky, tlačítka otáčení kamery) převezme
+// tento směr do s.f, takže otáčení a chůze pokračují z toho, kam postava opravdu míří (null = shodné s s.f).
+let walkFace = null;
+
+function adoptWalkFace() {
+  if (!walkFace) return;
+  const s = game.s;
+  const f = tangentTo(s.p, walkFace);
+  walkFace = null;
+  if (Math.hypot(f[0], f[1], f[2]) > 1e-6) s.f = f;
+}
+
+// Kam se dívá postava pěšky (stojí-li): směr poslední chůze myší, jinak s.f.
+export const walkFacing = () => (walkFace && game.s.driving < 0 && !ride ? tangentTo(game.s.p, walkFace) : game.s.f);
 
 export function initPlayer() {
   body = walkerBody(game.s.p);
@@ -87,6 +102,7 @@ export const playerRight = () => norm(cross(game.s.f, game.s.p));
 // Otočí směr pohledu / jízdy kolem „svislé“ osy; kladný úhel = doleva.
 export function rotateHeading(angle) {
   const s = game.s;
+  if (s.driving < 0) adoptWalkFace();             // pěšky otáčet od směru, kam postava míří (i po chůzi myší)
   s.f = tangentTo(s.p, rotateAround(s.f, s.p, angle));
 }
 
@@ -174,6 +190,7 @@ function walk(input, dt) {
   const m = input.move();
   if (m) {
     input.target = null;
+    adoptWalkFace();                              // W/S po chůzi myší = dopředu tam, kam postava hledí
     dir = s.f.map(c => c * m.fwd);
   } else if (input.target) {
     const dist = angleBetween(s.p, input.target) * R;
@@ -181,6 +198,7 @@ function walk(input, dt) {
       if (!input.pointerDown) input.target = null;
     } else {
       dir = tangentTo(s.p, input.target);
+      walkFace = dir;
       want = dir.map(c => c * Math.min(speed, dist * 4));
     }
   }
@@ -196,7 +214,7 @@ function walk(input, dt) {
   const sp = Math.hypot(body.v[0], body.v[1], body.v[2]);
   playerFx.moving = body.grounded ? sp > 0.2 : false;
   playerFx.speed = sp;
-  playerFx.face = sp > 0.2 ? norm(body.v) : s.f;
+  playerFx.face = sp > 0.2 ? norm(body.v) : walkFacing();
 }
 
 function drive(input, dt) {
@@ -438,6 +456,7 @@ export function enterVehicle(i) {
   const s = game.s;
   if (ride) return;
   s.driving = i;
+  walkFace = null;
   const v = s.vehicles[i];
   s.p = v.p;
   s.f = v.f;
@@ -462,6 +481,7 @@ export function exitVehicle() {
   body = walkerBody(out);
   s.p = out;
   s.f = tangentTo(out, v.f);
+  walkFace = null;
   prevTool = null;
 }
 

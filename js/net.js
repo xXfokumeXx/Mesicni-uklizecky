@@ -30,7 +30,7 @@ import { norm, cross, anyTangent, dot, tangentTo, angleBetween, madd } from './p
 import { VEHICLES, STATION, DRONE } from './catalog.js';
 import { unpackDust, fromBase64, savesLocked } from './storage.js';
 import { saveCloud, claimHost } from './cloud.js';
-import { buyVehicle, upgradeVehicle, callBackVehicle, sellVehicle, upgradeMarket, upgradeHexup, rehomeVehicle } from './equipment.js';
+import { buyVehicle, upgradeVehicle, callBackVehicle, sellVehicle, upgradeMarket, upgradeHexup, rehomeVehicle, toolSellMax } from './equipment.js';
 import { TYPE_IDS, demolishStructure, chargerAddSlot, chargerFaster, swapperAddRack } from './structures.js';
 import { placeAndWire } from './build.js';
 import { encodeLive, applyLive, addCable, removeCable } from './energy.js';
@@ -614,6 +614,12 @@ function hostRequest(kind, a, cost, r) {
       if (!(cost >= 0) || s.money < cost) return false;
       s.money -= cost;
       return true;
+    case 'tsell': {                                                   // [id nástroje, výnos] – nástroj je osobní, hostitel jen ověří strop
+      const v = Number(a[1]);
+      if (!(v >= 0) || v > toolSellMax(String(a[0]))) return false;
+      s.money += v;
+      return true;
+    }
     case 'build': {                                                   // [typ, poloha ×3 (1e6), yaw (mrad)]
       const type = TYPE_IDS[a[0] | 0];
       return !!type && okVec(a, 1) && isNum(a[4]) && !!placeAndWire(type, decU(a, 1), a[4] / 1000);

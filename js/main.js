@@ -11,11 +11,11 @@ import {
   checkVehicleHits, isRagdoll, ragdollNet, currentVehicleSpeed, riding, followRide, leaveRide, currentAltitude,
 } from './player.js';
 import { currentAction, placing, startPlacing, cancelPlacing, updatePlacing, stationUpgradeNear } from './interact.js';
-import { ensureHotbar, selectSlot, dropSlot } from './hotbar.js';
+import { ensureHotbar, selectSlot, dropSlot, HAMMER_ID } from './hotbar.js';
 import { initHotbar, updateHotbar } from './hotbarUi.js';
 import { initAchievements, unlock, addAchStat, recordAchStat } from './achievements.js';
 import { RANKS, myRank } from './ranks.js';
-import { MARKET, SUIT_COLORS } from './catalog.js';
+import { MARKET, SUIT_COLORS, toolById } from './catalog.js';
 import { launchRocket, launchSeconds, ROCKET } from './rocket.js';
 import { initFacility, openFacility, facilityOpen, refreshFacility } from './facility.js';
 import { input, bindInput } from './input.js';
@@ -496,14 +496,15 @@ function onAchievement(a) {
   if (net.mode !== 'off') sendChat(`🏆 získal(a) úspěch „${a.name}“`);
 }
 
-// X / × / pravé tlačítko na políčku: vyprázdnit (nástroj zůstává koupený).
+// × v políčku hotbaru: nástroj nebo kladivo se zničí, stavební sada se zahodí (hotbar.js dropSlot).
 function dropFromHotbar(k) {
-  const e = game.s.hotbar?.[k];
-  if (!dropSlot(k)) return;
+  const e = dropSlot(k);
+  if (e == null) return;
+  if (!hammerActive()) closeAll();
   promptTimer = 0;
   updateHotbar();
-  toast(typeof e === 'string'
-    ? 'Nástroj je pryč z hotbaru (pořád ho vlastníš). Zpátky do ruky ho vezmeš v Obchodě nebo v Dílně.'
+  toast(e === HAMMER_ID ? 'Kladivo je zničené. Nové koupíš v Dílně (záložka Astronaut).'
+    : typeof e === 'string' ? `${toolById(e)?.name || 'Nástroj'} je zničený. Znovu ho koupíš v Obchodě.`
     : 'Stavební sada je pryč z hotbaru.', 5000);
 }
 
@@ -975,10 +976,10 @@ function build() {
       const up = stationUpgradeNear();                           // R u stanice = vylepšení na MK1 / MK2
       if (up) { settle(up); promptTimer = 0; }
     },
-    onSlot: k => { if (game.hammer) { game.hammer = false; closeAll(); } if (selectSlot(k)) { promptTimer = 0; updateHotbar(); } },
-    onDrop: () => { if (hammerActive()) { toggleDemolish(); promptTimer = 0; } else dropFromHotbar(game.s.sel); },
+    onSlot: k => { if (selectSlot(k)) { if (!hammerActive()) closeAll(); promptTimer = 0; updateHotbar(); } },
+    onDrop: () => { if (hammerActive()) { toggleDemolish(); promptTimer = 0; } },   // nástroj se ničí jen × v políčku hotbaru
     onHammer: () => { const msg = toggleHammer(); promptTimer = 0; if (msg) toast(msg, 4000); updateHotbar(); },
-    onBuildMenu: () => { if (!toggleMenu() && !hammerActive()) toast(game.s.hammer ? 'Nejdřív vezmi kladivo do ruky (Q).' : 'Stavět jde kladivem – kup ho v Dílně (záložka Astronaut).', 4000); promptTimer = 0; },
+    onBuildMenu: () => { if (!toggleMenu() && !hammerActive()) toast(game.s.hammer ? 'Nejdřív vezmi kladivo do ruky (Q nebo číslo jeho políčka).' : 'Stavět jde kladivem – kup ho v Dílně (záložka Astronaut).', 4000); promptTimer = 0; },
     onLights: toggleLights,
     onAuto: () => {                                            // C = autocruise → asistent hrany → vypnuto (L-40, L-41)
       if (game.s.driving < 0) return;

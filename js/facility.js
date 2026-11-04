@@ -9,12 +9,13 @@ import {
 import { MOON, PRICE_PER_KG, HEX_BONUS, PLANET } from './config.js';
 import { game, dustPrice, hexBonus } from './state.js';
 import {
-  toolStats, vehicleStats, ownsTool, buyTool, equipTool, toolUpgradeCost, upgradeTool,
+  toolStats, vehicleStats, ownsTool, buyTool, equipTool, toolUpgradeCost, upgradeTool, toolSellValue, sellTool,
   bootsLevel, walkSpeed, bootsUpgradeCost, upgradeBoots, vehicleCount, fleetFull,
   buyVehicle, rehomeVehicle, ownsHammer, buyHammer, vehicleUpgradeCost, vehicleUpgradeLock, upgradeVehicle, stationPrice,
   vehicleSellValue, sellVehicle, upgradeFits, beltLevel, beltUpgradeCost, upgradeBelt, ownsJetpack, buyJetpack,
   marketLevel, marketUpgradeCost, upgradeMarket, hexupLevel, hexupUpgradeCost, upgradeHexup,
 } from './equipment.js';
+import { hammerSlot, heldHammer } from './hotbar.js';
 import { holoCounts } from './scene/hologram.js';
 import { cleanPercent } from './rocket.js';
 import { purchase, callVehicle } from './econ.js';
@@ -63,7 +64,7 @@ function toolsTab(forUpgrades) {
   const list = forUpgrades ? TOOLS.filter(t => ownsTool(t.id)) : TOOLS;
   return list.map(t => {
     const owned = ownsTool(t.id);
-    const inHand = game.s.tool === t.id && game.s.driving < 0;
+    const inHand = owned && game.s.tool === t.id && game.s.driving < 0 && !heldHammer();
     const st = toolStats(t.id);
     const item = game.s.tools[t.id];
     const chip = inHand ? ['V RUCE', 'active'] : owned ? ['KOUPENO', 'owned'] : ['V OBCHODĚ', 'store'];
@@ -98,8 +99,20 @@ function toolsTab(forUpgrades) {
     } else {
       detail.action = { label: 'Máš v ruce', disabled: true };
     }
+    if (!forUpgrades && owned) detail.action2 = toolSellAction(t);
     return { key: t.id, name: t.name, chip, thumb: () => thumb(`tool-${t.id}`, () => instantiate('tool', t.id).root), detail };
   });
+}
+
+// Prodej nástroje v Obchodě (30 % ceny i vylepšení), dvojklikem jako u vozidel; potom jde koupit znovu.
+function toolSellAction(t) {
+  const value = toolSellValue(t.id);
+  const key = `tool:${t.id}`;
+  if (sellArmed !== key) return { label: `Prodat za ${money(value)} (30 % ceny)`, danger: true, run: () => { sellArmed = key; return 'stay'; } };
+  return {
+    label: `Opravdu prodat? Vrátí se ${money(value)}`, danger: true, armed: true,
+    run: () => { sellArmed = null; return purchase('tsell', [t.id, value], 0, () => sellTool(t.id)); },
+  };
 }
 
 // Vysavače MK1 / MK2 (L-31): nová stanice vyšší úrovně; stávající se vylepší na místě klávesou R
@@ -249,7 +262,7 @@ function rehomeAction(i, status) {
 }
 
 // Prodej vozidla: první klik se zeptá, druhý prodá (75 % ceny včetně vylepšení).
-let sellArmed = null;                // uid vozidla, u kterého se čeká na potvrzení prodeje
+let sellArmed = null;                // uid vozidla / 'tool:<id>', u kterého se čeká na potvrzení prodeje
 function sellAction(i, busyVeh) {
   const veh = game.s.vehicles[i];
   const value = vehicleSellValue(i);
@@ -383,6 +396,7 @@ function beltItem() {
 
 function hammerItem() {
   const own = ownsHammer();
+  const k = hammerSlot();
   return {
     key: 'hammer',
     name: HAMMER.name,
@@ -392,9 +406,9 @@ function hammerItem() {
       eyebrow: 'Astronaut · stavění',
       title: HAMMER.name,
       desc: HAMMER.desc,
-      stats: [['Klávesy', 'Q kladivo · V stavět · X bourat'], ['Bourání vrátí', '60 % ceny']],
+      stats: [['Klávesy', 'Q kladivo · V stavět · X bourat'], ['Hotbar', own ? (k >= 0 ? `políčko ${k + 1}` : 'bez políčka (Q ho tam dá)') : 'zabere 1 políčko'], ['Bourání vrátí', '60 % ceny']],
       action: own
-        ? { label: 'Máš ho · Q = vzít do ruky', disabled: true }
+        ? { label: k >= 0 ? `Máš ho v políčku ${k + 1} · Q = vzít do ruky` : 'Máš ho · Q = dát do hotbaru', disabled: true }
         : { label: `Koupit · ${money(HAMMER.price)}`, disabled: game.s.money < HAMMER.price, run: () => purchase('hammer', [], HAMMER.price, buyHammer) },
     },
   };
