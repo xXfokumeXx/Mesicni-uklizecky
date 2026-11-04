@@ -9,6 +9,7 @@ import { SAVE_VERSION } from './state.js';
 import { net, initLobby, lobbyPeers, openWorlds, findWorld, setLobbyStatus, roomOnline } from './net.js';
 import { checkAccess, enterPassword, cloudMeta } from './cloud.js';
 import { fmt } from './format.js';
+import { myRank, rankName, nextRank } from './ranks.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -68,6 +69,9 @@ function renderProfile() {
   $('menu-name').value = profile.name;
   $('menu-avatar').src = avatar(profile.look, true).url;
   $('menu-outfit').textContent = outfitName(profile.look);
+  const nx = nextRank();
+  $('menu-rank').textContent = rankName(myRank());
+  $('menu-rank').title = nx ? `Další hodnost „${nx.name}“ za ${fmt(Math.ceil(nx.left))} kg prachu` : 'Nejvyšší hodnost';
 }
 
 // ---------- šatna v menu (stejná jako v Dílně: barva skafandru a rekvizity) ----------
@@ -246,6 +250,7 @@ function renderLobby() {
   const online = roomOnline();
   let people = lobbyPeers();
   if (!people.some(p => p.me)) people = [{ peer: 'me', name: profile.name, look: profile.look, me: true, scr: 'lobby', world: null }, ...people];
+  for (const p of people) if (p.me) p.rank = myRank();             // moje hodnost vždy aktuální z profilu
   const worldsAll = openWorlds(true);
   const worlds = openWorlds();
   assignStage(people);
@@ -255,9 +260,9 @@ function renderLobby() {
     : online ? (people.length > 6 ? 'Připojeno · na plošině vidíš 6 hráčů' : 'Připojeno · vidíš všechny, kdo mají hru právě otevřenou.') : 'Připojuji…';
   const stage = onStage.map(id => {
     const p = id && byPeer.get(id);
-    return p ? { me: !!p.me, name: p.name, look: p.look, outfit: outfitName(p.look), status: statusOf(p, worldsAll), guest: !!p.guest } : null;
+    return p ? { me: !!p.me, name: p.name, rank: rankName(p.rank), look: p.look, outfit: outfitName(p.look), status: statusOf(p, worldsAll), guest: !!p.guest } : null;
   });
-  const sig = JSON.stringify([online, statusText, people.length, stage, worlds, people.map(p => [p.name, p.world, p.scr])]);
+  const sig = JSON.stringify([online, statusText, people.length, stage, worlds, people.map(p => [p.name, p.rank, p.world, p.scr])]);
   if (sig === lobbySig) return;                    // nic se nezměnilo → DOM nepřekreslovat (obrázky by blikaly)
   lobbySig = sig;
 
@@ -274,6 +279,7 @@ function renderLobby() {
     return `
       <img class="lobby-player" src="${img.url}" alt="${esc(p.name)}" style="left:${pctX(x)};top:${pctY(y - ih)};height:${pctY(ih)}">
       <div class="lobby-plate${p.me ? ' lobby-plate--me' : ''}" style="left:${pctX(x)};top:${pctY(y - h - (k >= 3 ? 18 : people.length > 1 ? 40 : 16))}">
+        ${p.rank ? `<em>${esc(p.rank)}</em>` : ''}
         <b>${esc(p.name)}${p.me ? ' <span class="lobby-tag">TY</span>' : ''}</b>
         <span>${esc(p.outfit)}</span>
         <i>${esc(p.status)}</i>
@@ -284,7 +290,7 @@ function renderLobby() {
   $('lobby-more').textContent = `Zobrazit dalších ${Math.max(0, more)}`;
   if (more <= 0) $('lobby-people-box').hidden = true;
   $('lobby-people').innerHTML = people.map(p => `
-    <li><span>${esc(p.name)}${p.me ? ' <span class="lobby-tag">TY</span>' : ''}</span><small>${esc(statusOf(p, worldsAll))}</small></li>`).join('');
+    <li><span>${esc(p.name)}${p.me ? ' <span class="lobby-tag">TY</span>' : ''}</span><small>${esc([rankName(p.rank), statusOf(p, worldsAll)].filter(Boolean).join(' · '))}</small></li>`).join('');
   $('lobby-worlds').innerHTML = worlds.length ? worlds.map((w, i) => {
     const meta = [w.hostName, `${w.players} ${plural(w.players)}`, w.done !== null ? `${w.done.toLocaleString('cs-CZ')} % hexů` : null].filter(Boolean).join(' · ');
     const btn = w.me ? '<button class="lobby-btn lobby-btn--ghost" type="button" disabled>Tvůj svět</button>'

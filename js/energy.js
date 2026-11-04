@@ -218,7 +218,7 @@ export function energyTick(dt = TICK, busy = () => false) {
   const nets = networks();
   const t = gameTime();
   const sums = new Map();
-  const sum = n => sums.get(n) || sums.set(n, { prod: 0, demand: 0, stored: 0, cap: 0, storages: [], loads: [] }).get(n);
+  const sum = n => sums.get(n) || sums.set(n, { prod: 0, demand: 0, stored: 0, cap: 0, storages: [], loads: [], sinters: [] }).get(n);
   const degree = new Map();
   for (const [a, b] of s.cables || []) { degree.set(a, (degree.get(a) || 0) + 1); degree.set(b, (degree.get(b) || 0) + 1); }
   live.clear();
@@ -289,10 +289,12 @@ export function energyTick(dt = TICK, busy = () => false) {
       L.rack = d.rack; L.need = need; L.f = want ? 0 : 1;
       if (L.wired && want > 0) { S.demand += want; S.loads.push({ b, L, want, rack: need }); }
     } else if (b.type === 'sinter') {
-      // slinovna (L-23): 15 ⚡/s (4. 11.), jen když má prach a místo na cihly
+      // slinovna (L-23): 15 ⚡/s (4. 11.), jen když má prach a místo na cihly. 4. 11.: bez prachu nebere nic a ani
+      // nejede (pend – energii dostane až v další bilanci); s prachem jede jen na plný výkon (viz níže, S.sinters)
       const want = sinterWants(b) ? SINTER.power : 0;
-      L.f = want ? 0 : 1;
-      if (L.wired && want > 0) { S.demand += want; S.loads.push({ b, L, want }); }
+      L.f = 0; L.pend = !want;
+      if (L.wired && want > 0) S.sinters.push({ b, L, want });
+      else b.data.on = false;
     } else if (b.type === 'research') {
       // výzkumné centrum: 5 ⚡/s jen během výzkumu (L-30); bez kabelu f = 0 → výzkum stojí
       const want = researching() ? RESEARCH_POWER : 0;
@@ -302,6 +304,23 @@ export function energyTick(dt = TICK, busy = () => false) {
   }
 
   for (const [n, S] of sums) {
+    // Slinovny (4. 11.) mají nejnižší přednost a jedou jen na plný výkon: dřív při malé výrobě lisovaly třeba na 17 %,
+    // snědly celou výrobu solárů a baterie se nenabíjela. Teď slinovna, na kterou nezbývá celých 15 ⚡/s (výroba po
+    // ostatních spotřebičích + co smí dát baterie), stojí a přebytek nabíjí baterie. Znovu se rozjede, až výroba sama
+    // stačí, nebo baterie mají zásobu aspoň na SINTER.reserve s práce (30 s × 15 ⚡ = 450 ⚡).
+    if (S.sinters.length) {
+      let budget = (S.prod - S.demand) * dt + S.storages.reduce((a, x) => a + Math.min(x.e.rate * dt, x.b.data.charge), 0);
+      let spare = S.prod - S.demand;
+      let stored = S.storages.reduce((a, x) => a + x.b.data.charge, 0);
+      for (const sn of S.sinters) {
+        const need = sn.want * dt;
+        const start = sn.b.data.on || spare >= sn.want || stored >= sn.want * SINTER.reserve;
+        if (start && budget >= need - 1e-6) {
+          budget -= need; spare -= sn.want; stored -= Math.max(0, need - Math.max(0, spare + sn.want) * dt);
+          S.demand += sn.want; S.loads.push(sn); sn.b.data.on = true;
+        } else { sn.b.data.on = false; sn.L.starved = true; }
+      }
+    }
     let f = 1;
     if (S.prod >= S.demand) {
       // přebytek do baterií: rovnoměrně podle volné kapacity, omezeno nabíjecím výkonem

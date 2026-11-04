@@ -36,6 +36,7 @@ export const build = {
   beltBends: [],               // pás: ohyby (jednotkové směry)
   beltPts: null,               // pás: celá trasa pro náhled
   beltHover: null,             // pás: výstupní zásuvka pod kurzorem (před prvním klikem)
+  beltBridges: [],             // pás: místa křížení (m od začátku) – nový pás tam vede mostem
   belt: null,                  // bourání: pás pod kurzorem (id)
   from: null,                  // kabel: id kotvy, ze které vede
   cable: null,                 // bourání: kabel pod kurzorem [idA, idB]
@@ -210,6 +211,7 @@ export function updateBuild(dt, cursor, keys, picked, pickedCable = null) {
       const chk = pts.length >= 2 ? checkPath(pts, [build.beltFrom[0], target?.ref[0]].filter(Boolean)) : { ok: false, reason: 'Namiř kurzor na terén', len: 0, price: 0 };
       build.price = chk.price;
       build.len = chk.len;
+      build.beltBridges = chk.ok ? chk.bridges || [] : [];          // mosty přes křížené pásy (náhled)
       build.valid = chk.ok && !build.busy && (!target || s.money >= chk.price);
       build.reason = !chk.ok ? chk.reason : target && s.money < chk.price ? `Chybí peníze ($${fmtMoney(chk.price - s.money)})` : '';
     }

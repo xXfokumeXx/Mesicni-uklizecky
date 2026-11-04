@@ -14,6 +14,7 @@ import { currentAction, placing, startPlacing, cancelPlacing, updatePlacing, sta
 import { ensureHotbar, selectSlot, dropSlot } from './hotbar.js';
 import { initHotbar, updateHotbar } from './hotbarUi.js';
 import { initAchievements, unlock, addAchStat, recordAchStat } from './achievements.js';
+import { RANKS, myRank } from './ranks.js';
 import { MARKET, SUIT_COLORS } from './catalog.js';
 import { launchRocket, launchSeconds, ROCKET } from './rocket.js';
 import { initFacility, openFacility, facilityOpen, refreshFacility } from './facility.js';
@@ -41,9 +42,9 @@ import { build as bld, hammerActive, toggleHammer, toggleMenu, toggleDemolish, c
 import { initBuildUi, updateBuildUi, placeHoldRing, placeStructLabel } from './buildUi.js';
 import { describe as describeStructure } from './energy.js';
 import { structureById as structById, STRUCTURES as STRUCT_DEFS, padTopHeight } from './structures.js';
-import { loadProfile, profile } from './profile.js';
+import { loadProfile, profile, saveProfile } from './profile.js';
 import {
-  net, initLobby, startHost, joinWorld, netTick, addEarned, sendChat, players, movingVehicles,
+  net, initLobby, startHost, joinWorld, netTick, addEarned, sendChat, refreshLobbyRank, players, movingVehicles,
   vehicleOverride, vehicleTakenBy, vehicleRemoteMoving, hostRobotCompleted, setRagdollPresence, savePersonal, inviteLink,
   addCollected, reportDeposit, myStatKey, passengersOf, request, hostOwnDust, saveWorldNow, setWorldLocked, worldLocked, findWorld,
   loadPersonal,
@@ -109,6 +110,7 @@ function work(dt) {
   if (swept && eqNow.kind === 'tool' && eqNow.base.id === 'toothbrush') addAchStat('tb', swept);
   if (playerFx.completed.length) addAchStat('hex', playerFx.completed.length);
   addAchStat('kg', swept);
+  if (swept) checkRank();                                    // hodnost podle nasbíraného prachu (ranks.js)
   if (riding()) addAchStat('ride', dt / 60);
   addAchStat('earn', gained + (playerFx.deposit ? playerFx.deposit.kg * dustPrice() : 0));
   if (earned && sunElevationDeg(s.p, gameTime()) < -6) unlock('nightshift');
@@ -476,6 +478,18 @@ const cutscene = {
     return true;
   },
 };
+
+// Postup na novou hodnost: hláška u mě a v multiplayeru zpráva do chatu všem (jako úspěch).
+// Poprvé (profil bez hodnosti, např. hráč z dřívější verze) se hodnost jen uloží – bez oznámení.
+function checkRank() {
+  const i = myRank();
+  if (!Number.isInteger(profile.rank)) { profile.rank = i; saveProfile(); return; }
+  if (i <= profile.rank) return;
+  profile.rank = i;
+  saveProfile();
+  toast(`🎖 Nová hodnost: ${RANKS[i].name}!`, 6000);
+  if (net.mode !== 'off') { sendChat(`🎖 postoupil(a) na hodnost „${RANKS[i].name}“`); refreshLobbyRank(); }
+}
 
 function onAchievement(a) {
   showAchievement(a);
@@ -1081,7 +1095,7 @@ async function launch(spec) {
     const err = await joinWorld(spec.world, showLoading);
     if (err && err !== 'nomap') { launchError(err); return; }
     try { history.replaceState(null, '', `#${spec.world.code}`); } catch { /* nic */ }
-    if (err === 'nomap') setTimeout(() => toast('Mapu od hostitele se nepodařilo stáhnout – vyčištěná místa se ukážou, jak je kdo projede.', 8000), 1500);
+    if (err === 'nomap') setTimeout(() => toast('Mapu od hostitele se zatím nepodařilo stáhnout – zkouším to dál, vyčištěná místa se doplní.', 8000), 1500);
     game.slot = null;
   } else if (spec.cloud) {
     // svět z cloudu: hostitel teď není online, hostovat ho budu já
@@ -1176,6 +1190,7 @@ async function launch(spec) {
     else { net.mode = 'off'; game.mode = 'sp'; toast('Svět se nepodařilo otevřít ostatním – hraješ sám.', 6000); }
   }
   net.onResearchDone = ids => ids.forEach(researchFinished);   // klient: hostitel dokončil výzkum
+  net.onMapLoaded = () => toast('Mapa prachu od hostitele je načtená – vyčištěná místa jsou zpět.', 6000);
   net.onDepartRequest = () => (PLANET.id === 'moon' && hexes.total > 0 && hexes.doneCount >= hexes.total ? depart('mars') : false);
   net.onDepart = planet => {                                  // klient: hostitel odlétá s celým světem
     if (PLANET.id === planet) return;

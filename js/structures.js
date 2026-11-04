@@ -144,7 +144,7 @@ Object.assign(STRUCTURES, {
   },
   sinter: {
     name: 'Slinovna', cat: 'production', model: 'sinter', price: 12000, inBase: false, ready: true, padTop: 0.5,
-    desc: 'Lis na regolitové cihly: 20 kg prachu → 1 cihla za 6 s (15 ⚡/s). Prach přiveze pás do násypky (vlevo), cihly odvádí pás z výstupu (vpravo) do Výkupu.',
+    desc: 'Lis na regolitové cihly: 20 kg prachu → 1 cihla za 6 s (15 ⚡/s, vylepšení Rychlejší lis až 4 s). Prach přiveze pás do násypky (vlevo), cihly odvádí pás z výstupu (vpravo) do Výkupu.',
     pad: [-16.5, 16.5, -10.5, 10.5], foot: [-16.8, 16.8, -10.8, 10.8],
     solid: [[-15.5, -10, -2, 3.5], [-9.5, 14, -2.6, 2.6], [5, 14, 4, 8.6], [-14, -8, -8, -4.5]], use: [-6, 6, 3, 10.5],
     anchors: [[-3.5, 3.17, -8]],

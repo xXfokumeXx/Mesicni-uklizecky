@@ -37,7 +37,8 @@ import { encodeLive, applyLive, addCable, removeCable } from './energy.js';
 import { batteryCap } from './catalog.js';
 import { placeStation, moveStation, upgradeStation } from './robots.js';
 import { breakRockHost, applyRocks } from './rocks.js';
-import { depositToDepot, addBelt, removeBelt, cutBelt, encodeBelts, applyBelts, encodeLogistics, applyLogistics } from './logistics.js';
+import { myRank } from './ranks.js';
+import { depositToDepot, addBelt, removeBelt, cutBelt, encodeBelts, applyBelts, encodeLogistics, applyLogistics, upgradeSinter } from './logistics.js';
 import { buyDrone } from './drones.js';
 import { startResearch, unqueueResearch, encodeResearch, applyResearch, techById } from './research.js';
 import { ensureHotbar } from './hotbar.js';
@@ -45,7 +46,7 @@ import { connectPlatform } from './platform/platform.js';
 
 const R = MOON.radius;
 let researchSeen = false;                  // první H.rs po připojení nehlásí staré hotové výzkumy
-export const NET_VERSION = 3;               // presence starší verze hry se ignoruje (2.x a 3.0 spolu nehrají)
+export const NET_VERSION = 4;               // presence starší verze hry se ignoruje (2.x a 3.0 spolu nehrají; 4 = 4. 11.: mosty pásů v H.bl)
 const PRESENCE_HZ = 8;                     // moje presence ve světě (poloha, tahy…) – ostatní dopočítávají pohyb
 const HOST_HZ = 2;                         // sdílený stav světa od hostitele
 const CLOUD_STATE_S = 20, CLOUD_MAP_S = 60; // hostitel ukládá svět do cloudu (stav / i mapu prachu)
@@ -114,7 +115,11 @@ export const roomOnline = () => !!net.room && net.room.connected();
 
 function setLobby(extra) {
   if (!net.room) return;
-  net.room.presence({ v: NET_VERSION, scr: net.lobbyStatus, n: profile.name, a: lookArr(), w: net.code, ...extra }).catch(() => {});
+  net.room.presence({ v: NET_VERSION, scr: net.lobbyStatus, n: profile.name, a: lookArr(), rk: myRank(), w: net.code, ...extra }).catch(() => {});
+}
+// Nová hodnost → hned do lobby (hostitel ji tam posílá sám 2×/s s H)
+export function refreshLobbyRank() {
+  if (net.mode !== 'host') setLobby({});
 }
 
 export function setLobbyStatus(scr) {
@@ -133,6 +138,7 @@ export function lobbyPeers() {
       peer: p.peer,
       name: sanitizeName(p.presence.n) || 'Astronaut',
       look: validLook({ color: p.presence.a?.[0], top: p.presence.a?.[1], face: p.presence.a?.[2] }),
+      rank: Number.isInteger(p.presence.rk) ? p.presence.rk : -1,          // hodnost (ranks.js)
       scr: p.presence.scr,
       world: typeof p.presence.w === 'string' ? p.presence.w : null,
       me: p.isMe && p.sameTab,
@@ -203,6 +209,8 @@ function myWorldPresence(fx, vehicleSpeed) {
     v: NET_VERSION,
     n: profile.name,
     a: lookArr(),
+    rk: myRank(),                                                    // hodnost (ranks.js) nad jménem
+    sq: net.mode === 'client' ? mapAsk : null,                       // žádost o snímek mapy prachu (mění se = nová žádost)
     p: enc(s.p),
     r: Math.round((b ? b.r : R) * 100),
     f: encF(s.f),
@@ -262,6 +270,7 @@ function readRemote(peer, pr) {
   if (!pr || pr.v !== NET_VERSION) return r;
   r.name = sanitizeName(pr.n) || r.name;
   r.look = validLook({ color: pr.a?.[0], top: pr.a?.[1], face: pr.a?.[2] });
+  r.rank = Number.isInteger(pr.rk) ? pr.rk : -1;
   if (okVec(pr.p, 0)) { r.p = decU(pr.p); r.pAt = performance.now(); }
   if (isNum(pr.r)) r.r = Math.min(R + 400, Math.max(R - 60, pr.r / 100));
   if (okVec(pr.f, 0)) r.f = decF(pr.f);
@@ -511,6 +520,8 @@ export function hostRobotCompleted(cells) {
 function hostReadPeer(r, pr) {
   const s = game.s;
   const key = statKeyOf(r);
+  // klient chce snímek mapy prachu (4. 11.: připojení / nový pokus – dřív jen podle „přišel nový hráč“)
+  if (isNum(pr.sq) && pr.sq !== r.sq) { r.sq = pr.sq; scheduleSnapshot(); }
   // výdělky (součet od připojení)
   if (isNum(pr.e) && pr.e >= 0) {
     const before = host.ep[r.peer] || 0;
@@ -629,6 +640,7 @@ function hostRequest(kind, a, cost, r) {
     case 'beltdel': return removeBelt(String(a[0]));
     case 'rock': return breakRockHost(a[0] | 0);                         // řidič rozbil kámen (lunar / mega)
     case 'beltcut': return cutBelt(String(a[0]), a[1] | 0);              // [id pásu, úsek] – zbourat úsek od kloubu ke kloubu
+    case 'sinterup': return upgradeSinter(String(a[0]));             // vylepšení slinovny Rychlejší lis
     case 'brickmode': s.brickMode = a[0] === 'store' ? 'store' : 'sell'; return true;
     case 'drone': return buyDrone();
     case 'research': return startResearch(String(a[0]));
@@ -777,35 +789,27 @@ export async function joinWorld(w, onStatus) {
   setLobby({ scr: 'game', w: w.code });
   newGame('Multiplayer');
   loadPersonal();
+  mapAsk = Date.now() % 1e9; mapWanted = false; mapBusy = false;   // hostitel udělá snímek mapy hned (žádost sq)
   pushWorldPresence({ speed: 0, alt: 0, vr: 0, swept: 0, airborne: 0, toolWidth: 0.3, body: null }, 0);
 
   onStatus?.('Čekám na mapu od hostitele…');
   const t0 = Date.now();
   let H = null;
-  while (Date.now() - t0 < 20000) {
+  while (Date.now() - t0 < 45000) {                    // 4. 11.: dřív 20 s – velká mapa se u hostitele nestihla nahrát
     H = hostSummary();
     if (!H && Date.now() - t0 > 5000) return 'Hostitel světa už není online.';
     if (H && H.sv > joinSv) break;
+    if (Date.now() - t0 > 8000) onStatus?.(`Čekám na mapu od hostitele… ${Math.round((Date.now() - t0) / 1000)} s`);
     await new Promise(r => setTimeout(r, 250));
   }
   let snap = null;
   if (H && H.sv > joinSv && net.db) {
     onStatus?.('Stahuji mapu Měsíce…');
-    try {
-      const head = (await net.db.doc(`w/${w.code}/head`).get()).data();
-      if (head && head.sv >= H.sv) {
-        let b64 = '';
-        for (let i = 0; i < head.parts; i++) {
-          const part = (await net.db.doc(`w/${w.code}/parts/p${i}`).get()).data();
-          if (!part || part.sv !== head.sv) throw new Error('part');
-          b64 += part.d;
-        }
-        if (await unpackDust({ gz: !!head.gz, bytes: fromBase64(b64) })) snap = head;
-      }
-    } catch (e) {
-      console.warn('Snímek mapy se nepodařilo načíst', e);
-    }
+    snap = await fetchSnapshot(w.code, H.sv, false);
   }
+  mapSeenSv = H?.sv || joinSv;
+  mapWanted = !snap && !!net.db;                     // nepovedlo se → zkouší se dál během hry (mapRetry)
+  mapAskAt = Date.now();
   // tahy, které přišly během čekání a nejsou ve snímku
   const seqs = snap?.seqs || {};
   for (const r of net.remotes.values()) {
@@ -821,7 +825,52 @@ export async function joinWorld(w, onStatus) {
   return snap || !net.db ? null : 'nomap';
 }
 
+// Stáhne snímek mapy prachu (head + díly). Když ho mezitím hostitel přepíše novějším (díly mají jiné sv),
+// zkusí to znovu s novým (nejvýš 3×). merge = sloučit do hrané mapy (jinak použít na čerstvou). Vrací head nebo null.
+async function fetchSnapshot(code, minSv, merge) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const head = (await net.db.doc(`w/${code}/head`).get()).data();
+      if (!head || !(head.sv >= minSv) || !(head.parts > 0)) return null;
+      let b64 = '', stale = false;
+      for (let i = 0; i < head.parts; i++) {
+        const part = (await net.db.doc(`w/${code}/parts/p${i}`).get()).data();
+        if (!part || part.sv !== head.sv) { stale = true; break; }
+        b64 += part.d;
+      }
+      if (stale) { console.warn('Snímek mapy se během stahování změnil – znovu', attempt + 1); continue; }
+      if (await unpackDust({ gz: !!head.gz, bytes: fromBase64(b64) }, merge)) return head;
+      console.warn('Snímek mapy nejde použít (jiná velikost mapy?)');
+      return null;
+    } catch (e) {
+      console.warn('Snímek mapy se nepodařilo načíst', e);
+    }
+  }
+  return null;
+}
+
+// Klient bez mapy od hostitele (4. 11.): dřív zůstal Měsíc zasypaný až do odchodu. Teď se během hry zkouší dál –
+// každý nový snímek hostitele (H.sv) se stáhne a sloučí do hrané mapy; bez nového snímku se žádost sq zopakuje po 30 s.
+let mapAsk = 0, mapWanted = false, mapBusy = false, mapSeenSv = 0, mapAskAt = 0;
+function mapRetry() {
+  if (!mapWanted || mapBusy || net.mode !== 'client' || !net.db) return;
+  const H = hostSummary(), now = Date.now();
+  if (H && H.sv > mapSeenSv) {
+    mapBusy = true;
+    const sv = H.sv;
+    fetchSnapshot(net.code, sv, true).then(head => {
+      mapBusy = false;
+      mapSeenSv = sv;
+      if (head && net.mode === 'client') { mapWanted = false; net.onMapLoaded?.(); }
+    });
+  } else if (now - mapAskAt > 30000) {
+    mapAskAt = now;
+    mapAsk++;                                        // nová žádost o snímek (presence sq)
+  }
+}
+
 function watchHost() {
+  mapRetry();
   const H = hostFull();
   if (!H) return;
   if (H !== lastH && net.ready) applyHostState(H);

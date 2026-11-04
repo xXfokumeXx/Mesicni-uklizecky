@@ -27,7 +27,7 @@ import { HAMMER, GARAGE_SLOTS, fleetCapacity, freeSlots, garages, garageName, is
 import { live, netInfo, vehicleOnSlot, networks, slotRate, swapperEta } from './energy.js';
 import { angleBetween } from './planet/vec.js';
 import { instantiate, isReady, preloadModels } from './assets/models.js';
-import { brickPrice, SINTER, beltAt } from './logistics.js';
+import { brickPrice, SINTER, beltAt, sinterTime, sinterUpPrice, upgradeSinter } from './logistics.js';
 import {
   TECH, TECH_MODEL, BRANCHES, techById, techState, researchOffer, startResearch, unqueueResearch, researchProgress, researchCenter, isDone, RESEARCH_POWER,
 } from './research.js';
@@ -491,23 +491,34 @@ function bricksItem() {
 }
 
 // ---------- slinovna (L-23, D-11) ----------
-const SINTER_TEXT = { work: 'pracuje', idle: 'čeká na prach', full: 'výstup ucpaný – napoj pás z výstupu', power: 'málo energie' };
+const SINTER_TEXT = { work: 'pracuje', idle: 'čeká na prach', full: 'výstup ucpaný – napoj pás z výstupu', power: 'málo energie – čeká na plných 15 ⚡/s' };
 function sinterTab() {
   const b = structureById(view.ctx);
   if (!b) return [];
   const d = b.data;
   const inBelt = beltAt([b.id, 'in']), outBelt = beltAt([b.id, 'out']);
+  const T = sinterTime(b), lv = b.lv | 0, up = sinterUpPrice(b), maxLv = SINTER.upPrices.length;
+  const pic = () => modelThumb('sinter');
   return [{
     key: 'sinter', name: 'Výroba', chip: [SINTER_TEXT[d.state || 'idle'].split(' –')[0].toUpperCase(), d.state === 'work' ? 'active' : 'store'], thumb: () => modelThumb('sinter'),
     detail: {
       eyebrow: 'Slinovna', title: `Slinovna · ${SINTER_TEXT[d.state || 'idle']}`,
-      desc: `Z ${SINTER.kgPerBrick} kg prachu vylisuje 1 regolitovou cihlu za ${SINTER.time} s (${Math.round(60 / SINTER.time)} cihel za minutu), při práci bere ${SINTER.power} ⚡/s. Prach přiveze pás do násypky vlevo, cihly odvádí pás z výstupu vpravo – nejlépe do Výkupu.`,
+      desc: `Z ${SINTER.kgPerBrick} kg prachu vylisuje 1 regolitovou cihlu za ${T} s (${Math.round(60 / T)} cihel za minutu), při práci bere ${SINTER.power} ⚡/s – jede jen na plný výkon, jinak čeká a energie nabíjí baterie. Bez prachu nebere nic. Prach přiveze pás do násypky vlevo, cihly odvádí pás z výstupu vpravo – nejlépe do Výkupu.`,
       stats: [
         ['Prach v násypce', `${fmtInt(Math.round(d.hopper || 0))} / ${SINTER.hopper} kg`],
         ['Cihly na výstupu', `${d.out | 0} / ${SINTER.outCap}`],
         ['Vstupní pás', inBelt ? 'připojený' : 'chybí'],
         ['Výstupní pás', outBelt ? 'připojený' : 'chybí'],
       ],
+    },
+  }, {
+    key: 'press', name: 'Rychlejší lis', chip: [lv ? `ÚROVEŇ ${lv} / ${maxLv}` : 'ZÁKLAD', lv ? 'owned' : 'store'], thumb: pic,
+    detail: {
+      eyebrow: 'Slinovna', title: 'Rychlejší lis',
+      desc: `Každá úroveň zkrátí lisování cihly o 1 s (${SINTER.time} → ${SINTER.time - 1} → ${SINTER.time - 2} s). Spotřeba při práci zůstává ${SINTER.power} ⚡/s, takže cihla stojí méně energie.`,
+      stats: [['Teď', `${T} s na cihlu · ${Math.round(60 / T)} cihel / min`], ['Další úroveň', up == null ? '–' : `${T - 1} s na cihlu · ${Math.round(60 / (T - 1))} cihel / min`]],
+      action: up == null ? { label: 'Nejvyšší úroveň', disabled: true }
+        : { label: game.s.money < up ? `Chybí peníze · ${money(up)}` : `Vylepšit · ${money(up)}`, disabled: game.s.money < up, run: () => purchase('sinterup', [b.id], up, () => upgradeSinter(b.id)) },
     },
   }];
 }

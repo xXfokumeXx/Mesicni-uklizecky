@@ -24,7 +24,12 @@ const R = MOON.radius;
 export const BAG = 5;                                    // kg prachu v pytli (4. 11.: dřív 25 kg)
 export const DEPOT = { cap: 5000, zone: 4.5 };
 export const BELT = { speed: 1.125, gap: 1, price: 15, maxLen: 300, maxSlope: Math.tan(25 * Math.PI / 180), emit: 1, deck: 0.55, snap: 5 };
-export const SINTER = { hopper: 500, kgPerBrick: 20, time: 6, power: 15, outCap: 50 };   // 4. 11.: 15 ⚡/s, 6 s na cihlu
+export const SINTER = { hopper: 500, kgPerBrick: 20, time: 6, power: 15, outCap: 50, upPrices: [10000, 20000], reserve: 30 };   // 4. 11.: 15 ⚡/s, 6 s na cihlu
+// 4. 11.: vylepšení „Rychlejší lis“ (b.lv 0–2) – každá úroveň −1 s na cihlu (6 / 5 / 4 s), energie dál 15 ⚡/s při práci
+export const sinterTime = b => SINTER.time - Math.max(0, Math.min(SINTER.upPrices.length, b?.lv | 0));
+// Most při křížení pásů (4. 11.): novější pás vede nad starším o lift m; plochý vršek ±flat m kolem křížení,
+// nájezdy ramp m na každou stranu (nejvýš ~21°). Křížení musí být aspoň minEnd m od konců nového pásu.
+export const BRIDGE = { lift: 1.0, flat: 1.5, ramp: 4, minEnd: 6, near: 1.1, maxRun: 5 };
 export const BRICK_PRICE = 80;
 // Cena cihly roste s burzovní cenou prachu ve Výkupu stejně jako prach (+6 % za úroveň), zaokrouhleno na celé $
 export const brickPrice = () => Math.round(BRICK_PRICE * (1 + MARKET.step * (game.s?.market | 0)));
@@ -182,16 +187,59 @@ export function checkPath(pts, skip = [], ignoreBelt = null) {
       if (B.solid.some(r => x > r[0] - 0.5 && x < r[1] + 0.5 && z > r[2] - 0.5 && z < r[3] + 0.5)) return { ok: false, reason: `Pás vede přes budovu (${B.name})`, len, price };
     }
   }
-  // jiné pásy: vzdálenost vzorků od jejich vzorků (křížení až ve 3.1)
+  // jiné pásy (4. 11.): napříč se křížit smí – nový pás přes starší přejede mostem (bridges = vzdálenosti křížení od začátku).
+  // Souběžně vedle sebe (blíž než 1,1 m na delším úseku) ani přes most / nájezd jiného pásu to nejde.
+  const dist = [0];
+  for (let i = 1; i < S.length; i++) dist.push(dist[i - 1] + angleBetween(S[i - 1].p, S[i].p) * R);
+  const bridges = [];
   for (const bl of game.s.belts || []) {
     if (bl.id === ignoreBelt) continue;
     const other = beltSamples(bl);
-    for (const smp of S) {
-      if (nearEnd(smp.p)) continue;
-      for (const o of other) if (angleBetween(o.p, smp.p) * R < 1.1) return { ok: false, reason: 'Pás by křížil jiný pás (křížení přijde ve 3.1)', len, price };
+    let run = null;
+    const close = () => {
+      if (!run) return null;
+      const r = run; run = null;
+      if (r.n > BRIDGE.maxRun) return 'Pás by vedl těsně podél jiného pásu – křížit jde jen napříč';
+      if (r.lifted) return 'Pás nejde křížit na mostě ani nájezdu jiného pásu';
+      const c = (dist[r.a] + dist[r.b]) / 2;
+      if (c < BRIDGE.minEnd || c > len - BRIDGE.minEnd) return `Křížení pásů musí být aspoň ${BRIDGE.minEnd} m od konců nového pásu (most potřebuje nájezd)`;
+      bridges.push(Math.round(c * 10) / 10);
+      return null;
+    };
+    for (let i = 0; i < S.length; i++) {
+      const smp = S[i];
+      let hit = null;
+      if (!nearEnd(smp.p)) for (const o of other) if (angleBetween(o.p, smp.p) * R < BRIDGE.near) { hit = o; break; }
+      if (hit) {
+        if (!run) run = { a: i, b: i, n: 0, lifted: false };
+        run.b = i; run.n++;
+        if ((hit.lift || 0) > 0.02 || hit.ramp) run.lifted = true;
+      } else {
+        const err = close();
+        if (err) return { ok: false, reason: err, len, price };
+      }
     }
+    const err = close();
+    if (err) return { ok: false, reason: err, len, price };
   }
-  return { ok: true, reason: '', len, price };
+  bridges.sort((a, b) => a - b);
+  return { ok: true, reason: '', len, price, bridges };
+}
+// Zvedne vzorky trasy nad křížením (mosty): s[i].h += lift, s[i].lift = 0–1. dist = vzdálenosti vzorků od začátku.
+export function liftSamples(s, bridges) {
+  if (!bridges?.length || !s.length) return s;
+  let d = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (i > 0) d += angleBetween(s[i - 1].p, s[i].p) * R;
+    let k = 0;
+    for (const c of bridges) {
+      const x = Math.abs(d - c);
+      const v = x <= BRIDGE.flat ? 1 : x >= BRIDGE.flat + BRIDGE.ramp ? 0 : (t => t * t * (3 - 2 * t))(1 - (x - BRIDGE.flat) / BRIDGE.ramp);
+      if (v > k) k = v;
+    }
+    if (k > 0) { s[i].h += BRIDGE.lift * k; s[i].lift = k; }
+  }
+  return s;
 }
 const sampleCache = new WeakMap();
 // Pás do Výkupu končí na rameni střechy (y = 5,5 m): posledních ~12 m stoupá rampou (deska, nožky i náklad to převezmou).
@@ -210,8 +258,10 @@ export function beltSamples(bl) {
         if (d >= L) break;
         const t = 1 - d / L;
         s[i].h += lift * t * t * (3 - 2 * t);
+        s[i].ramp = true;                                   // rampa k rameni Výkupu – přes ni se pás křížit nesmí
       }
     }
+    liftSamples(s, bl.br);                                  // mosty přes starší pásy (křížení)
     s.tv = terrainVersion();
     sampleCache.set(bl, s);
   }
@@ -250,7 +300,9 @@ export function addBelt(fromRef, toRef, bends) {
   if (!chk.ok || game.s.money < chk.price) return false;
   game.s.money -= chk.price;
   const id = newUid();
-  game.s.belts.push({ id, from: fromRef.slice(), to: toRef.slice(), pts, len: chk.len, goods: from.goods, items: [], wait: 0, paid: chk.price });
+  const bl = { id, from: fromRef.slice(), to: toRef.slice(), pts, len: chk.len, goods: from.goods, items: [], wait: 0, paid: chk.price };
+  if (chk.bridges?.length) bl.br = chk.bridges;
+  game.s.belts.push(bl);
   // navázání na volné konce pásů: předchozí pás předává do nového, nový do následujícího
   const A = beltOfRef(fromRef); if (A) A.to = [beltRef(id), 'start'];
   const B = beltOfRef(toRef); if (B) B.from = [beltRef(id), 'end'];
@@ -290,12 +342,16 @@ export function cutBelt(id, k) {
   if (keepB) {
     bId = newUid();
     const off = total - lenB;
-    s.belts.push({ id: bId, from: null, to: bl.to, pts: B, len: lenB, goods: bl.goods, items: bl.items.filter(o => o >= off).map(o => o - off), wait: 0, paid: share(lenB) });
+    const nb = { id: bId, from: null, to: bl.to, pts: B, len: lenB, goods: bl.goods, items: bl.items.filter(o => o >= off).map(o => o - off), wait: 0, paid: share(lenB) };
+    const brB = (bl.br || []).map(c => Math.round((c - off) * 10) / 10).filter(c => c > -BRIDGE.flat - BRIDGE.ramp);
+    if (brB.length) nb.br = brB;
+    s.belts.push(nb);
   }
   relink(id, bId, 'end');                           // pás za koncem teď krmí zbytek B (nebo má volný začátek)
   if (keepA) {
     bl.pts = A; bl.len = lenA; bl.to = null; bl.paid = share(lenA);
     bl.items = bl.items.filter(o => o <= lenA);
+    if (bl.br) { bl.br = bl.br.filter(c => c < lenA + BRIDGE.flat + BRIDGE.ramp); if (!bl.br.length) delete bl.br; }
     sampleCache.delete(bl);
   } else {
     s.belts.splice(s.belts.indexOf(bl), 1);
@@ -378,6 +434,7 @@ function deliver(ref, goods) {
     return true;
   }
   if (ref[0] === 'buyback') {
+    if (game.mode === 'client') return true;               // klient: jen zobrazení – peníze a cihly počítá hostitel
     if (goods === 'dust') { const e = BAG * dustPrice(); s.money += e; logEarn(e); }
     else if (s.brickMode === 'store') s.bricks = (s.bricks | 0) + 1;
     else { const e = brickPrice(); s.money += e; logEarn(e); }
@@ -435,20 +492,34 @@ let earnLog = 0;
 const logEarn = e => { earnLog += e; };
 export const takeBeltEarnings = () => { const e = earnLog; earnLog = 0; return e; };
 
-// Slinovna: 20 kg → 1 cihla za 6 s při plném výkonu (f = podíl energie 0–1)
+// Slinovna: 20 kg → 1 cihla za 6 s (vylepšení 5 / 4 s) při plném výkonu (f = podíl energie 0–1).
+// f < 0 = slinovna při poslední bilanci sítě nic nechtěla (neměla prach) – energii dostane až v další bilanci (≤ 0,5 s),
+// do té doby stojí (dřív jela zadarmo s f = 1).
 function sinterStep(b, dt, f) {
   const d = b.data;
   d.hopper = d.hopper || 0; d.out = d.out || 0; d.t = d.t || 0;
   const can = d.hopper >= SINTER.kgPerBrick && d.out < SINTER.outCap;
   if (!can) { d.state = d.out >= SINTER.outCap ? 'full' : 'idle'; return; }
+  if (f < 0) return;
   if (f <= 0.01) { d.state = 'power'; return; }
   d.state = 'work';
   d.t += dt * f;
-  if (d.t >= SINTER.time) {
-    d.t -= SINTER.time;
+  const T = sinterTime(b);
+  if (d.t >= T) {
+    d.t -= T;
     d.hopper -= SINTER.kgPerBrick;
     d.out += 1;
   }
+}
+// Vylepšení slinovny „Rychlejší lis“ (hostitel / hráč sám): cena další úrovně, nebo null (nejvyšší úroveň)
+export const sinterUpPrice = b => SINTER.upPrices[b?.lv | 0] ?? null;
+export function upgradeSinter(id) {
+  const b = structureById(id), price = sinterUpPrice(b);
+  if (b?.type !== 'sinter' || price == null || game.s.money < price) return false;
+  game.s.money -= price;
+  b.lv = (b.lv | 0) + 1;
+  b.paid = (b.paid || 0) + price;                          // bourání vrátí 60 % i z vylepšení
+  return true;
 }
 export const sinterWants = b => (b.data.hopper || 0) >= SINTER.kgPerBrick && (b.data.out || 0) < SINTER.outCap;
 
@@ -472,7 +543,7 @@ function beltStep(bl, dt) {
 }
 
 let acc = 0;
-export const tickPhase = () => (game.mode === 'client' ? 0 : Math.min(acc, TICK));   // s od posledního kroku (plynulé zobrazení)
+export const tickPhase = () => Math.min(acc, TICK);   // s od posledního kroku (plynulé zobrazení)
 export function logisticsTick(dt) {
   acc += dt;
   let n = 0;
@@ -481,7 +552,7 @@ export function logisticsTick(dt) {
     for (const b of game.s.buildings || []) {
       if (b.type !== 'sinter') continue;
       const L = live.get(b.id);
-      sinterStep(b, TICK, L?.wired ? L.f ?? 0 : 0);
+      sinterStep(b, TICK, !L?.wired ? 0 : L.pend ? -1 : L.f ?? 0);
     }
     for (const bl of game.s.belts || []) beltStep(bl, TICK);
   }
@@ -501,20 +572,24 @@ export function logisticsOffline(seconds) {
 // ---------- síť (H.bl = pásy, H.lg = živý stav) ----------
 
 const enc = p => [Math.round(p[0] * 1e6), Math.round(p[1] * 1e6), Math.round(p[2] * 1e6)];
-export const encodeBelts = () => (game.s.belts || []).map(b => [b.id, b.from?.[0] || '', b.from?.[1] || '', b.to?.[0] || '', b.to?.[1] || '', b.goods === 'brick' ? 1 : 0, Math.round(b.paid || 0), ...b.pts.flatMap(enc)]);
+// [id, z, zZás, do, doZás, cihly?, cena, mosty („12.5,40.1“ nebo ''), body ×3 (1e6)…]
+export const encodeBelts = () => (game.s.belts || []).map(b => [b.id, b.from?.[0] || '', b.from?.[1] || '', b.to?.[0] || '', b.to?.[1] || '', b.goods === 'brick' ? 1 : 0, Math.round(b.paid || 0), (b.br || []).join(','), ...b.pts.flatMap(enc)]);
 const refOf = (a, b) => (a ? [String(a), String(b)] : null);
+const brOf = v => String(v || '').split(',').filter(x => x !== '').map(Number).filter(Number.isFinite);
 export function applyBelts(list) {
   const old = new Map((game.s.belts || []).map(b => [b.id, b]));
-  game.s.belts = (Array.isArray(list) ? list : []).filter(e => Array.isArray(e) && e.length >= 13).map(e => {
+  game.s.belts = (Array.isArray(list) ? list : []).filter(e => Array.isArray(e) && e.length >= 14).map(e => {
     const prev = old.get(String(e[0]));
     const pts = [];
-    for (let i = 7; i + 2 < e.length; i += 3) pts.push(norm([e[i] / 1e6, e[i + 1] / 1e6, e[i + 2] / 1e6]));
-    const from = refOf(e[1], e[2]), to = refOf(e[3], e[4]), goods = e[5] ? 'brick' : 'dust';
-    if (prev && prev.pts.length === pts.length && pts.every((q, i) => angleBetween(q, prev.pts[i]) * R < 0.01)) {
+    for (let i = 8; i + 2 < e.length; i += 3) pts.push(norm([e[i] / 1e6, e[i + 1] / 1e6, e[i + 2] / 1e6]));
+    const from = refOf(e[1], e[2]), to = refOf(e[3], e[4]), goods = e[5] ? 'brick' : 'dust', br = brOf(e[7]);
+    if (prev && prev.pts.length === pts.length && (prev.br || []).join(',') === br.join(',') && pts.every((q, i) => angleBetween(q, prev.pts[i]) * R < 0.01)) {
       Object.assign(prev, { from, to, goods, paid: e[6] | 0 });      // trasa beze změny – nech položky a vzorky
       return prev;
     }
-    return { id: String(e[0]), from, to, goods, paid: e[6] | 0, pts, len: pathLength(pts), items: [], wait: 0 };
+    const bl = { id: String(e[0]), from, to, goods, paid: e[6] | 0, pts, len: pathLength(pts), items: [], wait: 0 };
+    if (br.length) bl.br = br;
+    return bl;
   });
 }
 // Živý stav: depa (sklad), slinovny (zásobník, cihly, stav), položky pásů (offsety v dm jako base36 po 3 znacích), ucpané pásy
@@ -548,15 +623,17 @@ export function applyLogistics(L) {
   s.bricks = L.bk | 0;
   s.brickMode = L.bm ? 'store' : 'sell';
 }
-// Klient: položky se mezi pakety posouvají samy (bez vypouštění a doručení – to přijde v dalším paketu)
+// Klient (4. 11.): mezi pakety hostitele (1× za 2 s) simuluje pásy stejně jako hostitel – vypouštění z dep / slinoven,
+// předávání na navazující pásy a přes rozdělovače / spojovače, doručení. Peníze a cihly ve Výkupu nepočítá (deliver),
+// slinovny nelisuje (stav a cihly na výstupu má z paketu). Každý paket stav opraví (applyLogistics).
+// Dřív se pytle jen posouvaly k cíli a čekaly tam na paket → u spojovačů, rozdělovačů a navázaných pásů náklad
+// „stál“ a pak naráz přeskočil.
 export function logisticsClientTick(dt) {
-  for (const bl of game.s.belts || []) {
-    if (bl.clog) continue;
-    const it = bl.items, v = beltSpeed() * dt;
-    for (let i = 0; i < it.length; i++) {
-      const limit = i === 0 ? bl.len : it[i - 1] - BELT.gap;
-      if (it[i] < limit) it[i] = Math.min(it[i] + v, limit);
-    }
+  acc += dt;
+  let n = 0;
+  while (acc >= TICK && n++ < 20) {
+    acc -= TICK;
+    for (const bl of game.s.belts || []) beltStep(bl, TICK);
   }
 }
 

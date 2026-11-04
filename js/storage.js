@@ -4,7 +4,7 @@
 // takže ho gzip v prohlížeči (CompressionStream) zmenší na desítky až stovky kB.
 import { SAVE_KEY, PLANET } from './config.js';
 import { game, newGame, newUid, pickPersonal, migrateState, canLoadVersion, SAVE_VERSION } from './state.js';
-import { hexes, dustDiff, applyDustDiff } from './planet/dustmap.js';
+import { hexes, dustDiff, applyDustDiff, mergeDustDiff } from './planet/dustmap.js';
 import { VEHICLES, STATION } from './catalog.js';
 import { legacyGarages, homeSpot } from './structures.js';    // (zároveň registruje převod v2 → v3, MIGRATE[2])
 import { tangentTo } from './planet/vec.js';
@@ -37,9 +37,9 @@ export async function packDust() {
   return { gz: true, bytes: await pipe(diff, new CompressionStream('gzip')) };
 }
 
-export async function unpackDust({ gz, bytes }) {
+export async function unpackDust({ gz, bytes }, merge = false) {
   const diff = gz ? await pipe(bytes, new DecompressionStream('gzip')) : bytes;
-  return applyDustDiff(diff);
+  return merge ? mergeDustDiff(diff) : applyDustDiff(diff);
 }
 
 // ---------- IndexedDB (s náhradou) ----------

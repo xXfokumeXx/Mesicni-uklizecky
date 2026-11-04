@@ -9,6 +9,7 @@ export const profile = {
   look: { ...DEFAULT_LOOK },
   ach: {},                 // id úspěchu → kdy byl získán (ms)
   achStats: {},            // postup k úspěchům: tb = kg zubním kartáčkem, hex = dočištěné hexy, earn = vydělané $
+  rank: null,              // poslední oznámená hodnost (ranks.js, index 0–19); null = ještě nezjištěná (oznámení se nespustí)
 };
 
 const clean = s => String(s || '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, '').trim();
@@ -34,6 +35,7 @@ export function loadProfile() {
       const obj = o => (o && typeof o === 'object' && !Array.isArray(o) ? o : {});
       profile.ach = Object.fromEntries(Object.entries(obj(p.ach)).filter(([, t]) => Number.isFinite(t)));
       profile.achStats = Object.fromEntries(Object.entries(obj(p.achStats)).filter(([, v]) => Number.isFinite(v)));
+      profile.rank = Number.isInteger(p.rank) ? p.rank : null;
     }
   } catch { /* poškozené nebo nedostupné úložiště */ }
   if (!profile.name) profile.name = `Zametač-${Math.floor(100 + Math.random() * 900)}`;
