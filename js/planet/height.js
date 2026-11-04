@@ -24,7 +24,7 @@ const CRATERS = [];
     const roll = rand();
     const radius = roll < 0.06 ? 38 + rand() * 34 : roll < 0.3 ? 13 + rand() * 18 : 3.5 + rand() * 7;
     const kind = radius > 36 ? 2 : radius > 12 ? 1 : 0;
-    if (angleBetween(c, BASE.dir) * R < radius * 1.6 + BASE.flat + 12) continue;   // základnu nechat v rovině
+    if (angleBetween(c, BASE.dir) * R < radius * 1.6 + BASE.craterFree + 12) continue;   // základnu nechat v rovině (34 m jako ve v2)
     const depth = kind === 2 ? Math.min(17, radius * 0.24) : radius * 0.3;
     CRATERS.push({ c, radius, kind, depth, cosMax: Math.cos(radius * 2.3 / R) });
   }
@@ -61,7 +61,41 @@ function duneProfile(ph) {
 
 const OFF = PLANET.noise;                           // jiná planeta = jiný výřez šumu
 
+// ---------- srovnaný terén pod stavbami (4. 11.) ----------
+// Plocha = { c: střed (jednotkový směr), X, Z: místní osy stavby, rect: [x0, x1, z0, z1] (m), level: výška plochy (m),
+// margin: šířka přechodu do okolního terénu (m), cos: kosinus dosahu (rychlé vyřazení) }. Uvnitř obdélníku je terén
+// přesně v úrovni level, za ním plynule přechází zpět (smoothstep přes margin). Plochy počítá structures.js
+// ze staveb (stejně u hostitele i klientů), terén / stavby / pásy se po změně přestaví podle terrainVersion.
+let PATCHES = [];
+let version = 0;
+const changes = [];                                   // [{ c, ang }] – kde se terén změnil (pro přestavbu kusů terénu)
+export const terrainVersion = () => version;
+export const takeTerrainChanges = () => changes.splice(0);
+export function setTerrainPatches(list, changed = []) {
+  PATCHES = list;
+  version++;
+  changes.push(...changed);
+}
+
 export function heightAt(d) {
+  let h = rawHeightAt(d);
+  for (let i = 0; i < PATCHES.length; i++) {
+    const P = PATCHES[i];
+    const cd = d[0] * P.c[0] + d[1] * P.c[1] + d[2] * P.c[2];
+    if (cd < P.cos) continue;
+    const ex = d[0] - P.c[0], ey = d[1] - P.c[1], ez = d[2] - P.c[2];
+    const lx = (ex * P.X[0] + ey * P.X[1] + ez * P.X[2]) * R, lz = (ex * P.Z[0] + ey * P.Z[1] + ez * P.Z[2]) * R;
+    const ox = Math.max(P.rect[0] - lx, 0, lx - P.rect[1]), oz = Math.max(P.rect[2] - lz, 0, lz - P.rect[3]);
+    const dist = Math.hypot(ox, oz);
+    if (dist >= P.margin) continue;
+    const t = 1 - dist / P.margin;
+    h += (P.level - h) * t * t * (3 - 2 * t);
+  }
+  return h;
+}
+
+// Původní terén (bez srovnaných ploch) – z něj se počítá výška plochy pod novou stavbou.
+export function rawHeightAt(d) {
   const x = d[0] * R + OFF, y = d[1] * R, z = d[2] * R - OFF;
 
   // velké vlny terénu (pánve a vysočiny)

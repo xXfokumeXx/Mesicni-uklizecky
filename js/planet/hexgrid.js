@@ -152,4 +152,10 @@ export function dirToCell(d) {
   return hexAtParam(f, tmp[0], tmp[1]);
 }
 
-export const cellDir = c => [grid.dirs[c * 3], grid.dirs[c * 3 + 1], grid.dirs[c * 3 + 2]];
+// Normalizovaný v plné přesnosti: Float32 směr má délku 1 ± 1e-7 a angleBetween() by pro totožné body
+// hlásil až ~0,1 m – robot nové stanice pak „nedojel“ domů (práh 5 cm) a stál (chyba už ve 2.4.2).
+export const cellDir = c => {
+  const x = grid.dirs[c * 3], y = grid.dirs[c * 3 + 1], z = grid.dirs[c * 3 + 2];
+  const l = Math.hypot(x, y, z) || 1;
+  return [x / l, y / l, z / l];
+};

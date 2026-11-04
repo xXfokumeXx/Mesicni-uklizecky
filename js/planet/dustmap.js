@@ -4,7 +4,8 @@
 // Nad tím hexové sektory: hex je hotový, když v něm zbývá ≤ 1 % původního prachu.
 import { MOON, DUST, BASE, HEX_DONE_LEFT } from '../config.js';
 import { FACES, EDGE, faceOf, planar } from './icosa.js';
-import { grid, hexAtParam } from './hexgrid.js';
+import { grid, hexAtParam, dirToCell } from './hexgrid.js';
+import { baseCleanCells } from '../base.js';
 import { mulberry32 } from './noise.js';
 import { tangentTo, anyTangent, cross, angleBetween } from './vec.js';
 
@@ -40,6 +41,18 @@ export function texelOf(f, s, t) {
   const xi = Math.min(S - 1, Math.max(0, Math.floor(x)));
   const yi = Math.min(S - 1, Math.max(0, Math.floor(y)));
   return ((q / SQX | 0) * S + yi) * W + (q % SQX) * S + xi;
+}
+
+// Prach v bodě d bez alokací (asistent hrany L-41): out[0] = hodnota, out[1] = hex, out[2] = index bodu mapy.
+const ptmp = [0, 0];
+export function probeDust(d, out) {
+  const f = faceOf(d);
+  planar(d, f, ptmp);
+  const i = texelOf(f, ptmp[0], ptmp[1]);
+  out[0] = dust ? dust[i] : 0;
+  out[1] = hexAtParam(f, ptmp[0], ptmp[1]);
+  out[2] = i;
+  return out;
 }
 
 // UV atlasu pro bod (s, t) stěny f (pro vrcholy terénu).
@@ -101,16 +114,11 @@ export function generateDust() {
   const rand = mulberry32(42);
   const density = new Float32Array(grid.cells);
   for (let c = 0; c < grid.cells; c++) density[c] = 0.7 + rand() * 0.6;
-  const cosDepot = Math.cos(BASE.clean / R);
-  const [ex, ey, ez] = BASE.dir;
+  const clean = baseCleanCells(dirToCell);          // jen hexy pod Výkupem, Dílnou a Obchodem (bez prachu, mimo úklid)
 
   forEachTexel((i, f, s, t) => {
-    const P = FACES[f];
-    const x = P.A[0] + P.e1[0] * s + P.e2[0] * t;
-    const y = P.A[1] + P.e1[1] * s + P.e2[1] * t;
-    const z = P.A[2] + P.e1[2] * s + P.e2[2] * t;
-    if ((x * ex + y * ey + z * ez) / Math.hypot(x, y, z) > cosDepot) return;   // základna je čistá
     const c = hexAtParam(f, s, t);
+    if (clean.has(c)) return;
     const gx = s * S, gy = t * S;                                  // souřadnice v bodech mapy
     const patch = tnoise(gx * 0.05 + f * 31, gy * 0.05);           // skvrny ~6 m
     const broad = tnoise(gx * 0.013 + f * 17 + 100, gy * 0.013);   // oblasti ~25 m
@@ -316,11 +324,17 @@ function finishHex(c) {
 }
 
 // Úplně vyčistí jeden hex (offline práce robotů). Vrací { got, completed }.
-export function clearHex(c) {
-  let got = 0;
-  forEachTexelInHex(c, i => { got += dust[i]; dust[i] = 0; });
-  hexes.left[c] = 0;
-  const completed = !hexes.done[c] && !!hexes.init[c];
+// keep = Set bodů mapy, které zůstanou (prach pod kameny – offline roboti, rocks.js rockTexels).
+export function clearHex(c, keep = null) {
+  let got = 0, left = 0;
+  const kept = keep ? new Set() : null;
+  forEachTexelInHex(c, i => {
+    if (kept && keep.has(i)) { if (!kept.has(i)) { kept.add(i); left += dust[i]; } return; }
+    got += dust[i];
+    dust[i] = 0;
+  });
+  hexes.left[c] = left;
+  const completed = !hexes.done[c] && !!hexes.init[c] && left <= hexes.init[c] * HEX_DONE_LEFT;
   if (completed) {
     hexes.done[c] = 1;
     hexes.doneCount++;
