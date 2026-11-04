@@ -15,7 +15,7 @@
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/base.css">
 <link rel="stylesheet" href="css/viewport.css">
@@ -37,10 +37,13 @@
 <link rel="stylesheet" href="css/float.css">
 <link rel="stylesheet" href="css/toast.css">
 <link rel="stylesheet" href="css/menu.css">
+<link rel="stylesheet" href="css/lobby.css">
 <link rel="stylesheet" href="css/multiplayer.css">
 <link rel="stylesheet" href="css/wardrobe.css">
 <link rel="stylesheet" href="css/hotbar.css">
 <link rel="stylesheet" href="css/exchange.css">
+<link rel="stylesheet" href="css/build.css">
+<link rel="stylesheet" href="css/research.css">
 </head>
 <body>
 <canvas class="viewport" id="scene-canvas" aria-label="Měsíční povrch"></canvas>
@@ -50,6 +53,10 @@
     <div class="stats__money">
       <span class="stats__label">Peníze</span>
       <span class="stats__money-value" id="stat-money">$0</span>
+    </div>
+    <div class="stats__row" id="row-bricks" hidden>
+      <span class="stats__label">Cihly</span>
+      <span class="stats__value" id="stat-bricks">0</span>
     </div>
     <div class="stats__row">
       <span class="stats__label">Zásobník</span>
@@ -61,6 +68,18 @@
       <span class="stats__value" id="stat-here">0 %</span>
       <div class="meter"><div class="meter__fill meter__fill--progress" id="meter-here"></div></div>
     </div>
+    <div class="stats__row" id="row-battery" hidden>
+      <span class="stats__label">Baterie</span>
+      <span class="stats__value" id="stat-battery">100 %</span>
+      <div class="batt" id="battery-icon" aria-hidden="true">
+        <div class="batt__body"><span class="batt__cell"></span><span class="batt__cell"></span><span class="batt__cell"></span><span class="batt__cell"></span><span class="batt__cell"></span><span class="batt__bolt">⚡</span></div>
+        <span class="batt__nub"></span>
+      </div>
+    </div>
+    <div class="stats__row" id="row-auto" hidden>
+      <span class="stats__label">Autopilot · C</span>
+      <span class="stats__value" id="stat-auto">Autocruise · 50 %</span>
+    </div>
     <div class="stats__row" id="row-boost" hidden>
       <span class="stats__label">Boost · Shift</span>
       <span class="stats__value" id="stat-boost">100 %</span>
@@ -71,11 +90,22 @@
   <!-- navigace k základně: 3D šipka kreslí scene/compass.js, tady jen vzdálenost pod ní -->
   <p class="base-nav hud__nav" id="base-nav" hidden><span class="base-nav__label">Základna</span> <span class="base-nav__dist" id="stat-base">0 m</span></p>
 
-  <section class="panel players hud__players" id="players" aria-label="Hráči ve světě" hidden>
-    <p class="panel__eyebrow players__code" id="players-code"></p>
-    <ul class="players__list" id="players-list"></ul>
-    <button class="button players__invite" id="players-invite" type="button">Pozvat · kopírovat odkaz</button>
-  </section>
+  <!-- pravý sloupec: hráči (multiplayer) a pod nimi energie celé soustavy -->
+  <div class="hud__right">
+    <section class="panel players hud__players" id="players" aria-label="Hráči ve světě" hidden>
+      <p class="panel__eyebrow players__code" id="players-code"></p>
+      <ul class="players__list" id="players-list"></ul>
+      <button class="button players__invite" id="players-invite" type="button">Pozvat · kopírovat odkaz</button>
+    </section>
+    <!-- energie celé soustavy: výroba (In) a spotřeba (Out), obnova 1× za 2 s (ui.js) -->
+    <section class="panel power hud__power" id="power" aria-label="Energie celé sítě" hidden>
+      <span class="power__icon" aria-hidden="true">⚡</span>
+      <span class="power__label">In</span><span class="power__value power__value--in" id="power-in">0</span>
+      <span class="power__label">Out</span><span class="power__value power__value--out" id="power-out">0</span>
+      <span class="power__label">±</span><span class="power__value" id="power-diff">0</span>
+      <span class="power__label">Bat</span><span class="power__value power__value--store" id="power-store">0</span>
+    </section>
+  </div>
 
   <section class="chat hud__chat" id="chat" aria-label="Chat" hidden>
     <ul class="chat__log" id="chat-log" aria-live="polite"></ul>
@@ -98,6 +128,12 @@
   </button>
 
   <div class="hotbar hud__hotbar" id="hotbar" role="toolbar" aria-label="Hotbar"></div>
+
+  <!-- 3.0: stavění kladivem (D-08) -->
+  <div class="buildbar" id="buildbar" hidden></div>
+  <div class="build-hud" id="build-hud" hidden></div>
+  <div class="build-hold" id="build-hold" hidden></div>
+  <div class="struct-label" id="struct-label" hidden></div>
 
   <div class="controls hud__controls">
     <div class="controls__group" role="group" aria-label="Kamera">
@@ -290,7 +326,8 @@
           <dt><kbd>Mezerník</kbd></dt><dd>skok, ve vzduchu jetpack</dd>
           <dt><kbd>Shift</kbd></dt><dd>boost přepravníku</dd>
           <dt><kbd>E</kbd></dt><dd>akce: budovy, Výkup (hologram, burza, statistiky), vozidla, stavby, raketa</dd>
-          <dt><kbd>1</kbd>–<kbd>3</kbd></dt><dd>políčko hotbaru · <kbd>X</kbd> = vyprázdnit políčko</dd>
+          <dt><kbd>1</kbd>–<kbd>3</kbd></dt><dd>políčko hotbaru · <kbd>X</kbd> = vyprázdnit políčko (s kladivem = bourání)</dd>
+          <dt><kbd>Q</kbd></dt><dd>kladivo do ruky / odložit · <kbd>V</kbd> = stavební menu · <kbd>R</kbd> + kolečko nebo <kbd>,</kbd> <kbd>.</kbd> = otočit stavbu (<kbd>Shift</kbd> po 15°)</dd>
           <dt><kbd>R</kbd> · <kbd>G</kbd></dt><dd>jiný cíl pásu z depa · přesunout depo</dd>
           <dt><kbd>L</kbd></dt><dd>světla vozidla a čelovka zapnout / vypnout</dd>
           <dt><kbd>M</kbd></dt><dd>pohled: ptačí perspektiva (hraješ dál) → celá planeta (WSAD / šipky otáčí, Q / E přibližuje, klik = jdi tam) → zpátky za postavu</dd>
@@ -309,74 +346,57 @@
 </div>
 
 <div class="menu" id="menu" hidden>
-  <div class="menu__sky" aria-hidden="true"><div class="menu__moon"></div></div>
-  <div class="menu__inner">
+  <!-- úvodní obrazovka a založení světa: hvězdy + low-poly Měsíc vpravo (návrh docs/lobby, 4. 11.) -->
+  <div class="menu__sky" aria-hidden="true"><img class="menu__moon-img" src="assets/lobby/moon.png" alt=""></div>
+  <div class="menu__inner" id="menu-inner">
     <header class="menu__brand">
-      <p class="menu__eyebrow">Měsíční úklidová služba · verze 2</p>
-      <h1 class="menu__title">Měsíční zametačky</h1>
+      <p class="menu__eyebrow">Měsíční úklidová služba · verze 3</p>
+      <h1 class="menu__title">Měsíční <span class="menu__title-line">zametačky</span></h1>
+      <div class="menu__haz" aria-hidden="true"></div>
       <p class="menu__moon-status" id="menu-moon">Připravuji Měsíc…</p>
     </header>
 
-    <section class="menu__panel" id="menu-home">
-      <div class="menu__profile">
-        <span class="menu__avatar" id="menu-avatar" aria-hidden="true"></span>
-        <label class="field menu__name-field">
-          <span class="field__label">Tvé jméno ve hře</span>
-          <input class="field__input" id="menu-name" type="text" maxlength="16" autocomplete="off">
-        </label>
-      </div>
-      <div class="menu__choices">
-        <button class="menu__choice" id="menu-sp" type="button">
-          <span class="menu__choice-title">Hrát sám</span>
-          <span class="menu__choice-text">Singleplayer · 5 slotů pro uložené hry</span>
-        </button>
-        <button class="menu__choice" id="menu-mp" type="button">
-          <span class="menu__choice-title">Hrát s ostatními</span>
-          <span class="menu__choice-text">Multiplayer · lobby, společné peníze, chat</span>
-        </button>
-      </div>
-      <button class="button" id="menu-gfx" type="button">Nastavení grafiky</button>
-    </section>
+    <div class="menu__home" id="menu-home">
+      <section class="menu__card" aria-label="Tvůj zametač">
+        <div class="menu__portrait"><img class="menu__portrait-img" id="menu-avatar" alt="Tvůj astronaut"></div>
+        <div class="menu__who">
+          <label class="menu__label" for="menu-name">Tvé jméno ve hře</label>
+          <input class="field__input menu__name" id="menu-name" type="text" maxlength="16" autocomplete="off">
+          <p class="menu__outfit"><span id="menu-outfit">Výchozí skafandr</span><button class="menu__link" id="menu-wardrobe-open" type="button">Změnit oblečení</button></p>
+        </div>
+        <div class="menu__choices">
+          <button class="menu__choice" id="menu-sp" type="button">
+            <span class="menu__choice-title">Hrát sám</span>
+            <span class="menu__choice-text">5 slotů pro uložené hry</span>
+          </button>
+          <button class="menu__choice" id="menu-mp" type="button">
+            <span class="menu__choice-title">Hrát s ostatními</span>
+            <span class="menu__choice-text">Lobby, společné peníze, chat</span>
+          </button>
+        </div>
+      </section>
+      <button class="menu__link menu__gfx" id="menu-gfx" type="button">Nastavení grafiky</button>
+    </div>
 
     <section class="menu__panel" id="menu-slots" hidden>
       <div class="menu__panel-head">
         <button class="button" type="button" data-menu-back>← Zpět</button>
         <h2 class="menu__panel-title" id="slots-title">Hrát sám</h2>
       </div>
-      <p class="field__hint" id="slots-hint"></p>
-      <label class="slot__v1" id="slots-public-row" hidden><input type="checkbox" id="slots-public" checked> Ukázat svět v seznamu lobby (jinak se připojí jen ten, kdo zná kód)</label>
+      <p class="menu__panel-text" id="slots-hint"></p>
+      <label class="slot__v1 menu__check" id="slots-public-row" hidden><input type="checkbox" id="slots-public" checked> Ukázat svět v seznamu lobby, jinak se připojí jen ten, kdo zná kód</label>
       <ul class="slot-list" id="slot-list"></ul>
     </section>
 
-    <section class="menu__panel menu__panel--wide" id="menu-lobby" hidden>
+    <section class="menu__panel menu__panel--wardrobe" id="menu-wardrobe" hidden>
       <div class="menu__panel-head">
-        <button class="button" type="button" data-menu-back>← Zpět</button>
-        <h2 class="menu__panel-title">Lobby</h2>
+        <button class="button" type="button" id="wardrobe-back">← Zpět</button>
+        <h2 class="menu__panel-title">Změnit oblečení</h2>
       </div>
-      <p class="lobby__status" id="lobby-status">Připojuji…</p>
-      <div class="lobby">
-        <div class="lobby__col">
-          <h3 class="lobby__heading">Online teď <span class="lobby__count" id="lobby-count">0</span></h3>
-          <ul class="lobby__list" id="lobby-people"></ul>
-        </div>
-        <div class="lobby__col">
-          <h3 class="lobby__heading">Připojit kódem</h3>
-          <form class="lobby__code" id="lobby-code-form" autocomplete="off">
-            <input class="field__input lobby__code-input" id="lobby-code" type="text" maxlength="12" placeholder="např. k3x9p" aria-label="Kód světa" spellcheck="false">
-            <button class="button button--primary" type="submit">Připojit</button>
-          </form>
-          <p class="lobby__code-error" id="lobby-code-error" hidden></p>
-          <form class="lobby__code" id="lobby-pass-form" autocomplete="off" hidden>
-            <input class="field__input lobby__code-input" id="lobby-pass" type="password" maxlength="40" placeholder="Heslo světa" aria-label="Heslo světa">
-            <button class="button button--primary" type="submit">Vstoupit</button>
-          </form>
-          <button class="button" id="lobby-cloud" type="button" hidden>Otevřít svět – budu hostitel</button>
-          <h3 class="lobby__heading">Otevřené světy</h3>
-          <ul class="lobby__list" id="lobby-worlds"></ul>
-          <button class="button button--primary" id="lobby-host" type="button">Založit vlastní svět</button>
-        </div>
+      <div class="menu-wardrobe">
+        <div class="menu-wardrobe__stage" id="menu-wardrobe-stage"></div>
+        <div class="menu-wardrobe__pick" id="menu-wardrobe-pick"></div>
       </div>
-      <p class="field__hint">Založ svět a pošli kamarádům odkaz nebo kód (najdeš ho v menu pauzy). Svět se ukládá i do cloudu: když hostitel odejde, převezme ho další hráč, a když nikdo nehostuje, může ho otevřít kdokoli z party (s heslem, pokud ho svět má).</p>
     </section>
 
     <section class="menu__panel" id="menu-loading" hidden>
@@ -384,6 +404,57 @@
       <button class="button" id="menu-loading-back" type="button" hidden>Zpět do menu</button>
     </section>
   </div>
+
+  <!-- lobby: plošina s hráči (nejvýš 6, vlastní uprostřed), vpravo světy, dole počet online -->
+  <section class="lobby-screen" id="menu-lobby" hidden aria-label="Lobby">
+    <div class="lobby-stage" aria-hidden="true">
+      <img class="lobby-stage__bg" id="lobby-bg" src="assets/lobby/stage-1.png" alt="">
+      <div class="lobby-stage__layer" id="lobby-platforms"></div>
+    </div>
+    <header class="lobby-head">
+      <button class="lobby-btn" type="button" data-menu-back>← Zpět</button>
+      <div>
+        <h1 class="lobby-head__title">Měsíční zametačky</h1>
+        <div class="menu__haz menu__haz--small" aria-hidden="true"></div>
+      </div>
+    </header>
+    <div class="lobby-bar">
+      <div>
+        <p class="lobby-lab">Online teď</p>
+        <p class="lobby-bar__count" id="lobby-count">0</p>
+      </div>
+      <div class="lobby-bar__sep" aria-hidden="true"></div>
+      <p class="lobby-bar__status" id="lobby-status">Připojuji…</p>
+      <button class="lobby-btn lobby-btn--ghost" id="lobby-more" type="button" hidden aria-expanded="false">Zobrazit další</button>
+      <button class="lobby-btn lobby-btn--primary" id="lobby-wardrobe" type="button">Změnit oblečení</button>
+    </div>
+    <div class="lobby-people" id="lobby-people-box" hidden>
+      <p class="lobby-lab">Všichni online</p>
+      <ul class="lobby-people__list" id="lobby-people"></ul>
+    </div>
+    <aside class="lobby-side">
+      <h2 class="lobby-side__title">Lobby</h2>
+      <div class="lobby-side__block">
+        <label class="lobby-lab" for="lobby-code">Připojit kódem</label>
+        <form class="lobby-side__row" id="lobby-code-form" autocomplete="off">
+          <input class="lobby-input" id="lobby-code" type="text" maxlength="12" placeholder="např. k3x9p" spellcheck="false">
+          <button class="lobby-btn lobby-btn--primary" type="submit">Připojit</button>
+        </form>
+        <p class="lobby-side__error" id="lobby-code-error" hidden></p>
+        <form class="lobby-side__row" id="lobby-pass-form" autocomplete="off" hidden>
+          <input class="lobby-input" id="lobby-pass" type="password" maxlength="40" placeholder="Heslo světa" aria-label="Heslo světa">
+          <button class="lobby-btn lobby-btn--primary" type="submit">Vstoupit</button>
+        </form>
+        <button class="lobby-btn lobby-btn--ghost" id="lobby-cloud" type="button" hidden>Otevřít svět – budu hostitel</button>
+      </div>
+      <div class="lobby-side__block lobby-side__worlds">
+        <p class="lobby-lab">Otevřené světy</p>
+        <ul class="lobby-worlds" id="lobby-worlds"></ul>
+      </div>
+      <button class="lobby-btn lobby-btn--primary lobby-side__host" id="lobby-host" type="button">Založit vlastní svět</button>
+      <p class="lobby-side__info">Založ svět a pošli kamarádům odkaz nebo kód (najdeš ho v menu pauzy). Svět se ukládá i do cloudu: když hostitel odejde, převezme ho další hráč, a když nikdo nehostuje, může ho otevřít kdokoli z party (s heslem, pokud ho svět má).</p>
+    </aside>
+  </section>
 </div>
 
 <div class="nametag-layer" id="nametag-layer" aria-hidden="true"></div>
@@ -392,6 +463,8 @@
 
 <!-- 3D knihovna a Firebase (multiplayer). Firebase se použije jen s vyplněným js/firebase-config.js. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="vendor/GLTFLoader.js"></script><!-- načítání GLB modelů (three r128, uložené v repozitáři) -->
+
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
