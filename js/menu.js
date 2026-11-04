@@ -223,6 +223,24 @@ function bindSlots() {
 const SPOTS = [[884, 741, 263], [557, 739, 262], [1214, 743, 265], [659, 838, 314], [270, 834, 312], [1052, 841, 316]];
 const onStage = [null, null, null, null, null, null];    // peer na plošině (0 = já)
 let lobbySig = '';
+// Štítek hráče v lobby: přirozená šířka celého textu (px) → --full; CSS na ni štítek při najetí plynule roztáhne
+// (css/lobby.css). Jen čtení rozměrů: řádky mají nowrap + overflow hidden, takže scrollWidth = celá délka textu.
+function fitPlate(el) {
+  const cs = getComputedStyle(el);
+  const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+  const w = Math.max(0, ...[...el.children].map(c => c.scrollWidth));
+  if (w > 0) el.style.setProperty('--full', `${Math.ceil(w + pad)}px`);
+}
+let platesHover = false;
+function watchPlates() {
+  if (platesHover) return;
+  platesHover = true;
+  // před tím, než se projeví :hover, změřit štítek (najetí na štítek nebo na obrázek hráče hned před ním)
+  $('lobby-platforms').addEventListener('pointerover', e => {
+    const t = e.target.closest?.('.lobby-plate') || (e.target.classList?.contains('lobby-player') ? e.target.nextElementSibling : null);
+    if (t?.classList.contains('lobby-plate')) fitPlate(t);
+  });
+}
 const plural = n => (n === 1 ? 'hráč' : n < 5 ? 'hráči' : 'hráčů');
 
 // Kdo stojí na plošinách: já vždy na 1., ostatní náhodně; kdo zůstává, nehýbe se; uvolněné místo dostane někdo, kdo ještě nestojí.
@@ -285,6 +303,7 @@ function renderLobby() {
         <i>${esc(p.status)}</i>
       </div>`;
   }).join('');
+  watchPlates();                                   // rozbalení štítku při najetí myší (jednou)
   const more = people.length - 6;
   $('lobby-more').hidden = more <= 0;
   $('lobby-more').textContent = `Zobrazit dalších ${Math.max(0, more)}`;
