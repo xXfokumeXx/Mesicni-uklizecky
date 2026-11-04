@@ -12,7 +12,8 @@
 //   secrets/<kód>    { h: SHA-256(kód:heslo), o: { uid vlastníka: true } } – nikdo ho nepřečte
 //   members/<kód>/<uid>  hash hesla, které hráč zadal (pravidla ho pustí, jen když sedí)
 // Data světa (w/<kód>/…, rooms/svet-<kód>) smí s heslem číst a zapisovat jen členové.
-import { game, upgradeState } from './state.js';
+import { game, migrateState, canLoadVersion } from './state.js';
+import './structures.js';                                     // registruje převod v2 → v3 (MIGRATE[2])
 import { profile } from './profile.js';
 import { PLANET } from './config.js';
 import { net } from './net.js';
@@ -177,6 +178,7 @@ export async function loadCloud(code, { map = true } = {}) {
     if (typeof raw !== 'string') return false;
     const s = JSON.parse(raw);
     if (!s || typeof s !== 'object' || (s.planet === 'mars' ? 'mars' : 'moon') !== PLANET.id) return false;
+    if (!canLoadVersion(s)) return false;                         // svět z novější verze hry
     const head = map ? headSnap.val() : null;
     if (head?.parts) {
       let b64 = '';
@@ -188,7 +190,7 @@ export async function loadCloud(code, { map = true } = {}) {
       if (!(await unpackDust({ gz: !!head.gz, bytes: fromBase64(b64) }))) return false;
     }
     game.s = s;
-    upgradeState(s);
+    migrateState(s);
     s.netCode = code;
     return true;
   } catch (e) {

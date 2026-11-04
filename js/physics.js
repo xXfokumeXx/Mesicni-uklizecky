@@ -3,7 +3,16 @@
 // a vodorovná (tečná) rychlost v. Na zemi se drží povrchu; když terén „uteče“ rychleji,
 // než by těleso padalo, odlepí se (vyskočí z hřebene). Ve vzduchu letí balisticky.
 import { MOON, MOON_GRAVITY, AIR_CONTROL } from './config.js';
-import { heightAt } from './planet/height.js';
+import { heightAt as terrainAt } from './planet/height.js';
+
+// Zem = terén, nebo plocha stavby, když je výš (betonová deska garáže… – nastavuje structures.js).
+let groundHook = null;
+export const setGroundHook = f => { groundHook = f; };
+export function heightAt(p) {
+  const h = terrainAt(p);
+  const g = groundHook ? groundHook(p) : null;
+  return g !== null && g > h ? g : h;
+}
 import { madd, norm, tangentTo, dot } from './planet/vec.js';
 
 const R = MOON.radius;

@@ -19,24 +19,33 @@
 //  • Čas: všichni počítají denní dobu z hodin počítače + posunu hostitele → stejná denní doba.
 //
 // Vše jde přes presence (ne přes události), takže hrát může i pozvaný hráč s právem jen ke čtení.
-import { MOON, HEX_BONUS, PLANET, DEPOT, UNITS_PER_KG } from './config.js';
+import { MOON, HEX_BONUS, PLANET, UNITS_PER_KG } from './config.js';
+import { inBuyback } from './base.js';
 import { game, newGame, addStat, dustPrice, hexBonus } from './state.js';
 import { profile, sanitizeName, validLook } from './profile.js';
-import { strokes, exitVehicle, riding, remapRide, playerFx } from './player.js';
+import { strokes, exitVehicle, riding, remapRide, playerFx, currentVehicleSpeed } from './player.js';
 import { hexes, sweepCapsule, clearHex } from './planet/dustmap.js';
 import { grid, cellDir } from './planet/hexgrid.js';
 import { norm, cross, anyTangent, dot, tangentTo, angleBetween, madd } from './planet/vec.js';
 import { VEHICLES, STATION, DRONE } from './catalog.js';
 import { unpackDust, fromBase64, savesLocked } from './storage.js';
 import { saveCloud, claimHost } from './cloud.js';
-import { buildGarage, buyVehicle, upgradeVehicle, callBackVehicle, sellVehicle, upgradeMarket, upgradeHexup } from './equipment.js';
-import { placeStation, moveStation } from './robots.js';
-import { placeDepot, moveDepot, buildBelt, depositToDepot, beltLoad } from './depots.js';
+import { buyVehicle, upgradeVehicle, callBackVehicle, sellVehicle, upgradeMarket, upgradeHexup, rehomeVehicle } from './equipment.js';
+import { TYPE_IDS, demolishStructure, chargerAddSlot, chargerFaster, swapperAddRack } from './structures.js';
+import { placeAndWire } from './build.js';
+import { encodeLive, applyLive, addCable, removeCable } from './energy.js';
+import { batteryCap } from './catalog.js';
+import { placeStation, moveStation, upgradeStation } from './robots.js';
+import { breakRockHost, applyRocks } from './rocks.js';
+import { depositToDepot, addBelt, removeBelt, cutBelt, encodeBelts, applyBelts, encodeLogistics, applyLogistics } from './logistics.js';
 import { buyDrone } from './drones.js';
+import { startResearch, unqueueResearch, encodeResearch, applyResearch, techById } from './research.js';
 import { ensureHotbar } from './hotbar.js';
 import { connectPlatform } from './platform/platform.js';
 
 const R = MOON.radius;
+let researchSeen = false;                  // první H.rs po připojení nehlásí staré hotové výzkumy
+export const NET_VERSION = 3;               // presence starší verze hry se ignoruje (2.x a 3.0 spolu nehrají)
 const PRESENCE_HZ = 8;                     // moje presence ve světě (poloha, tahy…) – ostatní dopočítávají pohyb
 const HOST_HZ = 2;                         // sdílený stav světa od hostitele
 const CLOUD_STATE_S = 20, CLOUD_MAP_S = 60; // hostitel ukládá svět do cloudu (stav / i mapu prachu)
@@ -51,7 +60,7 @@ const cleanText = s => String(s || '').replace(/[\u0000-\u001f\u007f-\u009f\u200
 export const net = {
   room: null,               // lobby (všichni na stránce); false = multiplayer nedostupný
   error: '',                // proč multiplayer nejde (pro menu)
-  kind: null,               // 'artifact' | 'firebase'
+  kind: null,               // 'firebase'
   world: null,              // pojmenovaná místnost světa
   db: null,
   me: null,                 // můj „peer“ (označení této karty)
@@ -105,7 +114,7 @@ export const roomOnline = () => !!net.room && net.room.connected();
 
 function setLobby(extra) {
   if (!net.room) return;
-  net.room.presence({ v: 2, scr: net.lobbyStatus, n: profile.name, a: lookArr(), w: net.code, ...extra }).catch(() => {});
+  net.room.presence({ v: NET_VERSION, scr: net.lobbyStatus, n: profile.name, a: lookArr(), w: net.code, ...extra }).catch(() => {});
 }
 
 export function setLobbyStatus(scr) {
@@ -119,7 +128,7 @@ const lookArr = () => [profile.look.color, profile.look.top, profile.look.face];
 export function lobbyPeers() {
   if (!net.room) return [];
   return net.room.peers()
-    .filter(p => p.kind === 'viewer' && p.presence?.v === 2)
+    .filter(p => p.kind === 'viewer' && p.presence?.v === NET_VERSION)
     .map(p => ({
       peer: p.peer,
       name: sanitizeName(p.presence.n) || 'Astronaut',
@@ -137,7 +146,7 @@ export function lobbyPeers() {
 export function openWorlds(includePrivate = false) {
   if (!net.room) return [];
   return net.room.peers()
-    .filter(p => p.presence?.v === 2 && p.presence.H && /^[a-z0-9]{3,12}$/.test(p.presence.H.code || ''))
+    .filter(p => p.presence?.v === NET_VERSION && p.presence.H && /^[a-z0-9]{3,12}$/.test(p.presence.H.code || ''))
     .filter(p => includePrivate || p.presence.H.pub !== 0)
     .map(p => ({
       code: p.presence.H.code,
@@ -146,6 +155,7 @@ export function openWorlds(includePrivate = false) {
       hostName: sanitizeName(p.presence.n) || 'Hostitel',
       players: p.presence.H.pl | 0,
       locked: p.presence.H.lk === 1,
+      done: Number.isFinite(p.presence.H.d) ? p.presence.H.d / 10 : null,     // % uklizených hexů
       planet: p.presence.H.pn === 'mars' ? 'mars' : 'moon',
       me: p.isMe && p.sameTab,
     }));
@@ -177,7 +187,7 @@ let parkReport = null;                // klient: [seq, i, ...pozice, ...směr, n
 let parkSeq = 0;
 let ragdollEnc = { g: null, gc: null };          // ragdoll: začátek letu + korekce (player.js ragdollNet)
 let kgTotal = 0;                      // klient: kolik kg prachu jsem celkem nasbíral (pro statistiky)
-const deposits = [];                  // klient: kolik kg jsem celkem vysypal do depa i
+const deposits = {};                  // klient: kolik kg jsem celkem vysypal do depa (id stavby → kg)
 
 // Klíč hráče pro statistiky: uid přihlášení (stejný prohlížeč) + jméno postavy.
 const uidOf = peer => String(peer || '').split('_')[0];
@@ -190,7 +200,7 @@ function myWorldPresence(fx, vehicleSpeed) {
   const s = game.s;
   const b = fx.body;
   return {
-    v: 2,
+    v: NET_VERSION,
     n: profile.name,
     a: lookArr(),
     p: enc(s.p),
@@ -199,13 +209,14 @@ function myWorldPresence(fx, vehicleSpeed) {
     m: [Math.round(fx.speed * 10), Math.round(fx.alt * 100), Math.round(fx.vr * 10), fx.swept ? 1 : 0, fx.airborne ? 1 : 0],
     d: s.driving,
     vs: s.driving >= 0 ? Math.round(vehicleSpeed * 10) : 0,
+    bt: s.driving >= 0 && batteryCap(s.vehicles[s.driving]) ? Math.round(s.vehicles[s.driving].charge * 10) / 10 : null,   // baterie řízeného vozidla (L-51)
     tl: s.tool,
     tw: Math.round(fx.toolWidth * 100),
     s: strokes.list.map(k => [k.seq, ...enc(k.p), Math.round(k.w * 100), k.pw, k.cont ? 1 : 0]),
     c: chatOut,
     e: Math.round(earned * 100) / 100,
     kg: Math.round(kgTotal * 10) / 10,
-    dk: deposits.length ? Array.from(deposits, x => Math.round((x || 0) * 10) / 10) : null,
+    dk: Object.keys(deposits).length ? Object.fromEntries(Object.entries(deposits).map(([k, x]) => [k, Math.round(x * 10) / 10])) : null,
     b: requests,
     pk: parkReport,
     g: ragdollEnc.g,
@@ -248,7 +259,7 @@ function remoteOf(peer) {
 
 function readRemote(peer, pr) {
   const r = remoteOf(peer);
-  if (!pr || pr.v !== 2) return r;
+  if (!pr || pr.v !== NET_VERSION) return r;
   r.name = sanitizeName(pr.n) || r.name;
   r.look = validLook({ color: pr.a?.[0], top: pr.a?.[1], face: pr.a?.[2] });
   if (okVec(pr.p, 0)) { r.p = decU(pr.p); r.pAt = performance.now(); }
@@ -257,6 +268,11 @@ function readRemote(peer, pr) {
   if (okVec(pr.m, 0, 5)) r.m = pr.m;
   r.d = Number.isInteger(pr.d) ? pr.d : -1;
   r.vs = isNum(pr.vs) ? pr.vs / 10 : 0;
+  r.bt = isNum(pr.bt) ? pr.bt : null;
+  if (net.mode === 'host' && r.d >= 0 && r.bt !== null && game.s.vehicles[r.d] && Math.abs(r.vs) > 0.3) {   // za jízdy platí nabití od řidiče (ve stání nabíjí hostitel)
+    const v = game.s.vehicles[r.d];
+    v.charge = Math.max(0, Math.min(batteryCap(v), r.bt));
+  }
   r.tool = typeof pr.tl === 'string' ? pr.tl : r.tool;
   r.tw = isNum(pr.tw) ? pr.tw : r.tw;
   r.rag = pr.g && typeof pr.g === 'object' && !Array.isArray(pr.g) ? pr.g : null;   // začátek letu (ragdoll.js)
@@ -362,6 +378,12 @@ export function vehicleOverride(i) {
     if (r.d === i && r.sp) return { p: r.sp, r: r.sr, f: r.f, speed: Math.abs(r.vs), peer: r.peer };
   }
   return null;
+}
+
+// Jede vozidlo i, které řídí jiný hráč? (nabíjení na slotu jen ve stání)
+export function vehicleRemoteMoving(i) {
+  for (const r of net.remotes.values()) if (r.d === i) return Math.abs(r.vs || 0) > 0.3;
+  return false;
 }
 
 export function vehicleTakenBy(i) {
@@ -507,16 +529,16 @@ function hostReadPeer(r, pr) {
     host.kp[r.peer] = pr.kg;
   }
   // prach vysypaný do dep (prodá se, až ho pás doveze do Výkupu; do statistiky se připíše hned)
-  if (Array.isArray(pr.dk)) {
-    const seen = host.dk[r.peer] || (host.dk[r.peer] = []);
-    pr.dk.forEach((kg, i) => {
+  if (pr.dk && typeof pr.dk === 'object') {
+    const seen = host.dk[r.peer] || (host.dk[r.peer] = {});
+    Object.entries(pr.dk).forEach(([i, kg]) => {
       if (!isNum(kg) || kg <= (seen[i] || 0)) return;
       const want = Math.min(kg - (seen[i] || 0), 1e7);
       seen[i] = kg;
       const add = Math.min(want, host.creditKg + SLACK_KG);         // do depa jen prach, který opravdu sebral
       host.creditKg = Math.max(0, host.creditKg - add);
       if (want - add > 10) warnCheat(r, `${Math.round(want - add)} kg do depa`);
-      if (add > 0 && depositToDepot(i, add)) addStat(key, r.name, 'e', add * dustPrice());
+      if (add > 0) depositToDepot(i, add);                         // peníze přinese až pás do Výkupu
     });
   }
   // žádosti o nákup
@@ -554,7 +576,7 @@ function verifyEarning(r, add) {
   host.creditBonus = Math.max(0, host.creditBonus - bonus);
   const rest = add - bonus;
   if (rest <= 0.01) return add;
-  const atDepot = r.p && angleBetween(r.p, DEPOT.dir) * R < DEPOT.r + 4;
+  const atDepot = r.p && inBuyback(r.p, 4);
   if (!atDepot) return bonus;
   const price = dustPrice();
   const kg = Math.min(rest / price, host.creditKg + SLACK_KG);
@@ -577,21 +599,40 @@ function warnCheat(r, what) {
 function hostRequest(kind, a, cost, r) {
   const s = game.s;
   switch (kind) {
-    case 'tool': case 'tup': case 'boots': case 'gbelt': case 'jet':
+    case 'tool': case 'tup': case 'boots': case 'gbelt': case 'jet': case 'hammer':
       if (!(cost >= 0) || s.money < cost) return false;
       s.money -= cost;
       return true;
-    case 'garage': return buildGarage();
-    case 'veh': return buyVehicle(String(a[0]));
+    case 'build': {                                                   // [typ, poloha ×3 (1e6), yaw (mrad)]
+      const type = TYPE_IDS[a[0] | 0];
+      return !!type && okVec(a, 1) && isNum(a[4]) && !!placeAndWire(type, decU(a, 1), a[4] / 1000);
+    }
+    case 'demolish': return demolishStructure(String(a[0]));
+    case 'cable': return addCable(String(a[0]), String(a[1]));
+    case 'uncable': return removeCable(String(a[0]), String(a[1]));
+    case 'chslot': return chargerAddSlot(String(a[0]));
+    case 'chfast': return chargerFaster(String(a[0]));
+    case 'swrack': return swapperAddRack(String(a[0]));
+    case 'veh': return buyVehicle(String(a[0]), a[1] ? String(a[1]) : null);
+    case 'vhome': return vehicleUid(a[0] | 0) === String(a[1]) && rehomeVehicle(a[0] | 0, String(a[2]));
     case 'vup': return upgradeVehicle(a[0] | 0, String(a[1]));
-    case 'st': return okVec(a, 0) ? placeStation(decU(a)) : false;
+    case 'st': return okVec(a, 0) ? placeStation(decU(a), a[3] | 0) : false;
+    case 'stup': return upgradeStation(a[0] | 0);
     case 'stmove': return okVec(a, 1) ? moveStation(a[0] | 0, decU(a, 1)) : false;
     case 'call': return !vehicleTakenBy(a[0] | 0) && callBackVehicle(a[0] | 0);
     case 'vsell': return s.driving !== (a[0] | 0) && !vehicleTakenBy(a[0] | 0) && !seatsTaken(a[0] | 0).size && vehicleUid(a[0] | 0) === String(a[1]) && sellVehicle(a[0] | 0);
-    case 'dep': return okVec(a, 0) ? placeDepot(decU(a)) : false;
-    case 'depmove': return okVec(a, 1) ? moveDepot(a[0] | 0, decU(a, 1)) : false;
-    case 'belt': return buildBelt(a[0] | 0, Number.isInteger(a[1]) ? a[1] : -1);
+    case 'beltadd': {                                                 // [zIdStavby, zZásuvky, doIdStavby, doZásuvky, ohyby ×3 (1e6)…]
+      const bends = [];
+      for (let k = 4; k + 2 < a.length && bends.length < 40; k += 3) if (okVec(a, k)) bends.push(decU(a, k));
+      return !!addBelt([String(a[0]), String(a[1])], [String(a[2]), String(a[3])], bends);
+    }
+    case 'beltdel': return removeBelt(String(a[0]));
+    case 'rock': return breakRockHost(a[0] | 0);                         // řidič rozbil kámen (lunar / mega)
+    case 'beltcut': return cutBelt(String(a[0]), a[1] | 0);              // [id pásu, úsek] – zbourat úsek od kloubu ke kloubu
+    case 'brickmode': s.brickMode = a[0] === 'store' ? 'store' : 'sell'; return true;
     case 'drone': return buyDrone();
+    case 'research': return startResearch(String(a[0]));
+    case 'unqueue': return unqueueResearch(String(a[0]));
     case 'market': return upgradeMarket();
     case 'hexup': return upgradeHexup();
     case 'depart': return !!net.onDepartRequest?.();
@@ -622,23 +663,46 @@ function hostState() {
     m: Math.round(s.money),
     wp: Math.round(s.warp || 0),
     ts: host.ts,
-    g: s.garage ? 1 : 0,
+    gf: s.gfree ? 1 : 0,
+    bd: (s.buildings || []).map(b => [b.id, TYPE_IDS.indexOf(b.type), ...enc(b.p), Math.round(b.yaw * 1000), b.lv | 0, Math.round(b.paid || 0), b.data?.slots | 0, b.data?.fast | 0, b.data?.swap?.at || 0, b.data?.swap?.i ?? -1]),
+    cb: s.cables || [],
+    rk: s.rocks || [],                                         // rozbité kameny (rocks.js)
+    pw: livePacket(),
+    rs: encodeResearch(),
     won: s.won ? 1 : 0,
     pn: PLANET.id,
     go: s.go || 0,
     mk: s.market | 0,
     hu: s.hexup | 0,
-    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '', v.lv.boost | 0, v.lv.hopper | 0]),
+    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '', v.lv.boost | 0, v.lv.hopper | 0, v.garage || '', Math.round(v.charge || 0), v.lv.battery | 0, v.lv.solar | 0, v.lv.cruise | 0, v.lv.edge | 0]),
     st: s.stations.map(st => st.hex),
+    sm: s.stations.map(st => st.mk | 0).join(''),            // úroveň stanic (MK1 / MK2) jako řetězec číslic
     b: s.stations.map(botEnc),
     dr: s.drones.map(d => [...enc(d.p), d.mode === 'work' ? 1 : 0]),
-    dp: s.depots.map(d => [d.hex, Math.round(d.store), d.belt ? 1 : 0, Math.round(beltLoad(d)), d.to ?? -1]),
+    bl: encodeBelts(),                                         // pásy 3.0 (mění se jen při stavbě / bourání)
+    lg: logisticsPacket(),                                     // depa, slinovny, náklad na pásech, cihly (nejvýš 1× za 2 s)
     ps: host.ps,
     rc: [host.rcBase, ...host.rc],
     ack: host.acks,
     ep: host.ep,
     sv: host.sv,
   };
+}
+
+// Živé hodnoty sítě (nabití baterií, výkon solárů, stav slotů) jen jednou za 2 s (O-17).
+let liveAt = 0, liveCache = [];
+// O-17: náklad na pásech se mění pořád (každý paket by nesl celé lg, ~2,5 kB při 250 pytlích) – klient si pytle mezi
+// pakety posouvá sám (logisticsClientTick), takže stačí stav jednou za 2 s; při stavbě / bourání pásu hned (bl se změní).
+let lgAt = 0, lgCache = null, lgBeltSig = '', lgSeen = null;
+function logisticsPacket() {
+  const now = Date.now(), sig = (game.s.belts || []).map(b => b.id).join();
+  if (!lgCache || now - lgAt > 2000 || sig !== lgBeltSig) { lgAt = now; lgBeltSig = sig; lgCache = { ...encodeLogistics(), t: now }; }   // t: klient použije každý paket jen jednou
+  return lgCache;
+}
+function livePacket() {
+  const now = Date.now();
+  if (now - liveAt > 2000) { liveAt = now; liveCache = encodeLive(); }
+  return liveCache;
 }
 
 // Statistiky hráčů, kteří jsou právě ve světě: [[klíč, jméno, kg, vyděláno, utraceno]].
@@ -654,7 +718,8 @@ function presentStats() {
 function pushHostState() {
   const H = hostState();
   net.world?.presence({ H }).catch(() => {});                 // celý stav jen hráčům světa (posílají se jen změny)
-  setLobby({ scr: 'game', w: net.code, H: { code: H.code, pub: H.pub, t: H.t, pl: H.pl, pn: H.pn, sv: H.sv, lk: lockedWorld ? 1 : 0 } });
+  // d = uklizeno ‰ hexů (lobby: „0,4 % hexů“)
+  setLobby({ scr: 'game', w: net.code, H: { code: H.code, pub: H.pub, t: H.t, pl: H.pl, pn: H.pn, sv: H.sv, lk: lockedWorld ? 1 : 0, d: hexes.total ? Math.round(hexes.doneCount / hexes.total * 1000) : 0 } });
 }
 let lockedWorld = false;
 export function setWorldLocked(on) { lockedWorld = !!on; if (net.mode === 'host') pushHostState(); }
@@ -772,7 +837,33 @@ function applyHostState(H) {
     const off = H.ts - Date.now();
     game.clockOffset = Math.abs(off - game.clockOffset) > 3000 ? off : game.clockOffset + (off - game.clockOffset) * 0.1;
   }
-  s.garage = !!H.g;
+  s.gfree = !!H.gf;
+  {                                                  // stavby (Firebase prázdné pole neuloží → chybějící H.bd = žádné stavby)
+    const old = new Map((s.buildings || []).map(b => [b.id, b]));
+    s.buildings = (Array.isArray(H.bd) ? H.bd : []).filter(e => okVec(e, 2, 4) && TYPE_IDS[e[1]]).map(e => {
+      const b = old.get(String(e[0])) || { id: String(e[0]), data: {} };
+      b.type = TYPE_IDS[e[1]];
+      b.p = decU(e, 2);
+      b.yaw = e[5] / 1000;
+      b.lv = e[6] | 0;
+      b.paid = e[7] | 0;
+      if (b.type === 'charger') { b.data.slots = Math.max(1, e[8] | 0); b.data.fast = e[9] | 0; }
+      if (b.type === 'swapper') {                     // výměna: začátek (hodiny hostitele, ms) – animaci si přehraje každý sám (A-06)
+        b.data.slots = Math.max(2, e[8] | 0);
+        b.data.swap = isNum(e[10]) && e[10] > 0 ? { at: e[10], i: e[11] | 0 } : null;
+      }
+      return b;
+    });
+  }
+  s.cables = (Array.isArray(H.cb) ? H.cb : []).filter(c => Array.isArray(c) && c.length === 2).map(c => [String(c[0]), String(c[1])]);
+  if (Array.isArray(H.pw)) applyLive(H.pw);
+  if (typeof H.rs === 'string') {                         // výzkum (L-30): hotové, aktuální s průběhem, fronta
+    const before = new Set(s.research?.done || []);
+    applyResearch(H.rs);
+    const fresh = s.research.done.filter(id => !before.has(id));
+    if (fresh.length && researchSeen) net.onResearchDone?.(fresh);
+    researchSeen = true;
+  }
   s.won = !!H.won;
   s.market = Math.max(0, H.mk | 0);
   if (H.go && !departing) { departing = true; net.onDepart?.(String(H.go)); }
@@ -787,14 +878,23 @@ function applyHostState(H) {
       if (!okVec(e, 0, 11) || !VEHICLES[e[0]]) return;
       let v = s.vehicles[i];
       if (!v) {
-        v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2], boost: e[12] | 0, hopper: e[13] | 0 }, moved: true };
+        v = { type: VEHICLES[e[0]].id, spot: e[3], garage: e[14] ? String(e[14]) : null, p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, charge: e[15] | 0, lv: { width: e[1], speed: e[2], boost: e[12] | 0, hopper: e[13] | 0, battery: e[16] | 0, solar: e[17] | 0, cruise: e[18] | 0, edge: e[19] | 0 }, moved: true };
         s.vehicles[i] = v;
         vehSig[i] = '';
       }
       v.type = VEHICLES[e[0]].id;
-      v.lv = { width: e[1] | 0, speed: e[2] | 0, boost: e[12] | 0, hopper: e[13] | 0 };
+      v.lv = { width: e[1] | 0, speed: e[2] | 0, boost: e[12] | 0, hopper: e[13] | 0, battery: e[16] | 0 };
       v.spot = e[3];
-      if (s.driving === i) return;                   // řídím ho já → poloha je moje
+      v.garage = e[14] ? String(e[14]) : null;
+      v.lv.battery = e[16] | 0;
+      v.lv.solar = e[17] | 0;
+      v.lv.cruise = e[18] | 0;                       // autopilot (L-40, L-41)
+      v.lv.edge = e[19] | 0;
+      if (s.driving === i) {                         // řídím ho já → poloha i baterie jsou moje; ve stání (nabíjení) vyšší od hostitele
+        if (isNum(e[15]) && e[15] > v.charge + 0.5 && Math.abs(currentVehicleSpeed()) < 0.3) v.charge = e[15];
+        return;
+      }
+      if (isNum(e[15])) v.charge = e[15];
       const sig = e.slice(4, 11).join(',');
       if (sig !== vehSig[i]) {
         vehSig[i] = sig;
@@ -816,6 +916,7 @@ function applyHostState(H) {
         botPrev[i] = null;
       }
       const st = s.stations[i], b = H.b?.[i];
+      st.mk = Math.max(1, Math.min(2, Number(String(H.sm || '')[i]) || 1));
       if (!okVec(b, 0)) return;
       const c = cellDir(st.hex), e1 = anyTangent(c), e2 = cross(c, e1);
       const p = norm([c[0] + (e1[0] * b[0] + e2[0] * b[1]) / 10 / R, c[1] + (e1[1] * b[0] + e2[1] * b[1]) / 10 / R, c[2] + (e1[2] * b[0] + e2[2] * b[1]) / 10 / R]);
@@ -845,19 +946,10 @@ function applyHostState(H) {
     dr.mode = work ? 'work' : 'fly';
   });
 
-  // depa a pásy: [hex, sklad kg, pás, kg na pásu, cíl pásu (hex depa, −1 = Výkup)]
-  if (Array.isArray(H.dp)) {
-    s.depots = H.dp
-      .filter(e => okVec(e, 0, 4) && Number.isInteger(e[0]) && e[0] >= 0 && e[0] < grid.cells)
-      .map((e, i) => {
-        const d = s.depots[i]?.hex === e[0] ? s.depots[i] : { hex: e[0], transit: [] };
-        d.store = Math.max(0, e[1]);
-        d.belt = !!e[2];
-        d.tk = Math.max(0, e[3]);
-        d.to = Number.isInteger(e[4]) ? e[4] : -1;
-        return d;
-      });
-  }
+  // pásy a logistika 3.0 (Firebase prázdné pole neuloží → chybějící H.bl = žádné pásy)
+  applyBelts(H.bl);
+  applyRocks(H.rk);
+  if (!H.lg || H.lg.t !== lgSeen) { lgSeen = H.lg?.t ?? null; applyLogistics(H.lg); }   // stejný paket znovu = pytle by cukaly zpět
 
   // hexy dočištěné roboty
   if (Array.isArray(H.rc) && H.rc.length) {
@@ -896,7 +988,7 @@ function syncFleet(s, list) {
     let v = uids[i] && old.get(uids[i]);
     if (!v) {
       if (!okVec(e, 0, 11) || !VEHICLES[e[0]]) return null;
-      v = { type: VEHICLES[e[0]].id, spot: e[3], p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, lv: { width: e[1], speed: e[2], boost: e[12] | 0, hopper: e[13] | 0 } };
+      v = { type: VEHICLES[e[0]].id, spot: e[3], garage: e[14] ? String(e[14]) : null, p: decU(e, 4), f: decF(e, 7), load: e[10] / 10, charge: e[15] | 0, lv: { width: e[1], speed: e[2], boost: e[12] | 0, hopper: e[13] | 0, battery: e[16] | 0, solar: e[17] | 0 } };
     }
     v.uid = uids[i];
     v.moved = true;
@@ -932,10 +1024,9 @@ export function addEarned(amount) {
 export function addCollected(kg) {
   if (kg > 0) kgTotal += kg;
 }
-export function reportDeposit(i, kg) {
-  if (!(kg > 0) || i < 0) return;
-  while (deposits.length <= i) deposits.push(0);
-  deposits[i] += kg;
+export function reportDeposit(id, kg) {
+  if (!(kg > 0) || !id) return;
+  deposits[id] = (deposits[id] || 0) + kg;
 }
 
 // Klient vystoupil z vozidla → nahlásit, kde stojí.
@@ -955,12 +1046,15 @@ export function savePersonal() {
   const s = game.s;
   try {
     localStorage.setItem(personalKey(), JSON.stringify({
-      tools: s.tools, tool: s.tool, boots: s.boots, belt: s.belt, jetpack: s.jetpack, hotbar: s.hotbar, sel: s.sel, p: s.p, f: s.f,
+      tools: s.tools, tool: s.tool, boots: s.boots, belt: s.belt, jetpack: s.jetpack, hammer: s.hammer ? 1 : 0, hotbar: s.hotbar, sel: s.sel, p: s.p, f: s.f,
     }));
   } catch { /* nic */ }
 }
 // Moje osobní část světa code z prohlížeče do game.s. Vrací true, když jsem ji tu měl uloženou.
 export function loadPersonal(code = net.code) {
+  // místo za volantem není osobní část: ve stavu světa z cloudu je vozidlo předchozího hostitele – kdo svět převezme,
+  // nesmí se objevit v jeho vozidle (na jeho souřadnicích), stojí pěšky na své uložené poloze
+  if (game.s) game.s.driving = -1;
   try {
     const d = JSON.parse(localStorage.getItem(personalKey(code)));
     if (!d) { ensureHotbar(game.s); return false; }
@@ -970,6 +1064,7 @@ export function loadPersonal(code = net.code) {
     s.boots = Math.min(3, Math.max(0, d.boots | 0));
     s.belt = Math.min(2, Math.max(0, d.belt | 0));
     s.jetpack = d.jetpack ? 1 : 0;
+    s.hammer = d.hammer ? 1 : 0;
     s.hotbar = Array.isArray(d.hotbar) ? d.hotbar : [s.tool];
     s.sel = d.sel | 0;
     if (okVec(d.p, 0) && okVec(d.f, 0)) { s.p = norm(d.p); s.f = tangentTo(s.p, d.f); }

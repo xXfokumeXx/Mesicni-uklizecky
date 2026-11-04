@@ -5,8 +5,7 @@ import { game } from './state.js';
 import { toolStats } from './equipment.js';
 import { hotbarSlots, KIT_NAMES } from './hotbar.js';
 import { jetCharged } from './player.js';
-import { buildToolModel } from './scene/toolModels.js';
-import { buildStation, buildSilo } from './scene/buildings.js';
+import { instantiate } from './assets/models.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -43,10 +42,10 @@ function slotView(e) {
     const t = toolById(e);
     const item = game.s.tools[e];
     const cap = toolStats(e).hopper;
-    return { name: t.name, img: thumb(`tool-${e}`, () => buildToolModel(e)), fill: cap ? Math.min(1, item.load / cap) : 0 };
+    return { name: t.name, img: thumb(`tool-${e}`, () => instantiate('tool', e).root), fill: cap ? Math.min(1, item.load / cap) : 0 };
   }
   if (e && e.kit) {
-    const img = e.kit === 'depot' || e.kit === 'dmove' ? thumb('silo', () => buildSilo().root) : thumb('station', () => buildStation().root);
+    const img = e.kit === 'depot' || e.kit === 'dmove' ? thumb('silo', () => instantiate('silo').root) : thumb('station', () => instantiate('station').root);
     return { name: KIT_NAMES[e.kit], img, kit: true };
   }
   return { name: 'Prázdné', img: '' };

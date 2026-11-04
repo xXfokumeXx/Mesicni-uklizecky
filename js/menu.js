@@ -1,15 +1,17 @@
 // Hlavní menu (hra sám / s ostatními), seznam uložených her ve slotech, lobby multiplayeru
 // a menu pauzy ve hře. Samotné spuštění hry dělá main.js (onLaunch).
-import { SUIT_COLORS } from './catalog.js';
+import { SUIT_COLORS, HELMET_PROPS, propById } from './catalog.js';
+import { createAvatarShots } from './scene/avatarShots.js';
+import { createWardrobe } from './scene/wardrobe.js';
 import { profile, saveProfile, sanitizeName } from './profile.js';
-import { SLOTS, listSaves, deleteSave, lastSlot, hasV1Save } from './storage.js';
+import { SLOTS, listSaves, deleteSave, lastSlot, hasV1Save, exportSlot, importSlot } from './storage.js';
+import { SAVE_VERSION } from './state.js';
 import { net, initLobby, lobbyPeers, openWorlds, findWorld, setLobbyStatus, roomOnline } from './net.js';
 import { checkAccess, enterPassword, cloudMeta } from './cloud.js';
 import { fmt } from './format.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const colorOf = i => '#' + SUIT_COLORS[i].hex.toString(16).padStart(6, '0');
 
 let hooks = null;          // { onLaunch(spec), openSettings() }
 let slotMode = 'sp';       // 'sp' = hrát sám, 'host' = založit svět
@@ -25,8 +27,12 @@ function fmtPlay(ms) {
 // ---------- přepínání obrazovek ----------
 
 function show(panel) {
-  for (const id of ['menu-home', 'menu-slots', 'menu-lobby', 'menu-loading']) $(id).hidden = id !== panel;
-  if (panel === 'menu-lobby') setLobbyStatus('lobby');
+  for (const id of ['menu-home', 'menu-slots', 'menu-wardrobe', 'menu-lobby', 'menu-loading']) $(id).hidden = id !== panel;
+  $('menu-inner').hidden = panel === 'menu-lobby';                     // lobby je přes celou obrazovku
+  $('menu').classList.toggle('menu--lobby', panel === 'menu-lobby');
+  $('menu').classList.toggle('menu--compact', panel !== 'menu-home' && panel !== 'menu-lobby');
+  if (panel !== 'menu-wardrobe') wardrobe?.unmount();
+  if (panel === 'menu-lobby') { setLobbyStatus('lobby'); lobbySig = ''; renderLobby(); }
   else if (panel !== 'menu-loading') setLobbyStatus('menu');
 }
 
@@ -48,9 +54,73 @@ export function setMoonStatus(text, ready) {
 
 // ---------- profil ----------
 
+// Název oblečení: barva skafandru + rekvizita na helmě / hledí (např. „Bílá NASA · Čertovské rohy“)
+function outfitName(look) {
+  const parts = [SUIT_COLORS[look.color]?.name || 'Skafandr'];
+  if (look.top && look.top !== 'none') parts.push(propById(look.top)?.name);
+  if (look.face && look.face !== 'noface') parts.push(propById(look.face)?.name);
+  return parts.filter(Boolean).join(' · ');
+}
+let shots = null, wardrobe = null;                 // obrázky astronautů a šatna v menu (vlastní malý renderer)
+const avatar = (look, wave = false) => (shots ? shots.shot(look, { wave }) : { url: '', fig: 1 });
+
 function renderProfile() {
   $('menu-name').value = profile.name;
-  $('menu-avatar').style.setProperty('--suit', colorOf(profile.look.color));
+  $('menu-avatar').src = avatar(profile.look, true).url;
+  $('menu-outfit').textContent = outfitName(profile.look);
+}
+
+// ---------- šatna v menu (stejná jako v Dílně: barva skafandru a rekvizity) ----------
+
+let wardrobeBack = 'menu-home';
+function openWardrobe(from) {
+  wardrobeBack = from;
+  show('menu-wardrobe');
+  renderWardrobe();
+  wardrobe?.mount($('menu-wardrobe-stage'), profile.look);
+}
+function renderWardrobe() {
+  const look = profile.look;
+  const hex = c => '#' + c.toString(16).padStart(6, '0');
+  const swatches = SUIT_COLORS.map((c, i) => `
+    <button class="swatch${i === look.color ? ' swatch--active' : ''}" type="button" data-color="${i}" style="--swatch:${hex(c.hex)}" aria-pressed="${i === look.color}" title="${esc(c.name)}" aria-label="${esc(c.name)}"></button>`).join('');
+  const cards = slot => HELMET_PROPS.filter(p => p.slot === slot).map(p => {
+    const on = look[slot] === p.id;
+    return `
+      <button class="item-card item-card--compact${on ? ' item-card--selected' : ''}" type="button" data-prop="${p.id}" aria-pressed="${on}">
+        <span class="item-card__chip item-card__chip--${on ? 'active' : 'store'}">${on ? 'NASAZENO' : slot === 'top' ? 'HELMA' : 'HLEDÍ'}</span>
+        <img class="item-card__img" src="${wardrobe ? wardrobe.headThumb(p.id) : ''}" alt="">
+        <span class="item-card__name">${esc(p.name)}</span>
+      </button>`;
+  }).join('');
+  $('menu-wardrobe-pick').innerHTML = `
+    <div class="wardrobe">
+      <h3 class="wardrobe__heading">Barva skafandru · ${esc(SUIT_COLORS[look.color].name)}</h3>
+      <div class="wardrobe__swatches" role="group" aria-label="Barva skafandru">${swatches}</div>
+      <h3 class="wardrobe__heading">Na helmu</h3>
+      <div class="facility__grid">${cards('top')}</div>
+      <h3 class="wardrobe__heading">Na hledí</h3>
+      <div class="facility__grid">${cards('face')}</div>
+    </div>`;
+}
+function setLook(patch) {
+  Object.assign(profile.look, patch);
+  saveProfile();
+  setLobbyStatus(net.lobbyStatus);              // vzhled jde ostatním v presence lobby (a)
+  renderProfile();
+  renderWardrobe();
+  wardrobe?.mount($('menu-wardrobe-stage'), profile.look);
+}
+function bindWardrobe() {
+  $('menu-wardrobe-pick').addEventListener('click', e => {
+    const t = e.target.closest('[data-color],[data-prop]');
+    if (!t) return;
+    if (t.dataset.color !== undefined) setLook({ color: Number(t.dataset.color) });
+    else { const p = propById(t.dataset.prop); if (p) setLook({ [p.slot]: p.id }); }
+  });
+  $('wardrobe-back').addEventListener('click', () => show(wardrobeBack));
+  $('menu-wardrobe-open').addEventListener('click', () => openWardrobe('menu-home'));
+  $('lobby-wardrobe').addEventListener('click', () => openWardrobe('menu-lobby'));
 }
 
 // ---------- sloty ----------
@@ -76,19 +146,22 @@ async function renderSlots() {
           </div>
           <div class="slot__actions">
             <button class="button button--primary" type="button" data-new="${id}">${slotMode === 'host' ? 'Nový svět' : 'Nová hra'}</button>
+            <button class="button" type="button" data-import="${id}" title="Nahrát uloženou hru ze souboru .json">Import</button>
           </div>
         </li>`;
     }
     const pct = sv.total ? Math.floor(sv.done / sv.total * 1000) / 10 : 0;
+    const newer = sv.v > SAVE_VERSION;
     return `
       <li class="slot${id === last ? ' slot--last' : ''}">
         <div class="slot__info">
-          <span class="slot__title">${esc(sv.title || `Slot ${i + 1}`)}${id === last ? ' <span class="slot__badge">naposledy</span>' : ''}</span>
+          <span class="slot__title">${esc(sv.title || `Slot ${i + 1}`)}${id === last ? ' <span class="slot__badge">naposledy</span>' : ''}${newer ? ' <span class="slot__badge">novější verze</span>' : ''}</span>
           <span class="slot__meta">${pct.toLocaleString('cs-CZ')} % hexů · $${fmt(sv.money || 0)} · ${fmtPlay(sv.playMs)}</span>
-          <span class="slot__meta">Uloženo ${fmtDate(sv.savedAt)}</span>
+          <span class="slot__meta">${newer ? `Uloženo ve verzi ${sv.v} – tahle verze hry ji neotevře.` : `Uloženo ${fmtDate(sv.savedAt)}`}</span>
         </div>
         <div class="slot__actions">
-          <button class="button button--primary" type="button" data-load="${id}">${slotMode === 'host' ? 'Hostovat' : 'Načíst'}</button>
+          <button class="button button--primary" type="button" data-load="${id}"${newer ? ' disabled' : ''}>${slotMode === 'host' ? 'Hostovat' : 'Načíst'}</button>
+          <button class="button" type="button" data-export="${id}" title="Uložit hru do souboru .json (záloha)">Export</button>
           <button class="button button--danger" type="button" data-del="${id}">Smazat</button>
         </div>
       </li>`;
@@ -97,9 +170,28 @@ async function renderSlots() {
 
 function bindSlots() {
   $('slot-list').addEventListener('click', async e => {
-    const t = e.target.closest('[data-new],[data-load],[data-del]');
+    const t = e.target.closest('[data-new],[data-load],[data-del],[data-export],[data-import]');
     if (!t) return;
-    if (t.dataset.new) {
+    if (t.dataset.export) {
+      const file = await exportSlot(t.dataset.export);
+      if (!file) return;
+      const url = URL.createObjectURL(new Blob([file.text], { type: 'application/json' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: file.name });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } else if (t.dataset.import) {
+      const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json' });
+      input.addEventListener('change', async () => {
+        const f = input.files?.[0];
+        if (!f) return;
+        const res = await importSlot(t.dataset.import, await f.text());
+        $('slots-hint').textContent = res.ok ? `Hra „${f.name}“ je nahraná do slotu.` : res.error;
+        renderSlots();
+      });
+      input.click();
+    } else if (t.dataset.new) {
       const id = t.dataset.new;
       const title = ($(`slot-name-${id}`).value || '').trim().slice(0, 40) || 'Nová směna';
       const v1 = $(`slot-v1-${id}`)?.checked;
@@ -122,35 +214,84 @@ function bindSlots() {
 
 // ---------- lobby ----------
 
-const SCR = { menu: 'v menu', lobby: 'v lobby', game: 've hře' };
+
+// Plošiny ve scéně 1920 × 1080 (HANDOFF lobby): x, y = střed spodní hrany postavy, h = výška postavy; pořadí obsazování
+const SPOTS = [[884, 741, 263], [557, 739, 262], [1214, 743, 265], [659, 838, 314], [270, 834, 312], [1052, 841, 316]];
+const onStage = [null, null, null, null, null, null];    // peer na plošině (0 = já)
+let lobbySig = '';
+const plural = n => (n === 1 ? 'hráč' : n < 5 ? 'hráči' : 'hráčů');
+
+// Kdo stojí na plošinách: já vždy na 1., ostatní náhodně; kdo zůstává, nehýbe se; uvolněné místo dostane někdo, kdo ještě nestojí.
+function assignStage(people) {
+  const ids = new Set(people.map(p => p.peer));
+  onStage[0] = people.find(p => p.me)?.peer || 'me';
+  for (let k = 1; k < 6; k++) if (onStage[k] && (!ids.has(onStage[k]) || onStage[k] === onStage[0])) onStage[k] = null;
+  const used = new Set(onStage.filter(Boolean));
+  const free = people.filter(p => !p.me && !used.has(p.peer));
+  for (let k = 1; k < 6 && free.length; k++) {
+    if (!onStage[k]) onStage[k] = free.splice(Math.floor(Math.random() * free.length), 1)[0].peer;
+  }
+}
+
+function statusOf(p, worldsAll) {
+  if (p.world) {
+    const w = worldsAll.find(x => x.code === p.world);
+    return `uklízí · ${w ? w.title : p.world}`;
+  }
+  return p.scr === 'menu' ? 'v menu' : 'v lobby';
+}
 
 function renderLobby() {
   if ($('menu-lobby').hidden) return;
   const online = roomOnline();
-  $('lobby-status').textContent = net.room === false
-    ? (net.error || 'Multiplayer tu nejde připojit.')
-    : online ? 'Připojeno · vidíš všechny, kdo mají hru právě otevřenou.' : 'Připojuji…';
-  $('lobby-status').classList.toggle('lobby__status--ok', online);
-  const people = lobbyPeers();
+  let people = lobbyPeers();
+  if (!people.some(p => p.me)) people = [{ peer: 'me', name: profile.name, look: profile.look, me: true, scr: 'lobby', world: null }, ...people];
+  const worldsAll = openWorlds(true);
   const worlds = openWorlds();
-  $('lobby-count').textContent = String(people.length);
-  $('lobby-people').innerHTML = people.length ? people.map(p => {
-    const where = p.hosting ? `hostuje svět` : p.world ? `hraje ve světě ${esc(p.world)}` : SCR[p.scr] || 'online';
+  assignStage(people);
+  const byPeer = new Map(people.map(p => [p.peer, p]));
+  const statusText = net.room === false
+    ? (net.error || 'Multiplayer tu nejde připojit.')
+    : online ? (people.length > 6 ? 'Připojeno · na plošině vidíš 6 hráčů' : 'Připojeno · vidíš všechny, kdo mají hru právě otevřenou.') : 'Připojuji…';
+  const stage = onStage.map(id => {
+    const p = id && byPeer.get(id);
+    return p ? { me: !!p.me, name: p.name, look: p.look, outfit: outfitName(p.look), status: statusOf(p, worldsAll), guest: !!p.guest } : null;
+  });
+  const sig = JSON.stringify([online, statusText, people.length, stage, worlds, people.map(p => [p.name, p.world, p.scr])]);
+  if (sig === lobbySig) return;                    // nic se nezměnilo → DOM nepřekreslovat (obrázky by blikaly)
+  lobbySig = sig;
+
+  $('lobby-status').textContent = statusText;
+  $('lobby-status').classList.toggle('lobby-bar__status--ok', online);
+  $('lobby-count').textContent = String(online ? people.length : 1);
+  $('lobby-bg').src = people.length >= 2 ? 'assets/lobby/stage-6.png' : 'assets/lobby/stage-1.png';
+  const pctX = x => `${(x / 1920 * 100).toFixed(3)}%`, pctY = y => `${(y / 1080 * 100).toFixed(3)}%`;
+  $('lobby-platforms').innerHTML = SPOTS.map(([x, y, h], k) => {
+    const p = stage[k];
+    if (!p) return `<div class="lobby-free" style="left:${pctX(x)};top:${pctY(y - 13)}">Volné místo</div>`;
+    const img = avatar(p.look, p.me);
+    const ih = h / img.fig;                        // výška obrázku tak, aby postava měla výšku h
     return `
-      <li class="person">
-        <span class="person__avatar" style="--suit:${colorOf(p.look.color)}" aria-hidden="true"></span>
-        <span class="person__name">${esc(p.name)}${p.me ? ' <span class="person__you">ty</span>' : ''}${p.guest ? ' <span class="person__guest">host z venku</span>' : ''}</span>
-        <span class="person__where">${where}</span>
-      </li>`;
-  }).join('') : '<li class="lobby__empty">Zatím tu nikdo není.</li>';
-  $('lobby-worlds').innerHTML = worlds.length ? worlds.map((w, i) => `
-    <li class="world">
-      <div class="world__info">
-        <span class="world__title">${w.locked ? '🔒 ' : ''}${esc(w.title)}</span>
-        <span class="world__meta">Hostitel ${esc(w.hostName)} · ${w.players} ${w.players === 1 ? 'hráč' : w.players < 5 ? 'hráči' : 'hráčů'} · kód ${esc(w.code)}</span>
-      </div>
-      <button class="button button--primary" type="button" data-join="${i}" ${w.me ? 'disabled' : ''}>Připojit</button>
-    </li>`).join('') : '<li class="lobby__empty">Nikdo zatím svět neotevřel. Založ ho a ostatní se připojí.</li>';
+      <img class="lobby-player" src="${img.url}" alt="${esc(p.name)}" style="left:${pctX(x)};top:${pctY(y - ih)};height:${pctY(ih)}">
+      <div class="lobby-plate${p.me ? ' lobby-plate--me' : ''}" style="left:${pctX(x)};top:${pctY(y - h - (k >= 3 ? 18 : people.length > 1 ? 40 : 16))}">
+        <b>${esc(p.name)}${p.me ? ' <span class="lobby-tag">TY</span>' : ''}</b>
+        <span>${esc(p.outfit)}</span>
+        <i>${esc(p.status)}</i>
+      </div>`;
+  }).join('');
+  const more = people.length - 6;
+  $('lobby-more').hidden = more <= 0;
+  $('lobby-more').textContent = `Zobrazit dalších ${Math.max(0, more)}`;
+  if (more <= 0) $('lobby-people-box').hidden = true;
+  $('lobby-people').innerHTML = people.map(p => `
+    <li><span>${esc(p.name)}${p.me ? ' <span class="lobby-tag">TY</span>' : ''}</span><small>${esc(statusOf(p, worldsAll))}</small></li>`).join('');
+  $('lobby-worlds').innerHTML = worlds.length ? worlds.map((w, i) => {
+    const meta = [w.hostName, `${w.players} ${plural(w.players)}`, w.done !== null ? `${w.done.toLocaleString('cs-CZ')} % hexů` : null].filter(Boolean).join(' · ');
+    const btn = w.me ? '<button class="lobby-btn lobby-btn--ghost" type="button" disabled>Tvůj svět</button>'
+      : w.locked ? `<button class="lobby-btn lobby-btn--ghost" type="button" data-join="${i}">Zadat heslo</button>`
+        : `<button class="lobby-btn lobby-btn--primary" type="button" data-join="${i}">Připojit</button>`;
+    return `<li class="lobby-world"><b>${esc(w.title)}</b>${btn}<small>${esc(meta)}</small></li>`;
+  }).join('') : '<li class="lobby-worlds__empty">Nikdo zatím svět neotevřel. Založ ho a ostatní se připojí.</li>';
   $('lobby-host').disabled = !online;
 }
 
@@ -183,6 +324,11 @@ function bindLobby() {
     enterWorld(code, () => hooks.onLaunch({ mode: 'host', cloud: code, planet: meta.pn === 'mars' ? 'mars' : 'moon', public: true }));
   });
   $('lobby-host').addEventListener('click', () => { slotMode = 'host'; show('menu-slots'); renderSlots(); });
+  $('lobby-more').addEventListener('click', () => {
+    const box = $('lobby-people-box');
+    box.hidden = !box.hidden;
+    $('lobby-more').setAttribute('aria-expanded', String(!box.hidden));
+  });
   $('lobby-code-form').addEventListener('submit', e => {
     e.preventDefault();
     joinByCode($('lobby-code').value);
@@ -240,7 +386,12 @@ async function joinByCode(raw) {
 
 export function initMenu(h) {
   hooks = h;
+  try {
+    shots = createAvatarShots();
+    wardrobe = createWardrobe(shots.thumbs);
+  } catch (e) { console.warn('[menu] náhled astronauta nejde vykreslit', e); }
   renderProfile();
+  bindWardrobe();
   $('menu-name').addEventListener('change', () => {
     profile.name = sanitizeName($('menu-name').value) || profile.name;
     saveProfile();

@@ -3,15 +3,15 @@
 // Obsah se skládá z dat (catalog.js + stav hry), akce volají equipment.js přes econ.js
 // (v multiplayeru schvaluje nákupy hostitel). Verze 2: Šatna v Dílně, Flotila v Garáži.
 import {
-  TOOLS, VEHICLES, TOOL_UPGRADES, VEHICLE_UPGRADES, GARAGE_PRICE, STATION, BOOTS, SILO, DRONE, BELT, JETPACK, MARKET, HEXUP,
-  vehicleById, SUIT_COLORS, HELMET_PROPS, propById,
+  TOOLS, VEHICLES, TOOL_UPGRADES, VEHICLE_UPGRADES, STATION, BOOTS, SILO, DRONE, BELT, JETPACK, MARKET, HEXUP,
+  vehicleById, SUIT_COLORS, HELMET_PROPS, propById, batteryCap, SOLAR_ROOF, STATION_MK,
 } from './catalog.js';
-import { MOON, MAX_VEHICLES, PRICE_PER_KG, HEX_BONUS, PLANET } from './config.js';
+import { MOON, PRICE_PER_KG, HEX_BONUS, PLANET } from './config.js';
 import { game, dustPrice, hexBonus } from './state.js';
 import {
   toolStats, vehicleStats, ownsTool, buyTool, equipTool, toolUpgradeCost, upgradeTool,
   bootsLevel, walkSpeed, bootsUpgradeCost, upgradeBoots, vehicleCount, fleetFull,
-  buildGarage, buyVehicle, vehicleUpgradeCost, upgradeVehicle, stationPrice,
+  buyVehicle, rehomeVehicle, ownsHammer, buyHammer, vehicleUpgradeCost, vehicleUpgradeLock, upgradeVehicle, stationPrice,
   vehicleSellValue, sellVehicle, upgradeFits, beltLevel, beltUpgradeCost, upgradeBelt, ownsJetpack, buyJetpack,
   marketLevel, marketUpgradeCost, upgradeMarket, hexupLevel, hexupUpgradeCost, upgradeHexup,
 } from './equipment.js';
@@ -22,12 +22,15 @@ import { vehicleTakenBy, isClient, seatsTaken } from './net.js';
 import { dronePrice, buyDrone } from './drones.js';
 import { ACHIEVEMENTS, hasAch, achIcon, achCount } from './achievements.js';
 import { profile, saveProfile, sanitizeName } from './profile.js';
-import { parkingSpot, distanceToBase } from './base.js';
+import { distanceToBase } from './base.js';
+import { HAMMER, GARAGE_SLOTS, fleetCapacity, freeSlots, garages, garageName, isParkedHome, structureById, homeSpot, STRUCTURES, CHARGER_RATE, chargerSlotOffer, chargerAddSlot, chargerFastOffer, chargerFaster, swapperRackOffer, swapperAddRack, SWAP } from './structures.js';
+import { live, netInfo, vehicleOnSlot, networks, slotRate, swapperEta } from './energy.js';
 import { angleBetween } from './planet/vec.js';
-import { buildToolModel, buildBootsModel } from './scene/toolModels.js';
-import { buildVehicle } from './scene/vehicles.js';
-import { buildStation, buildSilo, buildGarage as buildGarageModel } from './scene/buildings.js';
-import { buildDrone, buildJetpack, buildBelt as buildBeltModel } from './scene/models.js';
+import { instantiate, isReady, preloadModels } from './assets/models.js';
+import { brickPrice, SINTER, beltAt } from './logistics.js';
+import {
+  TECH, TECH_MODEL, BRANCHES, techById, techState, researchOffer, startResearch, unqueueResearch, researchProgress, researchCenter, isDone, RESEARCH_POWER,
+} from './research.js';
 import { fmt } from './format.js';
 
 const $ = id => document.getElementById(id);
@@ -38,11 +41,11 @@ const money = v => '$' + fmt(v);
 const hex = n => '#' + n.toString(16).padStart(6, '0');
 const fmtInt = n => n.toLocaleString('cs-CZ');
 
-const TITLES = { toolshop: 'Obchod s nástroji', workshop: 'Dílna', garage: 'Garáž', trophies: 'Úspěchy', depot: 'Výkup prachu' };
+const TITLES = { toolshop: 'Obchod s nástroji', workshop: 'Dílna', garage: 'Garáž', trophies: 'Úspěchy', depot: 'Výkup prachu', charger: 'Nabíječka vozidel', research: 'Výzkumné centrum', swapper: 'Výměník baterií', sinter: 'Slinovna' };
 
 let thumb = null;            // generátor náhledů (scene/thumbs.js)
 let hooks = null;            // { onOpen, onClose, onChange, onPlaceStation, onLook, wardrobe, headModel }
-const view = { id: null, tab: null, sel: null };
+const view = { id: null, tab: null, sel: null, ctx: null };      // ctx = id stavby (okno garáže)
 let busy = false;            // čeká se na hostitele (multiplayer)
 
 // Pořadové číslo vozidla stejného typu („Zametač se sedačkou #2“).
@@ -95,26 +98,49 @@ function toolsTab(forUpgrades) {
     } else {
       detail.action = { label: 'Máš v ruce', disabled: true };
     }
-    return { key: t.id, name: t.name, chip, thumb: () => thumb(`tool-${t.id}`, () => buildToolModel(t.id)), detail };
+    return { key: t.id, name: t.name, chip, thumb: () => thumb(`tool-${t.id}`, () => instantiate('tool', t.id).root), detail };
   });
+}
+
+// Vysavače MK1 / MK2 (L-31): nová stanice vyšší úrovně; stávající se vylepší na místě klávesou R
+function vacuumItem(mk) {
+  const M = STATION_MK[mk], price = stationPrice() + M.extra;
+  const n = game.s.stations.filter(st => (st.mk | 0) === mk).length;
+  const ok = isDone(M.research);
+  return {
+    key: `vac${mk}`, name: M.name,
+    chip: ok ? [n ? `${n}× POSTAVENO` : 'V OBCHODĚ', n ? 'owned' : 'store'] : ['ZAMČENO', 'locked'],
+    thumb: () => thumb('station', () => instantiate('station').root),
+    detail: {
+      eyebrow: 'Automatizace · výzkum', title: M.name,
+      desc: `Stanice s rychlejším robotem${mk >= 2 ? ', který uklízí o prstenec hexů dál' : ''}. Stávající stanici vylepšíš na místě: stoupni si k ní a stiskni R (zaplatí se jen rozdíl).`,
+      stats: [
+        ['Oblast', mk >= 2 ? '37 hexů (3 kolem stanice)' : '19 hexů (2 kolem stanice)'],
+        ['Zásobník robota', kg(M.hopper)], ['Rychlost', `${String(M.speed).replace('.', ',')} m/s`],
+        ['Vylepšení MK1 → MK2', money(M.extra - STATION_MK[mk - 1].extra)],
+      ],
+      action: !ok ? { label: `🔒 Nejdřív výzkum „${M.name}“ (Výzkumné centrum)`, disabled: true }
+        : { label: `Koupit a umístit · ${money(price)}`, disabled: game.s.money < price, run: () => { hooks.onPlaceStation(mk); return 'close'; } },
+    },
+  };
 }
 
 function stationsTab() {
   const price = stationPrice();
   return [{
     key: 'station',
-    name: 'Stanice robota',
+    name: 'Vysavač MK1',
     chip: [`${game.s.stations.length}× POSTAVENO`, game.s.stations.length ? 'owned' : 'store'],
-    thumb: () => thumb('station', () => buildStation().root),
+    thumb: () => thumb('station', () => instantiate('station').root),
     detail: {
       eyebrow: 'Automatizace',
-      title: 'Stanice robota',
-      desc: 'Po umístění vyrobí robota, který čistí hexy do vzdálenosti 2 hexů od stanice a sám se do ní vykládá.',
+      title: 'Vysavač MK1',
+      desc: 'Stanice s robotem, který čistí hexy do vzdálenosti 2 hexů od stanice a sám se do ní vykládá. Po výzkumu „Vysavač MK2“ ji vylepšíš na místě klávesou R.',
       stats: [
         ['Oblast', '19 hexů (2 kolem stanice)'],
         ['Šířka pásu robota', m(STATION.width)],
         ['Zásobník robota', kg(STATION.hopper)],
-        ['Rychlost', `${STATION.speed} m/s`],
+        ['Rychlost', `${String(STATION.speed).replace('.', ',')} m/s`],
         ['Postaveno', `${game.s.stations.length}`],
       ],
       action: {
@@ -123,29 +149,7 @@ function stationsTab() {
         run: () => { hooks.onPlaceStation(); return 'close'; },
       },
     },
-  }, {
-    key: 'depot',
-    name: 'Depo na prach',
-    chip: [`${game.s.depots.length}× POSTAVENO`, game.s.depots.length ? 'owned' : 'store'],
-    thumb: () => thumb('silo', () => buildSilo().root),
-    detail: {
-      eyebrow: 'Logistika',
-      title: 'Depo na prach',
-      desc: 'Sklad prachu daleko od základny: vysypeš do něj zásobník jako do Výkupu a nemusíš jezdit domů. '
-        + 'U depa pak postavíš nadzemní pás, který prach odveze do Výkupu a prodá ho. Pás vede ve výšce, pod ním projedeš i s roverem.',
-      stats: [
-        ['Cena depa', money(SILO.price)],
-        ['Pás do základny', `${money(SILO.beltPerHex)} za hex`],
-        ['Výkon pásu', `${SILO.beltRate} kg/s · ${SILO.beltSpeed} m/s`],
-        ['Postaveno', `${game.s.depots.length}`],
-      ],
-      action: {
-        label: `Koupit a umístit · ${money(SILO.price)}`,
-        disabled: game.s.money < SILO.price,
-        run: () => { hooks.onPlaceDepot(); return 'close'; },
-      },
-    },
-  }, droneItem()];
+  }, vacuumItem(2)];    // UFO dron se kupuje ve Výzkumném centru (F-02 / L-32)
 }
 
 function droneItem() {
@@ -155,7 +159,7 @@ function droneItem() {
     key: 'drone',
     name: 'UFO dron',
     chip: [n ? `${n}× LÉTÁ` : 'V OBCHODĚ', n ? 'owned' : 'store'],
-    thumb: () => thumb('drone', () => buildDrone().root),
+    thumb: () => thumb('drone', () => instantiate('drone').root),
     detail: {
       eyebrow: 'Automatizace · létající',
       title: 'UFO dron',
@@ -187,13 +191,13 @@ function vehiclesShopTab() {
     stats.push(['Ve flotile', `${count}×`]);
     return {
       key: v.id, name: v.name, chip,
-      thumb: () => thumb(`veh-${v.id}`, () => buildVehicle(v.id).root),
+      thumb: () => thumb(`veh-${v.id}`, () => instantiate(`vehicle-${v.id}`).root),
       detail: {
         eyebrow: v.kind === 'push' ? 'Zametací vozík' : v.kind === 'transport' ? 'Přepravní vozidlo' : 'Zametací vozidlo',
         title: v.name, desc: v.desc, stats,
         action: full
-          ? { label: `Parkoviště je plné (${MAX_VEHICLES} vozidel)`, disabled: true }
-          : { label: `${count ? 'Koupit další' : 'Koupit'} · ${money(v.price)}`, disabled: game.s.money < v.price, run: () => purchase('veh', [v.id], v.price, () => buyVehicle(v.id)) },
+          ? { label: `Všechny garáže jsou plné (${fleetCapacity()} míst) – postav další kladivem`, disabled: true }
+          : { label: `${count ? 'Koupit další' : 'Koupit'} · ${money(v.price)}`, disabled: game.s.money < v.price, run: () => purchase('veh', [v.id, view.ctx || ''], v.price, () => buyVehicle(v.id, view.ctx)) },
       },
     };
   });
@@ -207,9 +211,10 @@ function vehicleStatus(i) {
   if (by) return { chip: [`ŘÍDÍ ${by.toUpperCase()}`, 'active'], text: `Řídí ${by}`, home: false, busy: true };
   const riders = seatsTaken(i).size;
   if (riders) return { chip: ['CESTUJÍCÍ', 'active'], text: `Cestující: ${riders}`, home: false, busy: true };
-  const spot = parkingSpot(v.spot ?? i);
-  if (angleBetween(v.p, spot.dir) * MOON.radius < 3) return { chip: ['NA PARKOVIŠTI', 'store'], text: `Na parkovišti, místo ${(v.spot ?? i) + 1}`, home: true, busy: false };
-  return { chip: ['VENKU', 'owned'], text: `Stojí venku · ${Math.round(distanceToBase(v.p))} m od základny`, home: false, busy: false };
+  const home = garageName(v.garage);
+  if (isParkedHome(v)) return { chip: ['NA PARKOVIŠTI', 'store'], text: `${home}, místo ${(v.spot | 0) + 1}`, home: true, busy: false };
+  const far = Math.round(angleBetween(v.p, homeSpot(v).dir) * MOON.radius);
+  return { chip: ['VENKU', 'owned'], text: `Stojí venku · ${far} m od domova (${home})`, home: false, busy: false };
 }
 
 function fleetTab() {
@@ -222,17 +227,25 @@ function fleetTab() {
     stats.push(['Max. rychlost', `${st.speed.toFixed(1)} m/s`], ['Vylepšení', upgradeSummary(veh)]);
     return {
       key: `v${i}`, name: vehicleName(i), chip: status.chip,
-      thumb: () => thumb(`veh-${v.id}`, () => buildVehicle(v.id).root),
+      thumb: () => thumb(`veh-${v.id}`, () => instantiate(`vehicle-${v.id}`).root),
       detail: {
         eyebrow: `Flotila · vozidlo ${i + 1} z ${game.s.vehicles.length}`,
         title: vehicleName(i), desc: v.desc, stats,
-        action: status.home
+        action: rehomeAction(i, status) || (status.home
           ? { label: 'Stojí na parkovišti', disabled: true }
-          : { label: 'Přivolat na parkoviště', disabled: status.busy, run: () => callVehicle(i) },
+          : { label: 'Přivolat na parkoviště', disabled: status.busy, run: () => callVehicle(i) }),
         action2: sellAction(i, status.busy),
       },
     };
   });
+}
+
+// V okně jiné garáže: přeřadit vozidlo sem (domov se změní, vozidlo zůstane stát, kde je).
+function rehomeAction(i, status) {
+  const veh = game.s.vehicles[i];
+  if (!view.ctx || veh.garage === view.ctx || !structureById(view.ctx)) return null;
+  if (!freeSlots(view.ctx).length) return { label: `${garageName(view.ctx)} je plná`, disabled: true };
+  return { label: `Přeřadit do: ${garageName(view.ctx)}`, disabled: status.busy, run: () => purchase('vhome', [i, veh.uid, view.ctx], 0, () => rehomeVehicle(i, view.ctx)) };
 }
 
 // Prodej vozidla: první klik se zeptá, druhý prodá (75 % ceny včetně vylepšení).
@@ -264,7 +277,7 @@ function fleetSummary() {
     if (st.busy) moving++;
     else if (!st.home) out++;
   });
-  return `${list.length} / ${MAX_VEHICLES} vozidel · zásobníky ${kg(cap)} · náplň ${kg(load)} · v jízdě ${moving} · venku ${out}`;
+  return `${list.length} / ${fleetCapacity()} vozidel (${garages().length} × ${GARAGE_SLOTS} míst) · zásobníky ${kg(cap)} · náplň ${kg(load)} · v jízdě ${moving} · venku ${out}`;
 }
 
 function upgradeSummary(veh) {
@@ -274,6 +287,8 @@ function upgradeSummary(veh) {
   parts.push(`rychlost ${veh.lv.speed}/5`);
   if (upgradeFits(veh.type, 'hopper')) parts.push(`zásobník ${veh.lv.hopper | 0}/${VEHICLE_UPGRADES.hopper.max}`);
   if (upgradeFits(veh.type, 'boost')) parts.push(`boost ${veh.lv.boost | 0}/${VEHICLE_UPGRADES.boost.max}`);
+  if (veh.lv.solar) parts.push(`střecha ${veh.lv.solar}/${VEHICLE_UPGRADES.solar.max}`);
+  if (veh.lv.cruise) parts.push(veh.lv.edge ? 'autocruise + hrana' : 'autocruise');
   return parts.join(' · ');
 }
 
@@ -287,16 +302,20 @@ function vehiclesUpgradeTab() {
         const lv = veh.lv[key] | 0;
         const cost = vehicleUpgradeCost(i, key);
         const pct = k => `${Math.round((1.5 + u.step * k) * 100)} %`;
-        const now = key === 'width' ? m(st.width) : key === 'boost' ? (lv ? pct(lv) : 'bez boostu')
-          : key === 'hopper' ? kg(st.hopper) : `${st.speed.toFixed(1)} m/s`;
-        const after = key === 'width' ? m(v.width * (1 + u.step * (lv + 1)))
+        const cap = x => `${fmtInt(Math.round(batteryCap({ ...veh, lv: { ...veh.lv, battery: x } })))} ⚡`;
+        const roof = x => (SOLAR_ROOF[x] ? `${Math.round(SOLAR_ROOF[x].cover * 100)} % jízdy · ${String(SOLAR_ROOF[x].rest).replace('.', ',')} ⚡/s ve stání` : 'bez střechy');
+        const auto = x => (key === 'cruise' ? (x ? 'C = autocruise' : 'bez autocruise') : (x ? 'C 2× = asistent hrany' : 'bez asistenta hrany'));
+        const now = key === 'cruise' || key === 'edge' ? auto(lv) : key === 'width' ? m(st.width) : key === 'boost' ? (lv ? pct(lv) : 'bez boostu')
+          : key === 'hopper' ? kg(st.hopper) : key === 'battery' ? cap(lv) : key === 'solar' ? roof(lv) : `${st.speed.toFixed(1)} m/s`;
+        const after = key === 'cruise' || key === 'edge' ? auto(lv + 1) : key === 'width' ? m(v.width * (1 + u.step * (lv + 1)))
           : key === 'boost' ? pct(lv + 1) : key === 'hopper' ? kg(v.hopper * (1 + u.step * (lv + 1)))
-            : `${(v.speed * (1 + u.step * (lv + 1))).toFixed(1)} m/s`;
-        return { name: u.name, lv, max: u.max, effect: cost === null ? now : `${now} → ${after}`, cost, run: () => purchase('vup', [i, key], cost, () => upgradeVehicle(i, key)) };
+            : key === 'battery' ? cap(lv + 1) : key === 'solar' ? roof(lv + 1) : `${(v.speed * (1 + u.step * (lv + 1))).toFixed(1)} m/s`;
+        const locked = vehicleUpgradeLock(key, lv, veh);
+        return { name: u.name, lv, max: u.max, effect: cost === null ? now : `${now} → ${after}`, cost, locked, run: () => purchase('vup', [i, key], cost, () => upgradeVehicle(i, key)) };
       });
     return {
       key: `v${i}`, name: vehicleName(i), chip: [game.s.driving === i ? 'POUŽÍVÁŠ' : 'VLASTNÍŠ', 'owned'],
-      thumb: () => thumb(`veh-${v.id}`, () => buildVehicle(v.id).root),
+      thumb: () => thumb(`veh-${v.id}`, () => instantiate(`vehicle-${v.id}`).root),
       detail: {
         eyebrow: 'Vozidlo', title: vehicleName(i),
         desc: upgradeFits(veh.type, 'boost') ? `${v.desc} Boost: podrž Shift a přepravník skokově zrychlí (vydrží 4 s, pak se dobíjí).` : v.desc,
@@ -317,7 +336,7 @@ function astronautTab() {
     key: 'boots',
     name: BOOTS.name,
     chip: [lv ? `ÚROVEŇ ${lv}` : 'ZÁKLAD', lv ? 'owned' : 'store'],
-    thumb: () => thumb(`boots-${lv}`, () => buildBootsModel(lv)),
+    thumb: () => thumb(`boots-${lv}`, () => instantiate('boots', lv).root),
     detail: {
       eyebrow: 'Astronaut',
       title: BOOTS.levels[lv].name,
@@ -332,7 +351,7 @@ function astronautTab() {
         cost, run: () => purchase('boots', [], cost, upgradeBoots),
       }],
     },
-  }, beltItem(), jetpackItem()];
+  }, beltItem(), jetpackItem(), hammerItem()];
 }
 
 function beltItem() {
@@ -344,7 +363,7 @@ function beltItem() {
     key: 'belt',
     name: BELT.name,
     chip: [lv ? `${slots} POLÍČKA` : '1 POLÍČKO', lv ? 'owned' : 'store'],
-    thumb: () => thumb(`belt-${lv}`, () => buildBeltModel(lv)),
+    thumb: () => thumb(`belt-${lv}`, () => instantiate('utility-belt', lv).root),
     detail: {
       eyebrow: 'Astronaut',
       title: BELT.levels[lv].name,
@@ -362,13 +381,32 @@ function beltItem() {
   };
 }
 
+function hammerItem() {
+  const own = ownsHammer();
+  return {
+    key: 'hammer',
+    name: HAMMER.name,
+    chip: own ? ['KOUPENO', 'owned'] : ['V NABÍDCE', 'store'],
+    thumb: () => thumb('hammer', () => instantiate('hammer').root),
+    detail: {
+      eyebrow: 'Astronaut · stavění',
+      title: HAMMER.name,
+      desc: HAMMER.desc,
+      stats: [['Klávesy', 'Q kladivo · V stavět · X bourat'], ['Bourání vrátí', '60 % ceny']],
+      action: own
+        ? { label: 'Máš ho · Q = vzít do ruky', disabled: true }
+        : { label: `Koupit · ${money(HAMMER.price)}`, disabled: game.s.money < HAMMER.price, run: () => purchase('hammer', [], HAMMER.price, buyHammer) },
+    },
+  };
+}
+
 function jetpackItem() {
   const own = ownsJetpack();
   return {
     key: 'jetpack',
     name: JETPACK.name,
     chip: own ? ['NA ZÁDECH', 'owned'] : ['V NABÍDCE', 'store'],
-    thumb: () => thumb('jetpack', () => buildJetpack()),
+    thumb: () => thumb('jetpack', () => instantiate('jetpack').root),
     detail: {
       eyebrow: 'Astronaut',
       title: JETPACK.name,
@@ -433,7 +471,45 @@ function marketTab() {
       ['Základní prémie', `$${HEX_BONUS} za hex`],
       ['Další úroveň', hl >= HEXUP.max ? '–' : bonus(hl + 1)],
     ]),
+    bricksItem(),
   ];
+}
+
+// Cihly z pásu ve Výkupu (L-24): prodávat po $80, nebo skladovat do zásoby (baterie T5, výzkumy, stavby)
+function bricksItem() {
+  const store = game.s.brickMode === 'store';
+  return {
+    key: 'bricks', name: 'Cihly', chip: [store ? 'SKLADUJE' : 'PRODÁVÁ', store ? 'owned' : 'active'],
+    thumb: () => modelThumb('sinter'),
+    detail: {
+      eyebrow: 'Výkup · cihly ze slinovny', title: store ? 'Cihly se skladují' : 'Cihly se prodávají',
+      desc: `Cihly, které do Výkupu přiveze pás ze slinovny, se buď prodají po $${brickPrice()} (cena roste s burzou jako prach), nebo přibývají do zásoby (číslo v HUD pod penězi). Zásoba je potřeba na baterii Jádro, solár Koruna a vyšší výzkumy.`,
+      stats: [['Zásoba cihel', fmtInt(game.s.bricks | 0)], ['Cena cihly', money(brickPrice())], ['Prach z pásu', `$${dustPrice().toFixed(2)} / kg`]],
+      action: { label: store ? `Přepnout na prodej ($${brickPrice()} za cihlu)` : 'Přepnout na skladování', run: () => purchase('brickmode', [store ? 'sell' : 'store'], 0, () => { game.s.brickMode = store ? 'sell' : 'store'; return true; }) },
+    },
+  };
+}
+
+// ---------- slinovna (L-23, D-11) ----------
+const SINTER_TEXT = { work: 'pracuje', idle: 'čeká na prach', full: 'výstup ucpaný – napoj pás z výstupu', power: 'málo energie' };
+function sinterTab() {
+  const b = structureById(view.ctx);
+  if (!b) return [];
+  const d = b.data;
+  const inBelt = beltAt([b.id, 'in']), outBelt = beltAt([b.id, 'out']);
+  return [{
+    key: 'sinter', name: 'Výroba', chip: [SINTER_TEXT[d.state || 'idle'].split(' –')[0].toUpperCase(), d.state === 'work' ? 'active' : 'store'], thumb: () => modelThumb('sinter'),
+    detail: {
+      eyebrow: 'Slinovna', title: `Slinovna · ${SINTER_TEXT[d.state || 'idle']}`,
+      desc: `Z ${SINTER.kgPerBrick} kg prachu vylisuje 1 regolitovou cihlu za ${SINTER.time} s (${Math.round(60 / SINTER.time)} cihel za minutu), při práci bere ${SINTER.power} ⚡/s. Prach přiveze pás do násypky vlevo, cihly odvádí pás z výstupu vpravo – nejlépe do Výkupu.`,
+      stats: [
+        ['Prach v násypce', `${fmtInt(Math.round(d.hopper || 0))} / ${SINTER.hopper} kg`],
+        ['Cihly na výstupu', `${d.out | 0} / ${SINTER.outCap}`],
+        ['Vstupní pás', inBelt ? 'připojený' : 'chybí'],
+        ['Výstupní pás', outBelt ? 'připojený' : 'chybí'],
+      ],
+    },
+  }];
 }
 
 function holoDetailHtml() {
@@ -469,7 +545,7 @@ function statsHtml() {
   const group = (title, rows) => `<h3 class="wardrobe__heading">${esc(title)}</h3><div class="detail__specs">${rows.join('')}</div>`;
   const hours = ms => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
   const played = (s.playMs || 0) + (game.started ? Date.now() - game.started : 0);
-  const belts = s.depots.filter(d => d.belt).length;
+  const depotsN = (s.buildings || []).filter(b => b.type === 'depot').length, belts = (s.belts || []).length;
   const players = Object.values(s.pstats || {}).sort((a, b) => (b.kg || 0) - (a.kg || 0));
   const prev = (s.history || []).map(h => `${h.planet === 'mars' ? 'Mars' : 'Měsíc'} (${hours(h.playMs || 0)})`).join(', ');
   return `
@@ -485,7 +561,8 @@ function statsHtml() {
       ${group('Automatizace', [
         spec('Stanice robotů', `${s.stations.length}`),
         spec('UFO drony', `${(s.drones || []).length}`),
-        spec('Depa · s pásem', `${s.depots.length} · ${belts}`),
+        spec('Depa · pásy', `${depotsN} · ${belts}`),
+        spec('Zásoba cihel', fmtInt(s.bricks | 0)),
         spec('Vozidla ve flotile', `${s.vehicles.length}`),
       ])}
       ${group('Ekonomika', [
@@ -517,27 +594,180 @@ function trophiesTab() {
   });
 }
 
-function garageSiteTab() {
+// ---------- nabíječka (L-05, D-03) ----------
+
+const SLOT_TEXT = { free: 'volný', charging: 'nabíjí', full: 'nabito', short: 'málo energie v síti' };
+function chargerTab() {
+  const b = structureById(view.ctx);
+  if (!b) return [];
+  const def = STRUCTURES.charger;
+  const n = b.data.slots || 1, f = b.data.fast | 0;
+  const L = live.get(b.id);
+  const pic = () => thumb('str-charger', () => instantiate('charger').root);
+  const slotStats = Array.from({ length: n }, (_, k) => {
+    const i = vehicleOnSlot(b, k);
+    const st = L?.slots?.[k]?.state || 'free';
+    const v = game.s.vehicles[i];
+    return [`Slot ${k + 1}`, v ? `${vehicleName(i)} · ${Math.round(v.charge / batteryCap(v) * 100)} % · ${SLOT_TEXT[st]}` : SLOT_TEXT[st]];
+  });
+  const slot = chargerSlotOffer(b), fast = chargerFastOffer(b);
   return [{
-    key: 'garage',
-    name: 'Garáž',
-    chip: ['STAVENIŠTĚ', 'store'],
-    thumb: () => thumb('garage', () => {
-      const g = buildGarageModel();
-      g.setBuilt(true);
-      return g.root;
-    }),
+    key: 'slots', name: 'Sloty', chip: [`${n} / 4`, 'owned'], thumb: pic,
     detail: {
-      eyebrow: 'Stavba',
-      title: 'Garáž',
-      desc: 'Hangár pro zametací vozidla. Po dostavbě tu koupíš vozík, zametače, rover i přepravník posádky a uvidíš celou flotilu.',
-      stats: [['Vozidel v nabídce', `${VEHICLES.length}`], ['Parkovacích míst', `${MAX_VEHICLES}`]],
-      action: { label: `Postavit garáž · ${money(GARAGE_PRICE)}`, disabled: game.s.money < GARAGE_PRICE, run: () => purchase('garage', [], GARAGE_PRICE, buildGarage) },
+      eyebrow: 'Nabíječka vozidel', title: `Sloty (${n} / 4)`,
+      desc: 'Zastav vozidlo na slotu (±1,5 m od značky) a nech ho stát – nabíjí se samo, vystupovat není potřeba. 3. a 4. slot se přistaví jako modul vlevo.',
+      stats: [...slotStats, ['Výkon slotu', `${slotRate(b)} ⚡/s`]],
+      action: slot.price === null ? { label: slot.reason, disabled: true }
+        : { label: slot.reason ? `${slot.reason} · ${fmt(slot.price)}` : `Přidat slot · ${money(slot.price)}`, disabled: !!slot.reason, run: () => purchase('chslot', [b.id], slot.price, () => chargerAddSlot(b.id)) },
+    },
+  }, {
+    key: 'fast', name: 'Rychlonabíjení', chip: [f ? `ÚROVEŇ ${f + 1}` : 'ZÁKLAD', f ? 'owned' : 'store'], thumb: pic,
+    detail: {
+      eyebrow: 'Nabíječka vozidel', title: 'Rychlonabíjení',
+      desc: 'Zvýší výkon všech slotů: II = 20 ⚡/s, III = 40 ⚡/s (po výzkumu „Rychlonabíjení III“).',
+      stats: [['Teď', `${CHARGER_RATE[f]} ⚡/s na slot`], ['Další úroveň', f >= 2 ? '–' : `${CHARGER_RATE[f + 1]} ⚡/s`]],
+      action: fast.price === null ? { label: fast.reason, disabled: true }
+        : { label: fast.reason ? `${fast.reason} · ${fmt(fast.price)}` : `Vylepšit · ${money(fast.price)}`, disabled: !!fast.reason, run: () => purchase('chfast', [b.id], fast.price, () => chargerFaster(b.id)) },
     },
   }];
 }
 
+// Stav sítě stavby jako informační řádek nad kartami (nabíječka, výměník, výzkumné centrum)
+const NET_HINT = {
+  charger: 'Postav kotvu vedení do 12 m od nabíječky (kabel se natáhne sám) a spoj ji se zdrojem – solárem nebo RTG.',
+  swapper: 'Postav kotvu vedení do 12 m od sloupku přípojky (vlevo vzadu) a spoj ji se zdrojem.',
+  research: 'Postav kotvu vedení do 12 m od přípojky v rohu budovy a spoj ji se zdrojem.',
+  sinter: 'Postav kotvu vedení do 12 m od sloupku přípojky (vzadu) a spoj ji se zdrojem.',
+};
+const kw = v => `${v.toFixed(1).replace('.', ',')} ⚡/s`;
+function netSummary() {
+  const b = structureById(view.ctx);
+  if (!b) return '';
+  const L = live.get(b.id), net = netInfo.get(L?.net);
+  if (!L?.wired) return `⚡ Bez kabelu – nefunguje. ${NET_HINT[b.type] || ''}`;
+  if (!net) return '⚡ Síť: připojeno';
+  return `⚡ Síť: výroba ${kw(net.prod)} · spotřeba ${kw(net.demand)} · baterie ${net.cap ? `${fmtInt(Math.round(net.stored))} / ${fmtInt(net.cap)} ⚡` : 'žádné'} · dostupnost ${Math.round(net.f * 100)} %`;
+}
+const summaryText = () => (view.tab === 'fleet' ? (game.s.vehicles.length ? fleetSummary() : null)
+  : view.tab === 'tree' ? `${researchSummary()}\n${netSummary()}`
+  : view.id === 'charger' || view.id === 'swapper' || view.id === 'sinter' ? netSummary() : null);
+
+// ---------- výzkumné centrum (L-30 až L-32, D-10) ----------
+
+const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+// Náhled modelu; GLB, který ještě není načtený, se dotáhne a okno se překreslí.
+function modelThumb(id) {
+  if (!isReady(id)) { preloadModels([id]).then(() => { if (facilityOpen()) render(); }); return BLANK; }
+  return thumb(`m-${id}`, () => instantiate(id).root);
+}
+const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const STATE_CHIP = { done: ['VYZKOUMÁNO', 'owned'], running: ['PROBÍHÁ', 'active'], queued: ['VE FRONTĚ', 'active'], available: ['DOSTUPNÉ', 'store'], locked: ['ZAMČENO', 'locked'] };
+
+function researchSummary() {
+  const pr = researchProgress(), q = game.s.research.queue;
+  const rc = researchCenter();
+  const f = rc ? live.get(rc.id)?.f ?? 0 : 0;
+  if (!pr) return `Nic se nevyvíjí.${q.length ? ` Fronta: ${q.map(x => techById(x).name).join(', ')} (čeká na peníze).` : ' Vyber technologii a spusť výzkum.'}`;
+  const power = f >= 0.98 ? `${RESEARCH_POWER} ⚡/s` : f > 0 ? `málo energie – ${Math.round(f * 100)} % rychlosti` : 'bez energie – stojí';
+  return `Probíhá: ${pr.tech.name} · ${Math.round(pr.k * 100)} % · zbývá ${mmss(pr.left)} · ${power}${q.length ? ` · fronta: ${q.map(x => techById(x).name).join(', ')}` : ''}`;
+}
+
+function techItems() {
+  return TECH.map(t => {
+    const st = techState(t.id);
+    const offer = researchOffer(t.id);
+    const pr = researchProgress();
+    const cost = `${money(t.price)}${t.bricks ? ` + ${t.bricks} cihel` : ''}`;
+    let action;
+    if (st.state === 'done') action = { label: 'Vyzkoumáno ✓', disabled: true };
+    else if (st.state === 'running') action = { label: `Probíhá · ${Math.round((pr?.k || 0) * 100)} %`, disabled: true };
+    else if (st.state === 'queued') action = { label: 'Odebrat z fronty', run: () => purchase('unqueue', [t.id], 0, () => unqueueResearch(t.id)) };
+    else if (!offer.kind) action = { label: offer.reason || st.reason, disabled: true };
+    else if (offer.kind === 'queue') action = { label: offer.reason || `Zařadit do fronty · ${cost} při spuštění`, disabled: !!offer.reason, run: () => purchase('research', [t.id], 0, () => startResearch(t.id)) };
+    else action = { label: offer.reason ? `${offer.reason} · ${cost}` : `Spustit výzkum · ${cost}`, disabled: !!offer.reason, run: () => purchase('research', [t.id], t.price, () => startResearch(t.id)) };
+    return {
+      key: t.id, name: t.name, chip: STATE_CHIP[st.state], tech: t, st,
+      thumb: () => modelThumb(TECH_MODEL[t.id]),
+      detail: {
+        eyebrow: `Výzkum · ${BRANCHES.find(b => b.id === t.branch).name}`, title: t.name, desc: t.desc,
+        stats: [
+          ['Cena', cost], ['Doba výzkumu', mmss(t.time)],
+          ['Vyžaduje', (t.req || []).map(r => techById(r).name).join(', ') || '–'],
+          ['Odemyká', t.unlocks],
+          ...(st.state === 'running' && pr ? [['Průběh', `${Math.round(pr.k * 100)} % · zbývá ${mmss(pr.left)}`]] : []),
+          ...(st.state === 'locked' && st.reason ? [['Stav', st.reason]] : []),
+        ],
+        action,
+      },
+    };
+  });
+}
+
+// Strom technologií: tři sloupce (Energie, Automatizace, Vozidla), navazující výzkumy odsazené pod předchůdcem.
+function treeHtml(items) {
+  const pr = researchProgress();
+  const node = it => {
+    const depth = it.tech.req ? 1 : 0;
+    const run = it.st.state === 'running';
+    return `
+      <button class="tech tech--${it.st.state}${it.key === view.sel ? ' tech--selected' : ''}" type="button" data-sel="${it.key}" style="--depth:${depth}">
+        <span class="tech__name">${esc(it.name)}</span>
+        <span class="tech__meta">${esc(it.chip[0])} · ${money(it.tech.price)}${it.tech.bricks ? ` + ${it.tech.bricks} 🧱` : ''} · ${mmss(it.tech.time)}</span>
+        ${run ? `<span class="tech__bar"><span class="tech__fill" data-fill style="width:${Math.round((pr?.k || 0) * 100)}%"></span></span>` : ''}
+      </button>`;
+  };
+  // pořadí ve sloupci: kořen a hned pod ním jeho následníci
+  const ordered = branch => {
+    const list = items.filter(it => it.tech.branch === branch);
+    const out = [];
+    const add = it => { if (out.includes(it)) return; out.push(it); list.filter(x => x.tech.req?.includes(it.key)).forEach(add); };
+    list.filter(it => !it.tech.req).forEach(add);
+    list.forEach(add);
+    return out;
+  };
+  return `<div class="tree">${BRANCHES.map(b => `
+    <div class="tree__col">
+      <h3 class="tree__heading">${esc(b.name)}</h3>
+      ${ordered(b.id).map(node).join('')}
+    </div>`).join('')}</div>`;
+}
+
+// ---------- výměník baterií (L-09, D-04) ----------
+function swapperTab() {
+  const b = structureById(view.ctx);
+  if (!b) return [];
+  const rack = b.data.rack || [];
+  const pic = () => modelThumb('swapper');
+  const offer = swapperRackOffer(b);
+  const eta = swapperEta(b);
+  return [{
+    key: 'rack', name: 'Regál', chip: [`${rack.filter(x => x >= 0.999).length} / ${rack.length} NABITÉ`, 'owned'], thumb: pic,
+    detail: {
+      eyebrow: 'Výměník baterií', title: `Regál (${rack.length} / 4)`,
+      desc: `Zajeď vozidlem doprostřed výměníku a zastav – jeřáb vymění baterii za ${String(SWAP.dur).replace('.', ',')} s, vozidlo má 100 %. Vybitá baterie jde do regálu a nabíjí se ze sítě ${SWAP.rate} ⚡/s. Baterie jsou univerzální pro všechna vozidla.`,
+      stats: [
+        ...rack.map((x, k) => [`Baterie ${k + 1}`, x >= 0.999 ? 'nabitá' : `${Math.round(x * 100)} % · nabíjí se`]),
+        ['Nejbližší nabitá', eta === 0 ? 'hned' : eta == null ? 'nenabíjí se (bez energie)' : `za ${Math.ceil(eta)} s`],
+      ],
+      action: offer.price === null ? { label: offer.reason, disabled: true }
+        : { label: offer.reason ? `${offer.reason} · ${fmt(offer.price)}` : `Přidat baterii do regálu · ${money(offer.price)}`, disabled: !!offer.reason, run: () => purchase('swrack', [b.id], offer.price, () => swapperAddRack(b.id)) },
+    },
+  }];
+}
+
+function researchDronesTab() {
+  const it = droneItem();
+  if (!isDone('droneUfo')) {
+    it.chip = ['ZAMČENO', 'locked'];
+    it.detail.action = { label: '🔒 Nejdřív vyzkoumej „Dron UFO“', disabled: true };
+  }
+  return [it];
+}
+
 function tabsFor(id) {
+  if (id === 'swapper') return [['rack', 'Výměník', swapperTab]];
+  if (id === 'sinter') return [['sinter', 'Slinovna', sinterTab]];
+  if (id === 'research') return [['tree', 'Strom technologií', techItems], ['drones', 'Drony', researchDronesTab]];
   if (id === 'toolshop') return [['tools', 'Nástroje', () => toolsTab(false)], ['stations', 'Roboti a depa', stationsTab]];
   if (id === 'workshop') {
     return [
@@ -547,11 +777,8 @@ function tabsFor(id) {
   }
   if (id === 'trophies') return [['all', `Úspěchy (${achCount()}/${ACHIEVEMENTS.length})`, trophiesTab]];
   if (id === 'depot') return [['holo', 'Hologram', null], ['market', 'Burza', marketTab], ['stats', 'Statistiky', null]];
-  if (id === 'garage') {
-    return game.s.garage
-      ? [['vehicles', 'Vozidla', vehiclesShopTab], ['fleet', `Flotila (${game.s.vehicles.length})`, fleetTab]]
-      : [['build', 'Stavba', garageSiteTab]];
-  }
+  if (id === 'garage') return [['vehicles', 'Vozidla', vehiclesShopTab], ['fleet', `Flotila (${game.s.vehicles.length})`, fleetTab]];
+  if (id === 'charger') return [['slots', 'Nabíječka', chargerTab]];
   return [];
 }
 
@@ -620,15 +847,16 @@ function setLook(patch) {
 function render() {
   const tabs = tabsFor(view.id);
   if (!tabs.some(t => t[0] === view.tab)) view.tab = tabs[0][0];
-  $('facility-title').textContent = TITLES[view.id];
+  $('facility-title').textContent = view.id === 'garage' && view.ctx ? garageName(view.ctx) : TITLES[view.id];   // nabíječka: TITLES
   $('facility-money').textContent = money(game.s.money);
   $('facility-tabs').innerHTML = tabs.map(([key, label]) =>
     `<button class="tabs__tab${key === view.tab ? ' tabs__tab--active' : ''}" type="button" role="tab"
        aria-selected="${key === view.tab}" data-tab="${key}">${esc(label)}</button>`).join('');
 
   const summary = $('facility-summary');
-  summary.hidden = view.tab !== 'fleet' || !game.s.vehicles.length;
-  if (view.tab === 'fleet') summary.textContent = fleetSummary();
+  const sumText = summaryText();
+  summary.hidden = sumText == null;
+  if (sumText != null) summary.textContent = sumText;
 
   if (view.tab === 'wardrobe') {
     current = null;
@@ -658,8 +886,10 @@ function render() {
   $('facility-grid').classList.remove('facility__grid--plain');
 
   const items = tabs.find(t => t[0] === view.tab)[2]();
-  if (!items.some(it => it.key === view.sel)) view.sel = items[0]?.key ?? null;
-  $('facility-grid').innerHTML = items.length
+  if (!items.some(it => it.key === view.sel)) view.sel = (view.tab === 'tree' && game.s.research.current?.id) || items[0]?.key || null;
+  $('facility-grid').classList.toggle('facility__grid--plain', view.tab === 'tree');
+  if (view.tab === 'tree') $('facility-grid').innerHTML = treeHtml(items);
+  else $('facility-grid').innerHTML = items.length
     ? items.map(it => `
       <button class="item-card${it.key === view.sel ? ' item-card--selected' : ''}" type="button" data-sel="${it.key}">
         <span class="item-card__chip item-card__chip--${it.chip[1]}">${esc(it.chip[0])}</span>
@@ -687,8 +917,8 @@ function detailHtml(it) {
           Array.from({ length: u.max }, (_, k) => `<span class="upgrade__pip${k < u.lv ? ' upgrade__pip--on' : ''}"></span>`).join('')}</span>
       </div>
       <span class="upgrade__effect">${esc(u.effect)}</span>
-      <button class="upgrade__button" type="button" data-up="${i}" ${busy || u.cost === null || game.s.money < u.cost ? 'disabled' : ''}>
-        ${u.cost === null ? 'MAX' : `Vylepšit · ${money(u.cost)}`}
+      <button class="upgrade__button" type="button" data-up="${i}" ${busy || u.cost === null || u.locked || game.s.money < u.cost ? 'disabled' : ''}>
+        ${u.locked ? `🔒 ${esc(u.locked)}` : u.cost === null ? 'MAX' : `Vylepšit · ${money(u.cost)}`}
       </button>
     </div>`).join('');
   const label = busy ? 'Čekám na schválení hostitelem…' : d.action?.label;
@@ -785,8 +1015,9 @@ let openedAt = 0;
 
 export const facilityOpen = () => !$('facility').hidden;
 
-export function openFacility(id) {
+export function openFacility(id, ctx = null) {
   view.id = id;
+  view.ctx = ctx;
   view.tab = null;
   view.sel = null;
   render();
@@ -809,6 +1040,21 @@ export function refreshFacility() {
   if (!facilityOpen()) return;
   $('facility-money').textContent = money(game.s.money);
   if (view.tab === 'fleet') $('facility-summary').textContent = fleetSummary();
+  if ((view.id === 'charger' || view.id === 'swapper' || view.id === 'sinter') && performance.now() - holoAt > 1000) { holoAt = performance.now(); $('facility-summary').textContent = netSummary(); if (view.id === 'sinter' && !busy) render(); }
+  if (view.id === 'research' && performance.now() - holoAt > 1000) {       // průběh výzkumu a stav sítě
+    holoAt = performance.now();
+    const sig = JSON.stringify(game.s.research) + Math.round((live.get(view.ctx)?.f ?? 0) * 20);
+    if (view.tab === 'tree') {
+      $('facility-summary').textContent = summaryText();
+      const pr = researchProgress();
+      const fill = $('facility-grid').querySelector('[data-fill]');
+      if (fill && pr) fill.style.width = `${Math.round(pr.k * 100)}%`;
+    }
+    // změna stavu (hotovo, další z fronty, peníze) → překreslit celé okno; jinak jen průběh
+    const stateSig = sig.replace(/"progress":[\d.]+/, '') + game.s.money;
+    if (stateSig !== researchSig) { researchSig = stateSig; if (!busy) render(); }
+    return;
+  }
   if ((view.tab === 'holo' || view.tab === 'stats') && performance.now() - holoAt > 1500) {   // počty se mění, jak se uklízí
     holoAt = performance.now();
     $('facility-detail').innerHTML = holoDetailHtml();
@@ -816,3 +1062,4 @@ export function refreshFacility() {
   }
 }
 let holoAt = 0;
+let researchSig = '';

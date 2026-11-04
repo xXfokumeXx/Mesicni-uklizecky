@@ -7,7 +7,7 @@ import { callBackVehicle } from './equipment.js';
 
 // Osobní nákupy (nástroje, boty, opasek, jetpack) si klient po schválení použije sám; sdílené (garáž, vozidla,
 // stanice, depa) provede hostitel a klient je uvidí v dalším sdíleném stavu.
-const PERSONAL = new Set(['tool', 'tup', 'boots', 'gbelt', 'jet']);
+const PERSONAL = new Set(['tool', 'tup', 'boots', 'gbelt', 'jet', 'hammer']);
 
 // kind = druh nákupu, args = parametry pro hostitele, cost = cena, local = funkce, která nákup
 // provede a strhne peníze (equipment.js). Vrací true / false, nebo Promise (čeká na hostitele).

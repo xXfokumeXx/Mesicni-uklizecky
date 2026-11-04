@@ -3,10 +3,10 @@
 // (pevné semínko) a uloží se jen ROZDÍL = kolik prachu kde ubylo. Rozdíl je skoro všude nula,
 // takže ho gzip v prohlížeči (CompressionStream) zmenší na desítky až stovky kB.
 import { SAVE_KEY, PLANET } from './config.js';
-import { game, newGame, upgradeState, newUid, pickPersonal } from './state.js';
+import { game, newGame, newUid, pickPersonal, migrateState, canLoadVersion, SAVE_VERSION } from './state.js';
 import { hexes, dustDiff, applyDustDiff } from './planet/dustmap.js';
 import { VEHICLES, STATION } from './catalog.js';
-import { parkingSpot } from './base.js';
+import { legacyGarages, homeSpot } from './structures.js';    // (zároveň registruje převod v2 → v3, MIGRATE[2])
 import { tangentTo } from './planet/vec.js';
 
 export const SLOTS = ['slot1', 'slot2', 'slot3', 'slot4', 'slot5'];
@@ -124,7 +124,39 @@ async function allRecords() {
 // Seznam uložených her (jen popisy, bez map): [{ id, title, savedAt, money, done, total, playMs }]
 export async function listSaves() {
   const list = await allRecords();
-  return list.filter(r => SLOTS.includes(r.id) && r.meta).map(r => ({ id: r.id, ...r.meta }));
+  return list.filter(r => SLOTS.includes(r.id) && r.meta).map(r => ({ id: r.id, ...r.meta, v: r.v || 2 }));
+}
+
+// ---------- export / import slotu (L-50) ----------
+// Soubor .json: { format, fv, v, exportedAt, meta, s, dust: { gz, b64 } } – stav i zkomprimovaný rozdíl mapy prachu.
+// Slouží k lokálnímu testu (localhost má jiné úložiště než GitHub Pages) a jako záloha před nasazením nové verze.
+const EXPORT_FORMAT = 'mesicni-zametacky-slot';
+
+export async function exportSlot(slot) {
+  const rec = await getRecord(slot);
+  if (!rec?.s) return null;
+  const data = {
+    format: EXPORT_FORMAT, fv: 1, v: rec.v || 2, exportedAt: Date.now(),
+    meta: rec.meta, s: rec.s,
+    dust: rec.dust ? { gz: !!rec.dust.gz, b64: toBase64(rec.dust.bytes) } : null,
+  };
+  const name = `${(rec.meta?.title || slot).replace(/[^\p{L}\p{N}_-]+/gu, '-').slice(0, 40)}-${new Date().toISOString().slice(0, 10)}.json`;
+  return { name, text: JSON.stringify(data) };
+}
+
+// Nahraje soubor do PRÁZDNÉHO slotu. Vrací { ok, error }.
+export async function importSlot(slot, text) {
+  let data;
+  try { data = JSON.parse(text); } catch { return { ok: false, error: 'Soubor není platný JSON.' }; }
+  if (data?.format !== EXPORT_FORMAT || !data.s || typeof data.s !== 'object') return { ok: false, error: 'Tohle není uložená hra Měsíčních zametaček.' };
+  if (!canLoadVersion({ v: data.s.v ?? data.v })) return { ok: false, error: `Hra je z novější verze (${data.s.v ?? data.v}) – tahle verze ji neotevře.` };
+  if ((await getRecord(slot))?.s) return { ok: false, error: 'Slot není prázdný – nejdřív ho smaž, nebo vyber jiný.' };   // (getRecord vrací u prázdného slotu true)
+  let dust = null;
+  try { if (data.dust) dust = { gz: !!data.dust.gz, bytes: fromBase64(data.dust.b64) }; } catch { return { ok: false, error: 'Mapa prachu v souboru je poškozená.' }; }
+  const s = data.s;
+  const meta = { ...(data.meta || {}), title: data.meta?.title || s.title || 'Importovaná hra', planet: s.planet === 'mars' ? 'mars' : 'moon' };
+  const ok = await putRecord({ id: slot, v: data.v || s.v || 2, meta, s, dust });
+  return ok ? { ok: true } : { ok: false, error: 'Do prohlížeče se nepodařilo uložit (plné úložiště?).' };
 }
 
 let saving = false;
@@ -154,7 +186,7 @@ export async function peekSave(slot) {
 export async function saveFresh(slot, s) {
   const rec = {
     id: slot,
-    v: 2,
+    v: SAVE_VERSION,
     meta: { title: s.title, savedAt: Date.now(), money: s.money, done: 0, total: 0, playMs: s.playMs || 0, planet: s.planet },
     s,
     dust: null,
@@ -173,7 +205,7 @@ export async function saveGame(slot = game.slot, onFail) {
     game.s.last = now;
     const rec = {
       id: slot,
-      v: 2,
+      v: SAVE_VERSION,
       meta: {
         title: game.s.title, savedAt: now, money: game.s.money,
         done: hexes.doneCount, total: hexes.total, playMs: game.s.playMs, planet: game.s.planet,
@@ -202,11 +234,12 @@ export async function saveGame(slot = game.slot, onFail) {
 export async function loadGame(slot) {
   try {
     const rec = await getRecord(slot);
-    if (!rec?.s || rec.v !== 2) return false;
+    if (!rec?.s || !canLoadVersion({ v: rec.s.v ?? rec.v })) return false;      // novější verze hry se neotevře
     if ((rec.s.planet === 'mars' ? 'mars' : 'moon') !== PLANET.id) return false;
     if (rec.dust && !(await unpackDust(rec.dust))) return false;      // bez mapy = čerstvě vygenerovaná planeta
     game.s = rec.s;
-    upgradeState(game.s);
+    if (game.s.v == null) game.s.v = rec.v;
+    migrateState(game.s);
     game.slot = slot;
     try { localStorage.setItem(LAST_KEY, slot); } catch { /* nic */ }
     return true;
@@ -243,11 +276,12 @@ export function importV1(title) {
     s.garage = !!old.garage;
     (old.vehicles || []).forEach((v, i) => {
       if (!VEHICLES.some(x => x.id === v.type)) return;
-      const spot = parkingSpot(i);
-      s.vehicles.push({ uid: newUid(), type: v.type, spot: i, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: v.lv || { width: 0, speed: 0 } });
+      s.vehicles.push({ uid: newUid(), type: v.type, spot: i, p: s.p, f: s.f, load: 0, lv: { width: 0, speed: 0, boost: 0, hopper: 0, ...(v.lv || {}) } });
     });
+    legacyGarages(s);                                 // garáž z v1 → stavba garáže, vozidla na její místa
+    for (const v of s.vehicles) { const h = homeSpot(v); v.p = h.dir; v.f = tangentTo(h.dir, h.facing); }
     const n = (old.stations || []).length;
-    for (let k = 0; k < n; k++) s.money += Math.round(STATION.price * STATION.priceMult ** k);
+    for (let k = 0; k < n; k++) s.money += Math.round(800 * STATION.priceMult ** k);   // v1: stanice stála $800
     return true;
   } catch {
     return false;

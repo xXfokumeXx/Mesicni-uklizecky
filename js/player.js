@@ -1,14 +1,19 @@
 // Hráč: chůze a jízda s fyzikou (gravitace do středu Měsíce), zametání a výkup prachu.
 import {
-  MOON, DEPOT, JUMP_SPEED, UNITS_PER_KG,
+  MOON, JUMP_SPEED, UNITS_PER_KG,
 } from './config.js';
-import { JETPACK, BOOST, VEHICLE_BODY, vehicleById } from './catalog.js';
+import { JETPACK, BOOST, VEHICLE_BODY, vehicleById, VEHICLE_BATTERY, EMERGENCY_SPEED, batteryCap } from './catalog.js';
 import { game, dustPrice, hexBonus } from './state.js';
 import { activeEquipment, walkSpeed } from './equipment.js';
 import { createBody, stepBody, jumpBody, altitude } from './physics.js';
 import { sweepCapsule } from './planet/dustmap.js';
 import { heightAt } from './planet/height.js';
-import { depotAt } from './depots.js';
+import { depotAt, depotRoom } from './logistics.js';
+import { pushOut, structureById } from './structures.js';
+import { roofCover } from './solarRoof.js';
+import { rockHit, rockPush, rockHeight, breakRock, rockBlockedNote, ROCK_TYPES, ROCK_BREAKERS, rocks } from './rocks.js';
+import { autopilotDrive, autopilotOff } from './autopilot.js';
+import { inBuyback } from './base.js';
 import { createRagdoll, stepRagdoll, ragdollPoints, encodeRagdollStart, RAG_STEP, RG } from './ragdoll.js';
 import { cross, madd, norm, tangentTo, angleBetween, rotateAround, dot } from './planet/vec.js';
 
@@ -18,6 +23,8 @@ const PUSH_GAP = 1.1;                    // u ručního vozíku jde astronaut za
 const SWEEP_ALT = 0.5;                   // zametá se i při malém odskoku (do 0,5 m nad zemí)
 // přilnavost a tlumiče (physics.js): astronaut se z hrbolu odlepí jen výjimečně, vozidla podle katalogu
 const WALK_BODY = [0.8, 6];
+const TURN_RATE = 1.6;                   // rad/s – nejrychlejší zatáčení vozidla při jízdě myší
+const STEER_DEADZONE = Math.sin(3 * Math.PI / 180);   // pod 3° odchylky se nezatáčí (žádné cukání na rovince)
 const walkerBody = p => createBody(p, ...WALK_BODY);
 
 // Informace pro animace a efekty.
@@ -181,6 +188,8 @@ function walk(input, dt) {
 
   if (body.grounded) body.jet = false;
   stepBody(body, dt, want, body.jet ? 0.12 : undefined);   // po výstřelu jetpackem se ve vzduchu skoro neřídí
+  blockByStructures(body, 0.45);
+  blockByRocks(body, 0.45);                       // pěšky jen střední kameny (malé se překročí)
   if (body.grounded) { body.jet = false; jetReady = true; }
   s.p = body.p;
   s.f = tangentTo(s.p, s.f);
@@ -196,42 +205,88 @@ function drive(input, dt) {
   const b = vehicleBody(s.driving);
   const eq = activeEquipment();
   // boost (Shift): skokové zrychlení, dokud zbývá; nabíjí se, když se nepoužívá
+  // baterie (L-01, L-02): při 0 % nouzový režim – 15 % rychlosti, nezametá, bez boostu
+  const cap = batteryCap(v);
+  const empty = cap > 0 && !(v.charge > 0);
+  // autopilot (L-40, L-41): místo plynu a jízdy myší dá cílovou rychlost a otáčení
+  const ap = autopilotDrive(dt, input, {
+    max: eq.stats.speed * (empty ? EMERGENCY_SPEED : 1), speed: vehicleSpeed, front: eq.base.front || 0, width: eq.stats.width,
+    empty, full: eq.stats.hopper > 0 && v.load >= eq.stats.hopper - 0.01, manual: input.turn() !== 0,
+  });
   const boost = eq.stats.boost || 1;
-  const boosting = boost > 1 && input.boost && boostLeft > 0 && b.grounded;
+  const boosting = !ap && boost > 1 && input.boost && boostLeft > 0 && b.grounded && !empty;
   boostLeft = boosting ? Math.max(0, boostLeft - dt) : Math.min(BOOST.duration, boostLeft + dt * BOOST.duration / BOOST.recharge);
   playerFx.boosting = boosting;
-  const max = eq.stats.speed * (boosting ? boost : 1);
+  const max = eq.stats.speed * (boosting ? boost : 1) * (empty ? EMERGENCY_SPEED : 1);
 
   let throttle = 0;
-  const m = input.move();
-  if (m) {
+  const m = ap ? null : input.move();
+  if (ap) {
+    if (ap.turn) rotateHeading(ap.turn * dt);
+  } else if (m) {
     input.target = null;
     throttle = m.fwd;
   } else if (input.target) {
-    // klik = jeď tam: natoč se k cíli a přidej plyn
-    const dist = angleBetween(s.p, input.target) * R;
-    if (dist < 1.5) {
+    // klik = jeď tam: natoč se k cíli a přidej plyn. Vzdálenost se měří od přední hrany vozidla.
+    const front = eq.base.front || 0;
+    const nose = front > 0 ? norm(madd(s.p, s.f, front / R)) : s.p;
+    const dist = angleBetween(nose, input.target) * R;
+    const reach = Math.max(1.5, Math.max(front, 1) * 0.8);
+    if (dist < reach) {
       if (!input.pointerDown) input.target = null;
     } else {
       const to = tangentTo(s.p, input.target);
       const side = dot(to, playerRight());
-      rotateHeading(-Math.max(-1, Math.min(1, side * 3)) * dt * 1.6);
-      throttle = dot(to, s.f) > 0.3 ? Math.min(1, dist / 8) : 0.2;
+      const ahead = dot(to, s.f);
+      const center = angleBetween(s.p, input.target) * R;
+      const turnR = Math.max(2, Math.abs(vehicleSpeed) / TURN_RATE);
+      const steer = ahead > 0 && Math.abs(side) < STEER_DEADZONE ? 0 : Math.max(-1, Math.min(1, side * 3));
+      if (ahead <= 0.3 && center < turnR * 1.2 + front) {
+        // cíl stranou / za vozidlem uvnitř otáčecího kruhu: nekroužit, zastavit a otočit se na místě plným rejdem
+        rotateHeading(-Math.sign(side || 1) * dt * TURN_RATE);
+        throttle = 0;
+      } else {
+        rotateHeading(-steer * dt * TURN_RATE);
+        throttle = ahead > 0.3 ? Math.min(1, dist / 8) : 0.2;
+      }
     }
   }
 
   if (boosting && throttle === 0 && !input.target) throttle = 1;  // boost jede vpřed i bez plynu
-  const target = throttle * max * (throttle < 0 ? 0.5 : 1);
+  const target = ap ? Math.max(-max, Math.min(max, ap.speed)) : throttle * max * (throttle < 0 ? 0.5 : 1);
   if (boosting && target > vehicleSpeed) vehicleSpeed = target;     // skokově, ne postupně
   const accel = (Math.abs(target) > Math.abs(vehicleSpeed) ? 3.5 : 6) * dt;   // brzdí rychleji, než zrychluje
   vehicleSpeed += Math.max(-accel, Math.min(accel, target - vehicleSpeed));
 
   stepBody(b, dt, s.f.map(c => c * vehicleSpeed), 0);   // vozidlo ve vzduchu neřídí
+  const bodyR = Math.max(1, (eq.base.front || 1) * 0.9);
+  if (blockByStructures(b, bodyR)) vehicleSpeed *= 0.5;
+  // kameny: Měsíční zametací vůz a Mega rover je nárazem rozbijí, ostatní vozidla se o ně zastaví (s hláškou)
+  if (b.grounded) {
+    const k = rockHit(b.p, bodyR);
+    if (k >= 0) {
+      if (ROCK_BREAKERS.has(v.type)) {                        // i opřené o kámen (jinak by se z nuly nerozjelo)
+        breakRock(k);
+        vehicleSpeed *= ROCK_TYPES[rocks.type[k]].big ? 0.6 : 0.85;
+      } else {
+        pushFrom(b, rockPush(k, b.p, bodyR));
+        if (Math.abs(vehicleSpeed) > 0.3) rockBlockedNote();
+        vehicleSpeed *= 0.3;
+      }
+    }
+  }
   if (!b.grounded) vehicleSpeed = dot(b.v, s.f);
   s.p = b.p;
   s.f = tangentTo(s.p, s.f);
   v.p = b.p;
   v.f = s.f;
+
+  // spotřeba: P = jízda × (0,3 + 0,7 × |v| / vmax) + zametání; stojící vozidlo nespotřebovává nic
+  if (cap > 0 && Math.abs(vehicleSpeed) > 0.2) {
+    const B = VEHICLE_BATTERY[v.type];
+    const P = B.drive * (0.3 + 0.7 * Math.min(1, Math.abs(vehicleSpeed) / eq.stats.speed)) + (playerFx.swept > 0 ? B.sweep : 0);
+    v.charge = Math.max(0, (v.charge || 0) - P * (1 - roofCover(v)) * dt);   // solární střecha pokryje část spotřeby (L-04)
+  }
 
   // astronaut jede s vozidlem
   body.p = b.p;
@@ -241,6 +296,26 @@ function drive(input, dt) {
   playerFx.moving = Math.abs(vehicleSpeed) > 0.2;
   playerFx.speed = Math.abs(vehicleSpeed);
   playerFx.face = s.f;
+}
+
+// Stavby jsou pro hráče a vozidla pevná překážka (jen pevné části, betonová plocha je průjezdná – O-07).
+// Vrací true, když těleso narazilo.
+function blockByStructures(b, radius) {
+  const hit = pushOut(b.p, radius);
+  if (!hit) return false;
+  pushFrom(b, hit);
+  return true;
+}
+function pushFrom(b, hit) {
+  b.p = hit.p;
+  const into = dot(b.v, hit.n);
+  if (into < 0) b.v = madd(b.v, hit.n, -into);        // složka rychlosti do zdi zmizí
+}
+// Astronaut pěšky: o střední kámen se zastaví, s jetpackem nad ním přeletí.
+function blockByRocks(b, radius) {
+  const k = rockHit(b.p, radius, true);
+  if (k < 0 || altitude(b) > rockHeight(k)) return;
+  pushFrom(b, rockPush(k, b.p, radius));
 }
 
 // ---------- srážka s vozidlem → ragdoll ----------
@@ -368,6 +443,7 @@ export function enterVehicle(i) {
   s.f = v.f;
   vehicleSpeed = 0;
   prevTool = null;
+  autopilotOff();
 }
 
 export function exitVehicle() {
@@ -379,6 +455,7 @@ export function exitVehicle() {
   b.v = [0, 0, 0];
   vehicleSpeed = 0;
   s.driving = -1;
+  autopilotOff();
   // vystoupíš vedle vozidla (vpravo)
   const side = norm(cross(v.f, v.p));
   const out = norm(madd(v.p, side, 2.2 / R));
@@ -391,6 +468,18 @@ export function exitVehicle() {
 // ---------- práce: zametání a výkup ----------
 
 // Vrací výdělek z výkupu, pokud se právě vykupovalo.
+// Kde právě je hlava nástroje / sání vozidla (stejný vzorec jako v collect()). Pro kruh nástroje ve scéně,
+// který se kreslí každý snímek – zametání samo běží v pracovním ticku 10× za s, takže by kruh jinak poskakoval.
+export function toolPoint() {
+  if (rag || ride) return null;
+  const s = game.s;
+  const eq = activeEquipment();
+  if (!(eq.stats.width > 0)) return null;
+  const ahead = eq.kind === 'vehicle' ? eq.base.front : TOOL_AHEAD;
+  const face = tangentTo(s.p, eq.kind === 'vehicle' ? s.f : (playerFx.face || s.f));
+  return norm(madd(s.p, face, ahead / R));
+}
+
 export function collect() {
   const s = game.s;
   playerFx.deposit = null;
@@ -401,7 +490,8 @@ export function collect() {
   playerFx.bonus = 0;
   playerFx.completed = [];
 
-  const width = eq.stats.width;
+  const flat = eq.kind === 'vehicle' && batteryCap(eq.item) > 0 && !(eq.item.charge > 0);   // vybitá baterie = nezametá
+  const width = flat ? 0 : eq.stats.width;
   if (width > 0) {
     const ahead = eq.kind === 'vehicle' ? eq.base.front : TOOL_AHEAD;
     const face = tangentTo(s.p, eq.kind === 'vehicle' ? s.f : (playerFx.face || s.f));
@@ -441,17 +531,20 @@ export function collect() {
   }
   const total = loads.reduce((a, it) => a + (it.load || 0), 0);
   if (!(total > 0)) return 0;
-  if (angleBetween(s.p, DEPOT.dir) * R < DEPOT.r) {
+  if (inBuyback(s.p)) {
     const earned = total * dustPrice();
     s.money += earned;
     for (const it of loads) it.load = 0;
     return earned;
   }
-  // depo: náklad se vysype do skladu, peníze přinese pás (zpracuje main.js)
-  const i = depotAt(s.p);
-  if (i >= 0) {
-    playerFx.deposit = { i, kg: total };
-    for (const it of loads) it.load = 0;
+  // depo (L-20): náklad se vysype do skladu – jen kolik se vejde, peníze přinese pás (zpracuje main.js)
+  const id = depotAt(s.p);
+  const room = id ? depotRoom(structureById(id)) - (playerFx.pendingDeposit?.[id] || 0) : 0;
+  if (id && room >= 0.1) {
+    const kg = Math.min(total, room);
+    const k = kg / total;
+    playerFx.deposit = { id, kg };
+    for (const it of loads) it.load = Math.max(0, (it.load || 0) * (1 - k));
   }
   return 0;
 }

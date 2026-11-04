@@ -5,7 +5,10 @@ import { game, currentHexPct, baseDistance } from './state.js';
 import { activeEquipment } from './equipment.js';
 import { playerFx, boostCharge } from './player.js';
 import { fmt } from './format.js';
-import { SUIT_COLORS } from './catalog.js';
+import { SUIT_COLORS, VEHICLE_BATTERY, batteryCap } from './catalog.js';
+import { roofCover } from './solarRoof.js';
+import { nearestCharger, energyTotals } from './energy.js';
+import { autopilotStatus } from './autopilot.js';
 
 const $ = id => document.getElementById(id);
 const kg = v => (v < 10 ? v.toFixed(1) : Math.round(v)) + ' kg';
@@ -20,6 +23,10 @@ export function updateUi() {
   const dist = baseDistance();
 
   $('stat-money').textContent = '$' + fmt(s.money);
+  // zásoba cihel (L-24): ukáže se, jakmile nějaké cihly jsou nebo stojí slinovna
+  const bricksOn = (s.bricks | 0) > 0 || (s.buildings || []).some(b => b.type === 'sinter');
+  $('row-bricks').hidden = !bricksOn;
+  if (bricksOn) $('stat-bricks').textContent = `🧱 ${(s.bricks | 0).toLocaleString('cs-CZ')}`;
 
   const cap = eq.stats.hopper;
   const hopper = $('meter-hopper');
@@ -44,8 +51,64 @@ export function updateUi() {
     $('stat-boost').textContent = `${Math.round(k * 100)} % · ×${eq.stats.boost}`;
     $('meter-boost').style.width = `${k * 100}%`;
   }
-  $('base-nav').hidden = dist < BASE.clean;
-  $('stat-base').textContent = Math.round(dist) + ' m';
+  // baterie vozidla (L-01): „64 % · ≈ 4 min“, pod 20 % oranžová, při 5 % bliká, 0 % = nouzový režim
+  const bcap = s.driving >= 0 ? batteryCap(eq.item) : 0;
+  $('row-battery').hidden = !bcap;
+  if (bcap) {
+    const v = eq.item, k = Math.max(0, v.charge) / bcap;
+    const B = VEHICLE_BATTERY[v.type];
+    const cover = roofCover(v);                                   // solární střecha na Slunci (L-04)
+    const mins = (v.charge / ((B.drive + B.sweep) * (1 - cover))) / 60;
+    $('stat-battery').textContent = k <= 0 ? 'vybitá · nouzový režim' : `${Math.round(k * 100)} % · ≈ ${mins >= 1 ? Math.round(mins) + ' min' : Math.max(1, Math.round(mins * 60)) + ' s'}${cover > 0.01 ? ' · ☀' : ''}`;
+    // ikona baterie: 5 článků, poslední částečně; blesk, když nabití roste (nabíječka / výměník / střecha)
+    const icon = $('battery-icon');
+    icon.querySelectorAll('.batt__cell').forEach((c, i) => c.style.setProperty('--fill', `${Math.max(0, Math.min(1, k * 5 - i)) * 100}%`));
+    icon.classList.toggle('batt--mid', k >= 0.2 && k < 0.5);
+    icon.classList.toggle('batt--low', k < 0.2);
+    icon.classList.toggle('batt--empty', k <= 0);
+    const now = performance.now();
+    if (battSeen.uid !== v.uid) battSeen = { uid: v.uid, charge: v.charge, at: now, up: false };
+    else if (now - battSeen.at > 600) { battSeen.up = v.charge > battSeen.charge + 0.05; battSeen.charge = v.charge; battSeen.at = now; }
+    icon.classList.toggle('batt--charging', battSeen.up && k < 1);
+    $('row-battery').classList.toggle('stats__row--blink', k <= 0.05);
+  }
+  // energie celé soustavy (panel vpravo): In = výroba, Out = spotřeba, obnova 1× za 2 s
+  const now2 = performance.now();
+  if (now2 - powerAt > 2000) {
+    powerAt = now2;
+    const t = energyTotals();
+    $('power').hidden = !t;
+    if (t) {
+      const f = v => `${v.toFixed(1).replace('.', ',')} ⚡/s`;
+      const d = t.prod - t.use;
+      $('power-in').textContent = f(t.prod);
+      $('power-out').textContent = f(t.use);
+      $('power-out').classList.toggle('power__value--deficit', d < -0.05);   // bere se z baterií
+      $('power-diff').textContent = `${d > 0.05 ? '+' : d < -0.05 ? '−' : ''}${f(Math.abs(d))}`;
+      $('power-diff').classList.toggle('power__value--deficit', d < -0.05);
+      $('power-diff').classList.toggle('power__value--surplus', d > 0.05);
+      $('power-store').textContent = t.cap ? `${Math.round(t.stored).toLocaleString('cs-CZ')} / ${Math.round(t.cap).toLocaleString('cs-CZ')} ⚡` : 'žádné';
+    }
+  }
+  // autopilot (L-40, L-41): „Autocruise · 75 %“ / „Hrana · 75 % · drží hranu vlevo“
+  const auto = s.driving >= 0 ? autopilotStatus() : null;
+  $('row-auto').hidden = !auto;
+  if (auto) $('stat-auto').textContent = auto;
+  const charger = bcap && eq.item.charge / bcap < 0.2 ? nearestCharger(s.p) : null;
+  $('base-nav').hidden = charger ? false : dist < BASE.clean;
+  $('base-nav').querySelector('.base-nav__label').textContent = charger ? 'Nabíječka' : 'Základna';
+  $('stat-base').textContent = Math.round(charger ? charger.dist : dist) + ' m';
+}
+
+let battSeen = { uid: null, charge: 0, at: 0, up: false };
+let powerAt = -1e9;
+
+// Kam má mířit šipka nahoře (compass): k nabíječce pod 20 % baterie, jinak null = k základně.
+export function navTarget() {
+  const s = game.s;
+  if (s.driving < 0) return null;
+  const v = s.vehicles[s.driving], cap = batteryCap(v);
+  return cap && v.charge / cap < 0.2 ? nearestCharger(s.p)?.dir || null : null;
 }
 
 // Výzva k akci nad ovládáním (klávesa E / klepnutí).

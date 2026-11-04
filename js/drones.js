@@ -2,12 +2,14 @@
 // (který si nevzal jiný dron), přeletí k němu a čistí ho v řádcích jako robot – jen 4× rychleji.
 // Plný zásobník vyloží ve Výkupu nebo v nejbližším depu s pásem a letí zpátky do práce.
 // Režimy: 'fly' = přelet k hexu (nečistí), 'work' = čistí, 'unload' = letí vyložit, 'idle' = vše čisté.
-import { MOON, BASE, UNITS_PER_KG } from './config.js';
+import { MOON, UNITS_PER_KG } from './config.js';
+import { BUYBACK_ZONES, nearestBuyback } from './base.js';
 import { DRONE } from './catalog.js';
 import { game, dustPrice, hexBonus } from './state.js';
 import { grid, cellDir, HEX_SPACING } from './planet/hexgrid.js';
 import { hexes, sweepCapsule, clearHex } from './planet/dustmap.js';
-import { depositToDepot } from './depots.js';
+import { depositToDepot, depots, depotWithBelt, depotRoom } from './logistics.js';
+import { isDone } from './research.js';
 import { cross, madd, norm, tangentTo, angleBetween, anyTangent } from './planet/vec.js';
 
 const R = MOON.radius;
@@ -15,11 +17,11 @@ const HALF = HEX_SPACING * 0.62;          // polovina strany čtverce, který po
 
 export const dronePrice = () => Math.round(DRONE.price * DRONE.priceMult ** game.s.drones.length);
 
-const newDrone = () => ({ p: BASE.dir.slice(), t: BASE.dir.slice(), hex: -1, k: -1, load: 0, mode: 'idle', wait: 0 });
+const newDrone = () => ({ p: BUYBACK_ZONES[0].dir.slice(), t: BUYBACK_ZONES[0].dir.slice(), hex: -1, k: -1, load: 0, mode: 'idle', wait: 0 });
 
 export function buyDrone() {
   const price = dronePrice();
-  if (game.s.money < price) return false;
+  if (game.s.money < price || !isDone('droneUfo')) return false;   // L-32: dron až po výzkumu
   game.s.money -= price;
   game.s.drones.push(newDrone());
   return true;
@@ -52,12 +54,13 @@ function waypoint(dr) {
 
 // Kam vyložit: Výkup, nebo depo s pásem, je-li blíž. { dir, depot }.
 function dropPoint(from) {
-  let best = { dir: BASE.dir, depot: -1 }, bestA = angleBetween(from, BASE.dir);
-  game.s.depots.forEach((d, i) => {
-    if (!d.belt) return;
-    const dir = cellDir(d.hex), a = angleBetween(from, dir);
-    if (a < bestA) { bestA = a; best = { dir, depot: i }; }
-  });
+  const zone = nearestBuyback(from).dir;                              // vykládá v nejbližší zóně Výkupu
+  let best = { dir: zone, depot: null }, bestA = angleBetween(from, zone);
+  for (const b of depots()) {
+    if (!depotWithBelt(b) || depotRoom(b) < 200) continue;          // jen depo, ze kterého prach odjíždí, a s místem
+    const a = angleBetween(from, b.p);
+    if (a < bestA) { bestA = a; best = { dir: b.p.slice(), depot: b.id }; }
+  }
   return best;
 }
 
@@ -67,7 +70,7 @@ function nextHex(dr) {
   dr.k = 0;
   if (c < 0) {                                       // Měsíc je čistý → nad Výkup
     dr.mode = 'idle';
-    dr.t = BASE.dir.slice();
+    dr.t = nearestBuyback(dr.p).dir.slice();
     return;
   }
   dr.mode = 'fly';
@@ -111,8 +114,8 @@ export function droneTick(dr, dt) {
     else dr.mode = 'work';
   } else if (dr.mode === 'unload' && arrived) {
     const drop = dr.drop || dropPoint(dr.p);
-    if (drop.depot >= 0 && game.s.depots[drop.depot]?.belt) depositToDepot(drop.depot, dr.load);
-    else game.s.money += dr.load * dustPrice();
+    const got = drop.depot ? depositToDepot(drop.depot, dr.load) : 0;
+    game.s.money += (dr.load - got) * dustPrice();                     // co se do depa nevešlo, jako by se prodalo ve Výkupu
     dr.load = 0;
     dr.drop = null;
     if (dr.hex >= 0 && !hexes.done[dr.hex]) { dr.mode = 'fly'; dr.t = waypoint(dr) || cellDir(dr.hex); }

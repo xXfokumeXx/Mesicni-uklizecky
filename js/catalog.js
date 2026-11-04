@@ -75,12 +75,36 @@ export const JETPACK = {
 };
 
 // only = jen pro tyto typy vozidel. Boost: Shift = skokové zrychlení na 200 / 250 / 300 % rychlosti.
+// Baterie vozidel (L-01): cap = kapacita ⚡, drive = spotřeba jízdy ⚡/s při plné rychlosti, sweep = + při zametání.
+// Spotřeba P = drive × (0,3 + 0,7 × |v| / vmax) + (zametá ? sweep : 0), stojící vozidlo nespotřebovává nic.
+// Ruční vozík baterii nemá (tlačí ho astronaut).
+// 4. 11.: kapacita i spotřeba 2× – doba jízdy stejná, nabíjení trvá dvakrát déle (víc energie ze sítě)
+export const VEHICLE_BATTERY = {
+  rideon: { cap: 800, drive: 1.4, sweep: 0.6 },
+  lunar: { cap: 1800, drive: 2.8, sweep: 1.2 },
+  mega: { cap: 4800, drive: 7.0, sweep: 3.6 },
+  crew: { cap: 2400, drive: 4.0, sweep: 0 },
+};
+export const EMERGENCY_SPEED = 0.15;           // vybitá baterie: nouzový režim 15 % rychlosti, nezametá (L-02)
+// Kapacita baterie vozidla v ⚡ (0 = bez baterie) včetně vylepšení „Větší baterie“ (+25 % za úroveň).
+export const batteryCap = v => (VEHICLE_BATTERY[v?.type]?.cap || 0) * (1 + 0.25 * (v?.lv?.battery | 0));
+
 export const VEHICLE_UPGRADES = {
   width: { name: 'Šířka sání',    max: 5, step: 0.1,  unit: 'm',   desc: '+10 % šířky sání za úroveň' },
   speed: { name: 'Rychlost vozu', max: 5, step: 0.12, unit: 'm/s', desc: '+12 % rychlosti za úroveň' },
   hopper: { name: 'Kapacita zásobníku', max: 5, step: 0.25, unit: 'kg', desc: '+25 % kapacity zásobníku za úroveň', only: ['push', 'rideon', 'lunar', 'mega'] },
   boost: { name: 'Boost (Shift)', max: 3, step: 0.5,  unit: '×',   desc: 'Shift = skokově 200 % rychlosti, každá další úroveň +50 %', only: ['crew'] },
+  // L-03: úrovně 1–2 hned, 3–4 až po výzkumu „Baterie T3“ (research.from = od které úrovně je potřeba výzkum)
+  battery: { name: 'Větší baterie', max: 4, step: 0.25, unit: '⚡', desc: '+25 % kapacity baterie za úroveň', only: ['rideon', 'lunar', 'mega', 'crew'], research: { from: 2, id: 'batteryT3' } },
+  // L-04: celá střecha až po výzkumu „Solární střecha“ (from 0)
+  solar: { name: 'Solární střecha', max: 3, step: 1, unit: '%', desc: 'Na přímém Slunci pokryje část spotřeby, ve stání dobíjí', only: ['rideon', 'lunar', 'mega', 'crew'], research: { from: 0, id: 'solarRoof' } },
+  // L-40 / L-41: autopilot (autopilot.js), klávesa C. share = podíl ceny vozidla (autocruise 0,3 podle zadání),
+  // needs = vylepšení, které vozidlo už musí mít
+  cruise: { name: 'Autocruise', max: 1, step: 1, unit: '', share: 0.3, desc: 'C = jede samo vpřed nastavenou rychlostí, zastaví před překážkou', only: ['rideon', 'lunar', 'mega', 'crew'], research: { from: 0, id: 'cruise' } },
+  edge: { name: 'Sledování hrany prachu', max: 1, step: 1, unit: '', share: 0.5, desc: 'C 2× = asistent drží vozidlo podél hrany prachu, kterou už máš (jako asistent jízdy v pruhu)', only: ['rideon', 'lunar', 'mega'], research: { from: 0, id: 'edgeFollow' }, needs: 'cruise' },
 };
+// Solární střecha podle úrovně (L-04): cover = podíl spotřeby při jízdě, rest = dobíjení ve stání ⚡/s (vše × sin výšky Slunce)
+export const SOLAR_ROOF = [null, { cover: 0.15, rest: 0.2 }, { cover: 0.3, rest: 0.4 }, { cover: 0.5, rest: 0.8 }];
 export const BOOST = { duration: 4, recharge: 10 };   // plný boost vydrží 4 s, z nuly se nabije za 10 s
 export const boostFactor = lv => (lv > 0 ? 1.5 + VEHICLE_UPGRADES.boost.step * lv : 1);
 
@@ -104,12 +128,21 @@ const exchCost = (u, lv) => (lv >= u.max ? null : Math.round(u.price * u.priceMu
 export const marketCost = lv => exchCost(MARKET, lv);
 export const hexupCost = lv => exchCost(HEXUP, lv);
 
+// Stanice robota = Vysavač MK1 (rozhodnutí 3. 11.: původní robot za $800 zrušen, MK1 je základ bez výzkumu).
 export const STATION = {
-  price: 800, priceMult: 1.6,   // cena další stanice
+  price: 3800, priceMult: 1.6,  // cena další stanice (MK1); MK2 = + příplatek
   rings: 2,                     // robot čistí hexy do vzdálenosti 2 hexů od stanice
-  hopper: 30, speed: 2.5, width: 1.0, power: 40, rowGap: 0.9,
-  kgPerSec: 0.07,               // průměrný výkon pro offline výpočet
+  hopper: 60, speed: 3.5, width: 1.0, power: 40, rowGap: 0.9,
+  kgPerSec: 0.1,                // průměrný výkon pro offline výpočet
 };
+// Úrovně stanice (L-31): 1 = Vysavač MK1 (základ), 2 = Vysavač MK2 (po výzkumu). Index 0 se nepoužívá (stará uložení → MK1).
+// extra = příplatek k ceně stanice; vylepšení na místě stojí rozdíl příplatků. kgPerSec ~ rychlost (offline).
+export const STATION_MK = [
+  null,
+  { name: 'Vysavač MK1', speed: 3.5, hopper: 60, rings: 2, kgPerSec: 0.1, extra: 0 },
+  { name: 'Vysavač MK2', speed: 5, hopper: 120, rings: 3, kgPerSec: 0.14, extra: 9000, research: 'vacuumMk2' },
+];
+export const stationMk = st => STATION_MK[Math.max(1, Math.min(2, st?.mk | 0))];
 
 // UFO dron: létá nad terénem, sám si hledá nedočištěné hexy kdekoli na Měsíci a čistí je
 // 4× rychleji než robot ze stanice (2× širší pás při 2× vyšší rychlosti). Plný se vyloží

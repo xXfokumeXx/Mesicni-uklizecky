@@ -16,7 +16,7 @@ const isKit = e => !!e && typeof e === 'object' && KITS.includes(e.kit);
 
 function validEntry(s, e) {
   if (typeof e === 'string') return !!s.tools[e];
-  return isKit(e) && (e.kit !== 'move' || !!s.stations[e.i]) && (e.kit !== 'dmove' || !!s.depots[e.i]);
+  return isKit(e) && (e.kit === 'station' || (e.kit === 'move' && !!s.stations[e.i]));   // sady dep z v2 (depot, dmove) ve 3.0 neplatí
 }
 
 // Nejlepší vlastněný nástroj, který ještě není v hotbaru.

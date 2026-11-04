@@ -2,12 +2,12 @@
 // Každý nástroj i vozidlo má vlastní zásobník na prach (load v kg).
 import {
   TOOLS, TOOL_UPGRADES, VEHICLE_UPGRADES, VEHICLES, GARAGE_PRICE, STATION, BOOTS, SELL_REFUND, BELT, JETPACK,
-  MARKET, HEXUP, toolById, vehicleById, upgradeCost, boostFactor, marketCost, hexupCost,
+  MARKET, HEXUP, toolById, vehicleById, upgradeCost, boostFactor, marketCost, hexupCost, batteryCap,
 } from './catalog.js';
 import { game, newToolState, newUid } from './state.js';
 import { heldTool, heldKit, putTool, ensureHotbar, KIT_NAMES } from './hotbar.js';
-import { parkingSpot } from './base.js';
-import { WALK_SPEED, MAX_VEHICLES } from './config.js';
+import { WALK_SPEED } from './config.js';
+import { fleetFull, freeGarageSlot, homeSpot, HAMMER, hasResearch } from './structures.js';
 import { tangentTo } from './planet/vec.js';
 
 // ---------- parametry ----------
@@ -37,6 +37,7 @@ export function vehicleStats(v) {
 export const upgradeFits = (type, key) => !VEHICLE_UPGRADES[key].only || VEHICLE_UPGRADES[key].only.includes(type);
 
 const HANDS = { id: 'hands', name: 'Volné ruce', width: 0, hopper: 0, power: 0 };
+const HAMMER_TOOL = { id: 'hammer', name: HAMMER.name, width: 0, hopper: 0, power: 0 };
 const NO_STATS = { width: 0, hopper: 0, power: 0 };
 
 // Co právě používáš: nástroj v ruce, nebo vozidlo.
@@ -47,6 +48,7 @@ export function activeEquipment() {
     const base = vehicleById(v.type);
     return { kind: 'vehicle', item: v, base, stats: vehicleStats(v), name: base.name };
   }
+  if (game.hammer) return { kind: 'tool', item: { load: 0 }, base: HAMMER_TOOL, stats: NO_STATS, name: HAMMER.name };   // kladivem se nezametá
   const id = heldTool();
   if (!id) {                                        // v ruce stavební sada nebo nic (hotbar.js)
     const kit = heldKit();
@@ -151,32 +153,43 @@ export function buyJetpack() {
 
 // ---------- garáž a vozidla ----------
 
-export function buildGarage() {
-  if (game.s.garage || game.s.money < GARAGE_PRICE) return false;
-  game.s.money -= GARAGE_PRICE;
-  game.s.garage = true;
+// ---------- kladivo (L-10) ----------
+
+export const ownsHammer = () => !!game.s.hammer;
+export function buyHammer() {
+  if (ownsHammer() || game.s.money < HAMMER.price) return false;
+  game.s.money -= HAMMER.price;
+  game.s.hammer = 1;
   return true;
 }
 
 export const ownedVehicle = type => game.s.vehicles.findIndex(v => v.type === type);
 export const vehicleCount = type => game.s.vehicles.filter(v => v.type === type).length;
-export const fleetFull = () => game.s.vehicles.length >= MAX_VEHICLES;
+export { fleetFull };
 
-// První volné parkovací místo (po prodeji vozidla zůstane v řadě mezera).
-function freeSpot() {
-  const used = new Set(game.s.vehicles.map((v, i) => v.spot ?? i));
-  for (let k = 0; k < MAX_VEHICLES; k++) if (!used.has(k)) return k;
-  return game.s.vehicles.length;
+// Flotila: stejný typ jde koupit víckrát. Vozidlo dostane domovskou garáž gid (když má volné místo, jinak jinou).
+export function buyVehicle(type, gid = null) {
+  const base = vehicleById(type);
+  const slot = freeGarageSlot(gid);
+  if (!base || !slot || fleetFull() || game.s.money < base.price) return false;
+  game.s.money -= base.price;
+  const v = { uid: newUid(), type, garage: slot.garage, spot: slot.spot, load: 0, lv: { width: 0, speed: 0, boost: 0, hopper: 0, battery: 0, solar: 0 } };
+  v.charge = batteryCap(v);                                    // nové vozidlo je plně nabité (L-01)
+  const h = homeSpot(v);
+  v.p = h.dir;
+  v.f = tangentTo(h.dir, h.facing);
+  game.s.vehicles.push(v);
+  return true;
 }
 
-// Flotila: stejný typ jde koupit víckrát (každé vozidlo má své parkovací místo).
-export function buyVehicle(type) {
-  const base = vehicleById(type);
-  if (!base || !game.s.garage || fleetFull() || game.s.money < base.price) return false;
-  game.s.money -= base.price;
-  const k = freeSpot();
-  const spot = parkingSpot(k);
-  game.s.vehicles.push({ uid: newUid(), type, spot: k, p: spot.dir, f: tangentTo(spot.dir, spot.facing), load: 0, lv: { width: 0, speed: 0, boost: 0, hopper: 0 } });
+// Přeřadí vozidlo do jiné garáže (na volné místo). Vrací true / false.
+export function rehomeVehicle(i, gid) {
+  const v = game.s.vehicles[i];
+  if (!v || v.garage === gid) return false;
+  const slot = freeGarageSlot(gid);
+  if (!slot || slot.garage !== gid) return false;
+  v.garage = slot.garage;
+  v.spot = slot.spot;
   return true;
 }
 
@@ -187,7 +200,7 @@ export function vehicleSellValue(i) {
   const base = vehicleById(v.type);
   let paid = base.price;
   for (const key in VEHICLE_UPGRADES) {
-    for (let lv = 0; lv < (v.lv[key] | 0); lv++) paid += upgradeCost(base.price, lv, 0.25);
+    for (let lv = 0; lv < (v.lv[key] | 0); lv++) paid += upgradeCost(base.price, lv, VEHICLE_UPGRADES[key].share || 0.25);
   }
   return Math.round(paid * SELL_REFUND);
 }
@@ -204,22 +217,33 @@ export function sellVehicle(i) {
   return true;
 }
 
-// Přivolá vozidlo zpátky na jeho místo u garáže (když v něm nikdo nesedí).
+// Přivolá vozidlo zpátky na jeho místo v domovské garáži (když v něm nikdo nesedí).
 export function callBackVehicle(i) {
   const v = game.s.vehicles[i];
   if (!v || game.s.driving === i) return false;
-  const spot = parkingSpot(v.spot ?? i);
+  const spot = homeSpot(v);
   v.p = spot.dir;
   v.f = tangentTo(spot.dir, spot.facing);
   v.moved = true;                                   // fyzika vozidla se znovu založí
   return true;
 }
 
+// Zámek vylepšení podle výzkumu (L-03: Větší baterie úr. 3–4 až po „Baterie T3“) a podle jiného vylepšení
+// (L-41: Sledování hrany až s Autocruise). Vrací text, nebo ''.
+export function vehicleUpgradeLock(key, lv, veh = null) {
+  const u = VEHICLE_UPGRADES[key];
+  const r = u?.research;
+  if (r && lv >= r.from && !hasResearch(r.id)) return 'chybí výzkum';
+  if (u?.needs && veh && !(veh.lv?.[u.needs] > 0)) return `nejdřív ${VEHICLE_UPGRADES[u.needs].name}`;
+  return '';
+}
+
 export function vehicleUpgradeCost(i, key) {
   const v = game.s.vehicles[i];
   if (!v || !VEHICLE_UPGRADES[key] || !upgradeFits(v.type, key)) return null;
   const lv = v.lv[key] | 0;
-  return lv >= VEHICLE_UPGRADES[key].max ? null : upgradeCost(vehicleById(v.type).price, lv, 0.25);
+  if (vehicleUpgradeLock(key, lv, v)) return null;             // zamčeno výzkumem (i kontrola u hostitele)
+  return lv >= VEHICLE_UPGRADES[key].max ? null : upgradeCost(vehicleById(v.type).price, lv, VEHICLE_UPGRADES[key].share || 0.25);
 }
 
 export function upgradeVehicle(i, key) {

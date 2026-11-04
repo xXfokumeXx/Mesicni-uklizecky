@@ -5,12 +5,12 @@ import { game, newGame, gameTime, addStat, dustPrice, pickPersonal, putPersonal,
 import { activeEquipment } from './equipment.js';
 import { robotTick, simulateOffline } from './robots.js';
 import { droneTick, dronesOffline } from './drones.js';
-import { depotTick, depotsOffline, depositToDepot } from './depots.js';
+import { logisticsTick, logisticsClientTick, logisticsOffline, depositToDepot } from './logistics.js';
 import {
   initPlayer, movePlayer, collect, playerFx, rotateHeading, tryJump, tryJet, activeBody, vehicleBody,
   checkVehicleHits, isRagdoll, ragdollNet, currentVehicleSpeed, riding, followRide, leaveRide, currentAltitude,
 } from './player.js';
-import { currentAction, placing, startPlacing, cancelPlacing, updatePlacing, cycleBeltTarget, startDepotMove } from './interact.js';
+import { currentAction, placing, startPlacing, cancelPlacing, updatePlacing, stationUpgradeNear } from './interact.js';
 import { ensureHotbar, selectSlot, dropSlot } from './hotbar.js';
 import { initHotbar, updateHotbar } from './hotbarUi.js';
 import { initAchievements, unlock, addAchStat, recordAchStat } from './achievements.js';
@@ -18,16 +18,33 @@ import { MARKET, SUIT_COLORS } from './catalog.js';
 import { launchRocket, launchSeconds, ROCKET } from './rocket.js';
 import { initFacility, openFacility, facilityOpen, refreshFacility } from './facility.js';
 import { input, bindInput } from './input.js';
-import { updateUi, setPrompt, flashMoney, floatText, toast, updatePlayers, showAchievement } from './ui.js';
+import { toggleAutopilot, autopilotMode, autopilotOff, takeAutopilotNote, setAutopilotMovers } from './autopilot.js';
+import { preloadModels } from './assets/models.js';
+import { initRocks, rocksTick, takeRockNote, ROCK_MODELS } from './rocks.js';
+import { createRocksView } from './scene/rocksView.js';
+import { syncTerrainPatches } from './structures.js';
+import { takeTerrainChanges } from './planet/height.js';
+
+// Budovy základny (GLB) se staví hned se scénou – načtou se spolu s přípravou Měsíce.
+const BASE_MODELS = ['building-buyback', 'building-workshop', 'building-toolshop'];
+import { updateUi, setPrompt, flashMoney, floatText, toast, updatePlayers, showAchievement, navTarget } from './ui.js';
 import { saveGame, loadGame, importV1, lockSaves, savePlanet, peekSave, saveFresh } from './storage.js';
 import { cloudMeta, loadCloud, cloudHasMap, hostOf, releaseHost, resetCloudMap, setWorldPassword, checkAccess, blockCloud } from './cloud.js';
 import { fmt } from './format.js';
 import { settings, loadSettings, matchPreset } from './settings.js';
 import { initSettingsMenu } from './settingsMenu.js';
+import { createDebug } from './debug.js';
+import { energyTick, TICK as ENERGY_TICK, live as energyLive, swapEvents } from './energy.js';
+import { researchCenter, researchTick, researchOffline, techById } from './research.js';
+import { batteryCap } from './catalog.js';
+import { build as bld, hammerActive, toggleHammer, toggleMenu, toggleDemolish, cancelBuild, rotateBy, updateBuild, placeNow, closeAll, startCable, connectNow, beltClick } from './build.js';
+import { initBuildUi, updateBuildUi, placeHoldRing, placeStructLabel } from './buildUi.js';
+import { describe as describeStructure } from './energy.js';
+import { structureById as structById, STRUCTURES as STRUCT_DEFS, padTopHeight } from './structures.js';
 import { loadProfile, profile } from './profile.js';
 import {
   net, initLobby, startHost, joinWorld, netTick, addEarned, sendChat, players, movingVehicles,
-  vehicleOverride, hostRobotCompleted, setRagdollPresence, savePersonal, inviteLink,
+  vehicleOverride, vehicleTakenBy, vehicleRemoteMoving, hostRobotCompleted, setRagdollPresence, savePersonal, inviteLink,
   addCollected, reportDeposit, myStatKey, passengersOf, request, hostOwnDust, saveWorldNow, setWorldLocked, worldLocked, findWorld,
   loadPersonal,
 } from './net.js';
@@ -56,7 +73,7 @@ import { createSpots, SPOTS } from './scene/lights.js';
 const canvas = document.getElementById('scene-canvas');
 const fpsEl = document.getElementById('fps-counter');
 const BOOT_KEY = 'ms2_boot';
-let world, terrain, actors, particles, cam, map, remotes, pause, settingsUi, compass, spots;
+let world, terrain, actors, particles, cam, map, remotes, pause, settingsUi, compass, spots, debug, rocks3d;
 let running = false;
 
 // ---------- příprava Měsíce (mapa prachu ve Web Workeru) ----------
@@ -81,9 +98,11 @@ function prepareMoon() {
 // Pracovní tick 10× za s: zametání, výkup, roboti, kontrola výhry.
 function work(dt) {
   const s = game.s;
+  rocksTick();                                              // rozbité kameny ze stavu, schované pod stavbami / pásy
   const before = s.money;
   const eqNow = activeEquipment();
   const earned = collect();
+  batteryWarnings();
   const gained = s.money - before;
   const swept = playerFx.swept / UNITS_PER_KG;
   // úspěchy: zubní kartáček, dočištěné hexy, vlastní výdělek, prodej za tmy
@@ -102,9 +121,9 @@ function work(dt) {
     hostOwnDust(swept, earned / dustPrice() + (playerFx.deposit ? playerFx.deposit.kg : 0));   // bilance pro kontrolu klientů
   }
   if (playerFx.deposit) {                                    // náklad vysypaný do depa
-    const { i, kg } = playerFx.deposit;
-    if (net.mode === 'client') reportDeposit(i, kg);
-    else if (depositToDepot(i, kg)) addStat(myStatKey(), profile.name, 'e', kg * dustPrice());
+    const { id, kg } = playerFx.deposit;
+    if (net.mode === 'client') reportDeposit(id, kg);
+    else depositToDepot(id, kg);                             // prodá se, až ho pás doveze do Výkupu (L-20)
     floatAtTool(`+${fmt(kg)} kg do depa`, 'sale');
   }
   if (earned) {
@@ -118,6 +137,7 @@ function work(dt) {
   if (settings.particles && playerFx.swept) {
     particles.emit(actors.toolTip(), 3, activeEquipment().stats.width * 0.7);
   }
+  if (net.mode === 'client') logisticsClientTick(dt);        // klient: položky na pásech se posouvají mezi pakety
   if (net.mode !== 'client') {                               // roboty simuluje jen hostitel / hráč sám
     for (const st of s.stations) {
       const done = robotTick(st, dt);
@@ -127,12 +147,49 @@ function work(dt) {
       const done = droneTick(dr, dt);
       if (done.length) hostRobotCompleted(done);
     }
-    depotTick(dt);                                           // pásy vozí prach z dep do Výkupu
+    logisticsTick(dt);                                       // pásy, depa, slinovny (L-20 až L-24)
+    energyAcc += dt;
+    if (energyAcc >= ENERGY_TICK) {
+      energyAcc -= ENERGY_TICK;
+      energyTick(ENERGY_TICK, vehicleMoving);
+      while (swapEvents.length) if (swapEvents.shift() === s.driving) toast('Baterie vyměněná – 100 %. Můžeš jet.', 3500);
+      const rc = researchCenter();
+      if (rc) {
+        const done = researchTick(ENERGY_TICK, energyLive.get(rc.id)?.f ?? 0);   // výzkum jede podle dodané energie (L-30)
+        if (done) researchFinished(done);
+      }
+    }
     if (!s.won && hexes.doneCount >= hexes.total * (1 - WIN_LEFT)) {
       s.won = true;
       toast(`${PLANET.name} je čistý. Na odvrácené straně čeká raketa – nastupte!`, 9000);
     }
   }
+}
+
+let energyAcc = 0;
+// Hotový výzkum: hláška (klient ji ukáže sám, když v H.rs přibude hotový výzkum – net.js).
+function researchFinished(id) {
+  const t = techById(id);
+  if (!t) return;
+  toast(`Výzkum „${t.name}“ je hotový – odemyká: ${t.unlocks}.`, 8000);
+  refreshFacility();
+}
+// Hýbe se vozidlo i? (nabíjení a výměna baterie jen ve stání; řidič smí sedět)
+const vehicleMoving = i => (i === game.s.driving ? Math.abs(currentVehicleSpeed()) > 0.3 : vehicleRemoteMoving(i));
+
+// Upozornění na baterii vozidla (L-02): toast při 20 % a 10 %, při 0 % nouzový režim.
+let batteryWarn = { uid: null, level: 1 };
+function batteryWarnings() {
+  const s = game.s;
+  if (s.driving < 0) return;
+  const v = s.vehicles[s.driving], cap = batteryCap(v);
+  if (!cap) return;
+  const k = v.charge / cap;
+  if (batteryWarn.uid !== v.uid) batteryWarn = { uid: v.uid, level: k };
+  for (const [mark, text] of [[0.2, 'Baterie má 20 % – šipka nahoře ukazuje nejbližší nabíječku.'], [0.1, 'Baterie má jen 10 %! Zamiř k nabíječce.'], [0.0001, 'Baterie je vybitá – nouzový režim: 15 % rychlosti a nezametá. Dojeď k nabíječce.']]) {
+    if (batteryWarn.level >= mark && k < mark) toast(text, 6000);
+  }
+  batteryWarn.level = k;
 }
 
 // Plovoucí „+$“ – výkup nad hlavou astronauta, bonus za hex nad nástrojem.
@@ -148,8 +205,13 @@ function floatAtTool(text, kind) {
 let action = null;
 
 function doAction() {
+  if (autopilotMode()) { autopilotOff(); toast('Autopilot vypnutý.', 2500); return; }   // E vypne autopilot (L-41)
   if (!action?.run) return;
-  const result = action.run();
+  settle(action.run());
+  action = null;
+}
+// Hláška podle výsledku akce (i u R = vylepšení stanice)
+function settle(result) {
   const done = r => {
     if (r === 'placed') toast('Stanice postavena. Robot začíná uklízet okolní hexy.');
     else if (r === 'moved') toast('Stanice přesunutá. Robot uklízí hexy kolem nového místa.');
@@ -159,15 +221,59 @@ function doAction() {
     else if (r === 'dcarry') toast('Depo je v hotbaru. Vyber nové místo mimo základnu: E = přesunout ($1 000), Esc = nechat na místě.', 7000);
     else if (r === 'dmoved') toast('Depo přesunuté. Pásy z něj i do něj se samy přestavěly po nové trase.', 6000);
     else if (r === 'liftoff') liftoff();
+    else if (r === 'stup') toast('Stanice vylepšená. Robot jezdí rychleji a uveze víc prachu.', 5000);
+    else if (r === 'built' && bld.type === 'depot' && (game.s.buildings || []).filter(b => b.type === 'depot').length === 1) {
+      // L-25: doporučená první linka
+      toast('První depo! Doporučená linka: vozidla → depo u pole dun → pás → Slinovna (v síti se solárem a baterií) → pás → Výkup. Pás: V → Logistika → Pás, klik na oranžovou zásuvku.', 12000);
+    } else if (r === 'built') toast('Postaveno. Stejnou stavbu můžeš hned postavit znovu, Esc = zrušit výběr.', 4000);
+    else if (r === 'belted') toast('Pás postavený. Jakmile bude ve zdroji náklad, pojede po něm.', 4000);
+    else if (r === 'unbelted') toast('Úsek pásu zbouraný, vrátilo se 60 % jeho ceny. Na volný konec pásu navážeš nový pás (V → Logistika → Pás).', 5000);
+    else if (r === 'demolished') toast('Zbořeno. Vrátilo se 60 % ceny.', 3000);
+    else if (r === 'cabled') toast('Kabel natažený.', 2500);
+    else if (r === 'uncabled') toast('Kabel zrušený.', 2500);
+    else if (r?.blocked) toast(r.blocked, 5000);
     else if (r === 'denied') toast('Hostitel nákup neschválil (nejspíš došly společné peníze).');
     updateUi();
   };
   if (result && typeof result.then === 'function') result.then(done);
   else done(result);
-  action = null;
+}
+
+// Štítek stavby (D-01): pod kurzorem (paprsek), jinak nejbližší energetická stavba do 6 m. Výběr 4× za s.
+let labelAt = 0, labelFor = null;
+function updateStructLabel() {
+  const now = performance.now();
+  if (now - labelAt > 250) {
+    labelAt = now;
+    const s = game.s;
+    const busyUi = map.active || modalOpen() || (hammerActive() && (bld.menu || bld.mode));   // lišta / hologram: bez štítku
+    let id = input.cursor && !busyUi ? actors.pickStructure(input.cursor.x, input.cursor.y, world.camera, canvas) : null;
+    if (id && angleBetween(structById(id)?.p || s.p, s.p) * MOON.radius > 60) id = null;
+    if (!id && !busyUi) {
+      let best = 6 / MOON.radius;
+      for (const b of s.buildings || []) { const d = angleBetween(b.p, s.p); if ((STRUCT_DEFS[b.type]?.energy || b.type === 'depot') && d < best) { best = d; id = b.id; } }
+    }
+    labelFor = id;
+  }
+  const b = labelFor && structById(labelFor);
+  const text = b ? describeStructure(b) : null;
+  if (!text) { placeStructLabel(null); return; }
+  const def = STRUCT_DEFS[b.type];
+  const r = MOON.radius + padTopHeight(b) - (def.padTop || 0) + (def.anchors?.[0]?.[1] || def.labelY || 3) + 1.6;
+  labelPos ||= new window.THREE.Vector3();
+  placeStructLabel(text, labelPos.set(b.p[0] * r, b.p[1] * r, b.p[2] * r), world.camera);
+}
+let labelPos = null;
+
+// Výsledek akce stavění / bourání (hodnota nebo Promise) → hláška.
+function handleResult(r) {
+  if (!r) return;
+  action = { run: () => r };
+  doAction();
 }
 
 function cancel() {
+  if (cancelBuild()) { promptTimer = 0; return; }
   if (placing.active) {
     const kind = placing.kind;
     cancelPlacing();
@@ -480,10 +586,12 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min((now - prev) / 1000, 0.25);
   prev = now;
+  debug?.frameStart(performance.now());
   const s = game.s;
   const eq = activeEquipment();
   const paused = pause.isOpen && net.mode === 'sp';             // sám hráč může hru pozastavit
 
+  syncTerrainPatches();                                     // srovnaný terén pod stavbami (jen když se stavby změnily)
   if (!paused) {
     const turn = input.turn();
     const turnRate = s.driving >= 0 ? (eq.base.kind === 'push' ? 2.0 : 1.4) : 2.2;
@@ -502,7 +610,9 @@ function frame(now) {
       else if (o) followRide(o.p, o.r);
       else { const b = vehicleBody(ride.i); followRide(b.p, b.r); }
     }
+    input.tick(dt);                                         // podržené tlačítko: cíl podle kurzoru i bez pohybu myši (F-01)
     movePlayer(input, dt);
+    { const n = takeAutopilotNote(); if (n) toast(n, 6000); }
     if (playerFx.landed) {
       if (settings.particles) particles.emit(actors.feetPosition(), Math.min(30, 8 + playerFx.landed * 6), 1.0);
       playerFx.landed = 0;
@@ -516,6 +626,14 @@ function frame(now) {
     checkAchievements();
     trackJumps(dt);
     updatePlacing();
+    {
+      const cur = hammerActive() && bld.mode && input.cursor && input.pick ? input.pick(input.cursor.x, input.cursor.y) : null;
+      const pickMode = hammerActive() && (bld.mode === 'demolish' || bld.mode === 'cable') && input.cursor;
+      const picked = pickMode ? actors.pickStructure(input.cursor.x, input.cursor.y, world.camera, canvas) : undefined;
+      const pickedCable = pickMode && bld.mode === 'demolish' && !picked ? actors.pickCable(input.cursor.x, input.cursor.y, world.camera, canvas) : null;
+      const res = updateBuild(dt, cur, input.keys, picked, pickedCable);
+      if (res) handleResult(res);
+    }
     workAcc += dt * 1000;
     while (workAcc >= TICK_MS) {
       work(TICK_MS / 1000);
@@ -558,6 +676,7 @@ function frame(now) {
   // tma = Slunce pod obzorem nebo stín kopce → čelovka a světlomety (scene/lights.js)
   const dark = Math.max(darkness(elev), (1 - sunHere) * 0.9);
   actors.setLamp(dark);
+  actors.setBaseDark(darkness(sunElevationDeg(BASE.dir, t)));
   spots.update(collectSpots(dark, t));
   terrain.setLighting({
     ...light,
@@ -572,16 +691,29 @@ function frame(now) {
   terrain.setFocus(focus);
   terrain.updateVisibility(world.camera.position);
   actors.update(rdt, now / 1000, playerFx, 45 + cam.distance * 2.5);
+  rocks3d.update(focus);
+  { const rn = takeRockNote(); if (rn) toast(rn, 4000); }
+  updateBuildUi();
+  placeHoldRing(input.cursor);
+  updateStructLabel(rdt);
+  {
+    const drv = s.driving >= 0 ? eq.base : null;
+    const nose = drv ? [s.p[0] + s.f[0] * (drv.front || 0) / MOON.radius, s.p[1] + s.f[1] * (drv.front || 0) / MOON.radius, s.p[2] + s.f[2] * (drv.front || 0) / MOON.radius] : null;
+    actors.updateMarker(rdt, map.active ? null : input.target, drv ? { radius: actors.vehicleRadius(s.driving), nose } : null, input.miss, input.clicks);
+  }
   if (remotes) remotes.update(rdt, now / 1000, map.active);
   particles.update(rdt);
   cam.setBaseDistance(s.driving >= 0 ? eq.base.camera : isRagdoll() || riding() ? 16 : CAMERA.distance);
   cam.update(rdt, actors.focusPosition(), s.p, s.f);
   const director = cutscene.update();
-  compass.update(s.p, !director && !map.active && angleBetween(s.p, BASE.dir) * MOON.radius >= BASE.clean, now / 1000, rdt);
+  const navTo = navTarget();                                    // pod 20 % baterie šipka k nabíječce
+  compass.update(s.p, !director && !map.active && (!!navTo || angleBetween(s.p, BASE.dir) * MOON.radius >= BASE.clean), now / 1000, rdt, navTo || BASE.dir);
   actors.fadeOccluders(world.camera.position, actors.focusPosition());
   if (map.active) map.setTarget(input.target);
   map.update(rdt, focus, map.active ? mapOthers() : undefined);
+  debug?.beforeRender();
   world.renderer.render(world.scene, world.camera);
+  debug?.afterRender();
   trackFps(now);
 }
 
@@ -688,9 +820,13 @@ function loadFrom(slot) {
 // Doplní práci robotů za dobu, kdy hra neběžela (zavřená stránka / skrytá karta).
 function catchUp(since) {
   const sec = Math.min((Date.now() - since) / 1000, OFFLINE_CAP_S) | 0;
-  if (sec < 10 || (!game.s.stations.length && !game.s.drones.length && !game.s.depots.some(d => d.belt))) return;
-  const earned = simulateOffline(sec) + dronesOffline(sec) + depotsOffline(sec);
-  toast(`Za ${Math.max(1, Math.round(sec / 60))} min tvé nepřítomnosti roboti, drony a pásy vydělali $${fmt(earned)}.`, 6000);
+  if (sec >= 10) {                                         // výzkum běží i offline (L-30)
+    const done = researchOffline(sec);
+    if (done.length) toast(`Během nepřítomnosti se dokončil výzkum: ${done.map(id => techById(id).name).join(', ')}.`, 7000);
+  }
+  if (sec < 10 || (!game.s.stations.length && !game.s.drones.length && !(game.s.belts || []).length)) return;
+  const earned = simulateOffline(sec) + dronesOffline(sec) + logisticsOffline(sec);
+  if (earned >= 1) toast(`Za ${Math.max(1, Math.round(sec / 60))} min tvé nepřítomnosti roboti, drony a pásy vydělali $${fmt(earned)}.`, 6000);
 }
 
 // Odkaz pro kamarády do schránky (když schránka nejde, ukáže se v poli k ručnímu zkopírování).
@@ -727,9 +863,16 @@ function bindButtons() {
     if (!running || e.repeat) return;
     if (e.key === 'Escape') {
       if (pause.isOpen) { pause.close(); e.stopImmediatePropagation(); return; }
+      if (hammerActive() && (bld.menu || bld.mode)) { cancelBuild(); promptTimer = 0; e.stopImmediatePropagation(); return; }   // Esc ruší stavění
+      if (performance.now() - bld.cancelledAt < 80) return;                                  // stejný Esc už zrušil stavění
       if (chatOpen() || facilityOpen() || settingsOpen() || map.active || placing.active) return;
       pause.open();
       e.stopImmediatePropagation();
+      return;
+    }
+    if (e.key === 'F3') {                                       // ladicí výpis výkonu (O-01)
+      e.preventDefault();
+      if (e.shiftKey) debug?.breakdown(); else debug?.toggle();
       return;
     }
     if (e.target.matches?.('input, textarea, select')) return;
@@ -770,11 +913,21 @@ function bindVisibility() {
 
 function build() {
   lampPos = new window.THREE.Vector3();
+  // srovnaný terén pod stavbami ještě před stavbou terénu – jinak by se hned po startu kusy terénu stavěly podruhé (~0,8 s trhání)
+  syncTerrainPatches();
+  takeTerrainChanges();
   initPlayer();
   world = createWorld(canvas, { antialias: settings.antialias, pixelRatio: settings.scale, shadows: settings.shadows });
+  debug = createDebug(world.renderer, world.scene, world.camera);
+  window.msDebug = debug;                                     // měření z konzole: msDebug.stats(), msDebug.breakdown()
   terrain = createTerrain(world.scene, world.renderer, settings.view);
-  actors = createActors(world.scene, settings.shadows, profile.look, { vehicleOverride: i => (net.mode === 'off' ? null : vehicleOverride(i)) });
+  actors = createActors(world.scene, settings.shadows, profile.look, {
+    vehicleOverride: i => (net.mode === 'off' ? null : vehicleOverride(i)),
+    onDust: (pos, n) => { if (settings.particles) particles?.emit(pos, n, 1.6); },
+  });
+  actors.preloadStructures();                                // GLB staveb na pozadí (O-15)
   particles = createParticles(world.scene);
+  rocks3d = createRocksView(world.scene, { onDust: (pos, n) => { if (settings.particles) particles?.emit(pos, n, 1.6); } });
   compass = createCompass(world.scene, world.camera);
   spots = createSpots(world.scene);
   spots.setShadows(settings.shadows && settings.lightShadows);
@@ -795,22 +948,61 @@ function build() {
     pickDir,
     rotate: a => cam.orbit(-a),                               // orbit kamery kolem astronauta (směr postavy se nemění)
     tilt: dy => cam.tilt(dy),
-    zoom: f => (map.active ? map.zoom(f) : cam.zoom(f)),
+    zoom: f => {
+      if (map.active) { map.zoom(f); return; }
+      if (hammerActive() && bld.mode === 'build' && input.keys.r) { rotateBy((f > 1 ? -1 : 1) * (input.keys.shift ? 15 : 1), !!input.keys.shift); return; }
+      cam.zoom(f);
+    },
     onAction: doAction,
     onCancel: cancel,
     onJump: jet,
-    onAlt: () => { if (cycleBeltTarget()) promptTimer = 0; },
-    onSlot: k => { if (selectSlot(k)) { promptTimer = 0; updateHotbar(); } },
-    onDrop: () => dropFromHotbar(game.s.sel),
-    onMove: () => {
-      if (!startDepotMove()) return;
-      promptTimer = 0;
-      updateHotbar();
-      toast('Depo je v hotbaru. Vyber nové místo mimo základnu: E = přesunout ($1 000), Esc = nechat na místě.', 7000);
+    onAlt: () => {
+      if (hammerActive()) return;                                // R s kladivem = otáčení stavby
+      const up = stationUpgradeNear();                           // R u stanice = vylepšení na MK1 / MK2
+      if (up) { settle(up); promptTimer = 0; }
     },
+    onSlot: k => { if (game.hammer) { game.hammer = false; closeAll(); } if (selectSlot(k)) { promptTimer = 0; updateHotbar(); } },
+    onDrop: () => { if (hammerActive()) { toggleDemolish(); promptTimer = 0; } else dropFromHotbar(game.s.sel); },
+    onHammer: () => { const msg = toggleHammer(); promptTimer = 0; if (msg) toast(msg, 4000); updateHotbar(); },
+    onBuildMenu: () => { if (!toggleMenu() && !hammerActive()) toast(game.s.hammer ? 'Nejdřív vezmi kladivo do ruky (Q).' : 'Stavět jde kladivem – kup ho v Dílně (záložka Astronaut).', 4000); promptTimer = 0; },
     onLights: toggleLights,
+    onAuto: () => {                                            // C = autocruise → asistent hrany → vypnuto (L-40, L-41)
+      if (game.s.driving < 0) return;
+      const msg = toggleAutopilot(Math.abs(currentVehicleSpeed()) / Math.max(0.1, activeEquipment().stats.speed));
+      if (msg) toast(msg, 6000);
+    },
   });
+  // autopilot: ostatní vozidla a hráči jako překážky (řízené jiným hráčem / chodící = pohyblivé)
+  setAutopilotMovers(() => {
+    const out = [];
+    game.s.vehicles.forEach((v, i) => {
+      if (i === game.s.driving) return;
+      const o = net.mode !== 'off' ? vehicleOverride(i) : null;
+      out.push({ p: o ? o.p : v.p, dyn: !!o });
+    });
+    for (const r of net.remotes.values()) if (r.d < 0 && r.sp && !r.rd) out.push({ p: r.sp, dyn: true });
+    return out;
+  });
+  // klik ve stavebním režimu: levé = postavit / držet pro zboření, pravé = zrušit hologram
+  input.capture = e => {
+    if (!hammerActive()) return false;
+    if (!bld.mode) {                                          // kladivo v ruce: klik na kotvu = ruční kabel (D-13)
+      if (e.button !== 0) return false;
+      const id = actors.pickStructure(e.clientX, e.clientY, world.camera, canvas);
+      if (id && structById(id)?.type === 'pole' && startCable(id)) { promptTimer = 0; return true; }
+      return false;
+    }
+    if (e.button === 2) { if (bld.mode === 'build' || bld.mode === 'cable' || bld.mode === 'belt') { cancelBuild(); promptTimer = 0; return true; } return false; }
+    if (e.button !== 0) return false;
+    if (bld.mode === 'build') handleResult(placeNow());
+    else if (bld.mode === 'cable') handleResult(connectNow());
+    else if (bld.mode === 'belt') { handleResult(beltClick()); promptTimer = 0; }
+    else bld.mouseHold = true;
+    return true;
+  };
+  input.onRelease = () => { bld.mouseHold = false; };
   const thumbs = createThumbs(world.renderer);
+  initBuildUi(thumbs);
   const wardrobe = createWardrobe(thumbs);
   initHotbar(thumbs, k => { if (selectSlot(k)) { promptTimer = 0; updateHotbar(); } }, dropFromHotbar);
   initAchievements(onAchievement);
@@ -819,13 +1011,9 @@ function build() {
     onClose: resumeInput,
     onChange: () => { flashMoney(); updateUi(); },
     onDenied: () => toast('Hostitel nákup neschválil (nejspíš došly společné peníze).'),
-    onPlaceStation: () => {
-      startPlacing('station');
-      toast('Stanice je v hotbaru. Vyber místo mimo základnu: robot uklidí hexy do vzdálenosti 2 od stanice. E = postavit (zaplatí se až teď), Esc = zrušit.', 8000);
-    },
-    onPlaceDepot: () => {
-      startPlacing('depot');
-      toast('Depo je v hotbaru. Vyber místo mimo základnu, nejlépe tam, kde se hodně zametá. E = postavit (zaplatí se až teď), Esc = zrušit.', 8000);
+    onPlaceStation: (mk = 0) => {
+      startPlacing('station', mk);
+      toast(`Stanice je v hotbaru. Vyber místo mimo základnu: robot uklidí hexy do vzdálenosti ${mk >= 2 ? 3 : 2} od stanice. E = postavit (zaplatí se až teď), Esc = zrušit.`, 8000);
     },
     onLook: look => actors.setLook(look),
     wardrobe,
@@ -987,6 +1175,7 @@ async function launch(spec) {
     }
     else { net.mode = 'off'; game.mode = 'sp'; toast('Svět se nepodařilo otevřít ostatním – hraješ sám.', 6000); }
   }
+  net.onResearchDone = ids => ids.forEach(researchFinished);   // klient: hostitel dokončil výzkum
   net.onDepartRequest = () => (PLANET.id === 'moon' && hexes.total > 0 && hexes.doneCount >= hexes.total ? depart('mars') : false);
   net.onDepart = planet => {                                  // klient: hostitel odlétá s celým světem
     if (PLANET.id === planet) return;
@@ -1067,7 +1256,7 @@ function start() {
   document.getElementById('menu-loading-back').addEventListener('click', () => location.reload());
   initMenu({ onLaunch: launch, openSettings: () => settingsUi.open() });
   setMoonStatus(`Připravuji ${PLANET.acc}…`, false);
-  moonReady = prepareMoon().then(() => setMoonStatus(`${PLANET.name} připraven · ${hexes.total.toLocaleString('cs-CZ')} sektorů`, true));
+  moonReady = Promise.all([prepareMoon().then(() => initRocks()), preloadModels([...BASE_MODELS, ...ROCK_MODELS])]).then(() => setMoonStatus(`${PLANET.name} připraven · ${hexes.total.toLocaleString('cs-CZ')} sektorů`, true));
 
   let boot = null;
   try { boot = JSON.parse(sessionStorage.getItem(BOOT_KEY)); sessionStorage.removeItem(BOOT_KEY); } catch { /* nic */ }

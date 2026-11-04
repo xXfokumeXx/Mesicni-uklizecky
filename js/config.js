@@ -51,8 +51,12 @@ export const DUST = { faceTexels: PLANET.faceTexels, max: 100 };
 
 // Základna: střed na „přivrácené straně“. flat = poloměr roviny, clean = poloměr bez prachu,
 // noStations = kam nejde postavit stanici robota.
-export const BASE = { dir: [0, 0, 1], flat: 34, clean: 27, noStations: 32 };
-export const DEPOT = { dir: BASE.dir, r: 5 };        // výkup prachu uprostřed základny (poloměr zóny v m)
+// flat = rovina základny (3.0: 55 m, D-12 – místo na první stavby); craterFree = kolem základny bez kráterů (zůstává 34 m,
+// aby se krajina dál od základny ani místo rakety nezměnily); clean = vyčištěno od začátku; noStations = bez stanic robotů
+export const BASE = { dir: [0, 0, 1], flat: 55, craterFree: 34, clean: 27, noStations: 32 };
+// Vysýpací zóny Výkupu (3.0): 3 kruhy pod konci ramen pro pás na střeše (base.js BUYBACK_ZONES, inBuyback).
+// r = poloměr zóny (m), out = o kolik je střed zóny dál od budovy než konec ramene (m).
+export const BUYBACK = { r: 3.5, out: 1.5 };
 export const INTERACT_RADIUS = 3.2;                  // jak blízko musíš být k budově / vozidlu (m)
 
 export const TICK_MS = 100;                          // pracovní tick (zametání, výkup, roboti) 10× za s
