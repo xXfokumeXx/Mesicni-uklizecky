@@ -41,6 +41,37 @@ function blobShadow(r) {
   return m;
 }
 
+// RTG generátor (L-07, model v kódu): základová deska, tmavý válec s chladicími žebry, výstražný pruh,
+// nahoře modře svítící prstenec a izolátor pro kabel (kotevní bod [0, 2.15, 0]). Sloučený do 1–2 dílů.
+export function buildRtg() {
+  const m = materials();
+  const g = new THREE.Group();
+  const plate = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.1, 0.16, 8), m.bot);
+  plate.position.y = 0.08;
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.6, 1.5, 12), m.dark);
+  body.position.y = 0.9;
+  g.add(plate, body);
+  for (let k = 0; k < 8; k++) {
+    const fin = box(0.07, 1.25, 0.5, m.bot, 0, 0.92, 0);
+    fin.geometry.translate(0, 0, 0.7);
+    fin.rotation.y = k / 8 * Math.PI * 2;
+    g.add(fin);
+  }
+  const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.12, 12), m.hivis);
+  stripe.position.y = 1.5;
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.56, 0.22, 12), m.bot);
+  cap.position.y = 1.76;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.06, 6, 16), m.beacon);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 1.9;
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.3, 6), m.dark);
+  post.position.y = 2.0;
+  const ins = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), m.beacon);
+  ins.position.y = 2.15;
+  g.add(stripe, cap, ring, post, ins);
+  return g;
+}
+
 export function buildBot() {
   const m = materials();
   const root = new THREE.Group();

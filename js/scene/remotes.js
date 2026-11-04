@@ -5,11 +5,13 @@ import { SUIT_COLORS } from '../catalog.js';
 import { net } from '../net.js';
 import { remoteRagdoll, advanceRemote, correctRemote, ragdollPoints } from '../ragdoll.js';
 import { game } from '../state.js';
-import { createAstronaut } from './astronaut.js';
+import { instantiate } from '../assets/models.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
 const TAG_RANGE = 140;
+const FAR_LOD = 40;          // od 40 m zjednodušený astronaut (1 snímek bez kloubů)
+const FAR_HIDE = 120;        // od 120 m se astronaut nekreslí (jmenovka zůstává do TAG_RANGE)
 
 const _x = new THREE.Vector3(), _z = new THREE.Vector3(), _m = new THREE.Matrix4(), _up = new THREE.Vector3();
 const _v = new THREE.Vector3();
@@ -29,7 +31,7 @@ export function createRemotes(scene, camera, actors, layer) {
   function viewFor(r) {
     let v = views.get(r.peer);
     if (!v) {
-      const astro = createAstronaut(r.look);
+      const astro = instantiate('astronaut', r.look);
       astro.root.traverse(o => { if (o.isMesh && !o.userData.blob && !o.material.transparent) o.castShadow = true; });
       scene.add(astro.root);
       const tag = document.createElement('div');
@@ -62,7 +64,6 @@ export function createRemotes(scene, camera, actors, layer) {
       if (!r.sp) continue;
       const v = viewFor(r);
       const a = v.astro;
-      a.root.visible = !hidden;
       // ragdoll po srážce si počítám sám ze začátku letu, polohu pánve dotahuji podle korekcí
       if (!r.rag) v.rag = null;
       else if (!v.rag || v.rag.k !== r.rag.k) v.rag = remoteRagdoll(r.rag, (Date.now() + game.clockOffset - r.rag.a) / 1000);
@@ -85,6 +86,17 @@ export function createRemotes(scene, camera, actors, layer) {
           orient(a.root, _up, r.f);
         }
       }
+      // úroveň detailu 4× za sekundu (O-13 krok 3): do 40 m plný, do 120 m snímek, dál nic.
+      // Sezení, tlačení vozíku a ragdoll potřebují pózu → plný model.
+      v.lodT = (v.lodT ?? 0) - dt;
+      if (v.lodT <= 0) {
+        v.lodT = 0.25;
+        const dist = a.root.position.distanceTo(camera.position);
+        const posed = seated || pushing || !!v.rag;
+        const level = dist >= FAR_HIDE ? 2 : dist >= FAR_LOD && !posed ? 1 : 0;
+        if (level !== a.detail) a.setDetail(level);
+      }
+      a.root.visible = !hidden && a.detail !== 2;
       const air = !!r.m[4];
       a.update(dt, time, {
         moving: !seated && r.m[0] > 2 && !air, speed: r.m[0] / 10, swept: !!r.m[3] && r.d < 0,

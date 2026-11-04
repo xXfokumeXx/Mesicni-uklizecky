@@ -50,7 +50,8 @@ export function createCompass(scene, camera) {
 
   return {
     // p = poloha hráče (jednotkový vektor), show = jestli šipku ukázat (mimo základnu, bez mapy a scén)
-    update(p, show, time, dt = 1 / 60) {
+    // target = kam šipka míří (jednotkový vektor), výchozí základna; pod 20 % baterie nejbližší nabíječka
+    update(p, show, time, dt = 1 / 60, target = BASE.dir) {
       arrow.visible = show;
       if (!show) { ready = false; return; }
       camera.updateMatrixWorld();
@@ -59,7 +60,7 @@ export function createCompass(scene, camera) {
       right.crossVectors(fwd, up).normalize();
 
       // směr k základně vůči kameře (vodorovně v místě hráče): 0 = rovně před kamerou, kladně doprava
-      const to = tangentTo(p, BASE.dir);
+      const to = tangentTo(p, target);
       const camF = tangentTo(p, fwd.toArray());
       const camR = tangentTo(p, right.toArray());
       const want = Math.atan2(dot(to, camR), dot(to, camF));

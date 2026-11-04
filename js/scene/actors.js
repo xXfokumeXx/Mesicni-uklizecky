@@ -1,24 +1,25 @@
 // Všechno, co se ve scéně hýbe nebo patří k základně: astronaut, vozidla, budovy,
 // stanice s roboty, UFO drony, hologram při umisťování stanice, kruh nástroje a obrys hexu.
-import { MOON } from '../config.js';
-import { DRONE } from '../catalog.js';
+import { MOON, BUYBACK } from '../config.js';
+import { DRONE, batteryCap } from '../catalog.js';
 import { game } from '../state.js';
 import { activeEquipment } from '../equipment.js';
-import { activeBody, vehicleBody, pusherOffset, ragdollState, riding } from '../player.js';
+import { activeBody, vehicleBody, pusherOffset, ragdollState, riding, toolPoint } from '../player.js';
 import { placing } from '../interact.js';
 import { carriedStation } from '../hotbar.js';
 import { hexArea } from '../robots.js';
-import { BUILDINGS } from '../base.js';
+import { BUILDINGS, BUYBACK_ZONES, building } from '../base.js';
 import { grid, dirToCell } from '../planet/hexgrid.js';
-import { norm, cross, anyTangent, madd } from '../planet/vec.js';
+import { norm, cross, anyTangent, madd, angleBetween } from '../planet/vec.js';
 import { heightAt } from '../planet/height.js';
-import { createAstronaut } from './astronaut.js';
-import { buildBot, buildDrone } from './models.js';
-import { buildVehicle } from './vehicles.js';
-import { buildDepot, buildWorkshop, buildToolshop, buildGarage, buildStation, buildSilo, buildBasePad } from './buildings.js';
-import { createBelts } from './belts.js';
+import { instantiate } from '../assets/models.js';
+import { createBeltsView } from './beltsView.js';
 import { createHoloGlobe } from './hologram.js';
 import { createRocketSite } from './rocket.js';
+import { createStructures } from './structures.js';
+import { createClickMarker } from './clickMarker.js';
+import { createBasePlaza } from './basePlaza.js';
+import { build } from '../build.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
@@ -127,37 +128,75 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   }
   function setShadows(on) {
     shadowsOn = on;
+    structures?.setShadows(on);
     for (const root of prepared) root.traverse(o => { if (o.userData.blob) o.visible = !on; });
   }
 
   // ---------- základna ----------
-  const pad = buildBasePad();
-  pad.receiveShadow = true;
-  scene.add(pad);
+  // (3.0: bez šedého kruhu základny – čisté jsou jen hexy pod budovami, base.js baseCleanCells)
   const views = {
-    depot: buildDepot(),
-    workshop: buildWorkshop(),
-    toolshop: buildToolshop(),
-    garage: buildGarage(),
+    depot: instantiate('building-buyback'),
+    workshop: instantiate('building-workshop'),
+    toolshop: instantiate('building-toolshop'),
   };
   for (const b of BUILDINGS) {
     const v = views[b.id];
     surface(b.dir, v.root.position);
     _up.set(...b.dir);
     orient(v.root, _up, _f.set(...b.facing));
+    v.root.userData.dbg = 'building';              // skupina pro ladicí výpis F3 (debug.js)
     scene.add(prepare(v.root));
   }
-  // hologram planety nad Výkupem (stejná data jako velký hologram v okně Výkupu)
+  // hologram planety nad střechou Výkupu (stejná data jako velký hologram v okně Výkupu)
   const holo = createHoloGlobe();
-  holo.root.position.y = 4.4;
+  holo.root.position.y = 8.6;
   holo.root.scale.setScalar(1.35);
   views.depot.root.add(holo.root);
+  // světelný sloup nad Výkupem – orientační bod z dálky (jako dřív u kopule)
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 300, 8, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0x5fb8d9, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false }));
+  beam.position.y = 157;
+  beam.userData.noShadow = true;
+  views.depot.root.add(beam);
+  // 3 vysýpací zóny pod rameny pásů (base.js BUYBACK_ZONES): plochý pruh 0,3 m po terénu (čáry WebGL tloušťku neumí),
+  // kus uvnitř budovy se nekreslí
+  {
+    const N = 64, W = 0.3, pts = [], hub = building('depot').dir;
+    const ring = (k, z, t1, t2, r) => {
+      const a = k / N * Math.PI * 2;
+      return norm(madd(madd(z.dir, t1, Math.cos(a) * r / R), t2, Math.sin(a) * r / R));
+    };
+    const put = d => { surface(d, _a, 0.1); pts.push(_a.x, _a.y, _a.z); };
+    for (const z of BUYBACK_ZONES) {
+      const t1 = anyTangent(z.dir), t2 = cross(z.dir, t1);
+      for (let k = 0; k < N; k++) {
+        const o0 = ring(k, z, t1, t2, BUYBACK.r), o1 = ring(k + 1, z, t1, t2, BUYBACK.r);
+        if (Math.min(angleBetween(o0, hub), angleBetween(o1, hub)) * R < 5.3) continue;   // uvnitř šestiúhelníku Výkupu
+        const i0 = ring(k, z, t1, t2, BUYBACK.r - W), i1 = ring(k + 1, z, t1, t2, BUYBACK.r - W);
+        for (const d of [i0, o0, o1, i0, o1, i1]) put(d);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const band = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x7fd3ff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+    band.frustumCulled = false;
+    band.userData.noShadow = true;
+    scene.add(band);
+  }
+
+  // náměstí, cesty, osvětlení, směrovka, stavební zóna a přistávací plocha (D-12)
+  const plaza = createBasePlaza(scene);
 
   // raketa s lunárním modulem a vlajkou na odvrácené straně
   const rocket = createRocketSite(scene, prepare, orient, surface);
 
+  // stavby 3.0 (kladivo) a ukazatel místa kliknutí
+  const structures = createStructures(scene, { prepare, onDust: opts.onDust });
+  const marker = createClickMarker(scene);
+  let lastHits = 0;
+
   // ---------- astronaut ----------
-  const astro = createAstronaut(look);
+  const astro = instantiate('astronaut', look);
   scene.add(prepare(astro.root));
   const face = new THREE.Vector3(...game.s.f);
 
@@ -204,6 +243,48 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   // ---------- vozidla ----------
   const vehicleViews = [];
 
+  // Ikonka baterie nad vozidlem, ve kterém nesedím (do 45 m): 0–5 dílků, barva podle nabití, blesk při nabíjení.
+  const battTex = new Map();
+  function battTexture(n, charging) {
+    const key = `${n}${charging ? 'c' : ''}`;
+    if (battTex.has(key)) return battTex.get(key);
+    const cv = document.createElement('canvas'); cv.width = 96; cv.height = 48;
+    const x = cv.getContext('2d');
+    x.fillStyle = 'rgba(18,20,26,0.78)'; x.beginPath(); x.roundRect(2, 6, 84, 36, 8); x.fill();
+    x.strokeStyle = n === 0 ? '#e0654c' : '#e4e2da'; x.lineWidth = 4; x.beginPath(); x.roundRect(6, 10, 72, 28, 5); x.stroke();
+    x.fillStyle = x.strokeStyle; x.fillRect(80, 18, 6, 12);
+    const col = n >= 3 ? '#7fd38a' : n >= 2 ? '#f2b33d' : '#e8742a';
+    for (let i = 0; i < 5; i++) { x.fillStyle = i < n ? col : 'rgba(255,255,255,0.08)'; x.fillRect(11 + i * 13.2, 15, 10.5, 18); }
+    if (charging) {
+      x.fillStyle = '#ffffff'; x.strokeStyle = 'rgba(0,0,0,0.8)'; x.lineWidth = 2;
+      x.beginPath(); x.moveTo(46, 8); x.lineTo(34, 27); x.lineTo(42, 27); x.lineTo(38, 42); x.lineTo(52, 21); x.lineTo(44, 21); x.closePath(); x.stroke(); x.fill();
+    }
+    const t = new THREE.CanvasTexture(cv);
+    battTex.set(key, t);
+    return t;
+  }
+  function updateBatteryIcon(view, v, i, dist) {
+    const cap = batteryCap(v);
+    const show = cap > 0 && game.s.driving !== i && dist < 45 && view.root.visible;
+    if (!view.batt) {
+      if (!show) return;
+      view.batt = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
+      view.batt.scale.set(1.5, 0.75, 1);
+      view.batt.renderOrder = 6;
+      view.battSeen = { charge: v.charge, at: performance.now(), up: false };
+      scene.add(view.batt);
+    }
+    view.batt.visible = show;
+    if (!show) return;
+    const now = performance.now();
+    if (now - view.battSeen.at > 800) { view.battSeen.up = v.charge > view.battSeen.charge + 0.05; view.battSeen.charge = v.charge; view.battSeen.at = now; }
+    const k = Math.max(0, v.charge || 0) / cap;
+    const n = k <= 0 ? 0 : Math.max(1, Math.ceil(k * 5 - 1e-6));
+    const tex = battTexture(n, view.battSeen.up && k < 1);
+    if (view.batt.material.map !== tex) { view.batt.material.map = tex; view.batt.material.needsUpdate = true; }
+    view.batt.position.copy(view.root.position).addScaledVector(_up.copy(view.root.position).normalize(), view.battHeight ?? 2.6);
+  }
+
   function syncVehicles(dt, viewRange) {
     const list = game.s.vehicles;
     // po prodeji vozidla se indexy posunou → model, který k indexu nepatří, se postaví znovu
@@ -211,16 +292,18 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       const v = list[i], old = vehicleViews[i];
       if (old && (!v || old.uid !== (v.uid || '') || old.type !== v.type)) {
         scene.remove(old.root);
+        if (old.batt) scene.remove(old.batt);
         const k = prepared.indexOf(old.root);
         if (k >= 0) prepared.splice(k, 1);
         vehicleViews[i] = null;
       }
       if (v && !vehicleViews[i]) {
-        const view = buildVehicle(v.type);
+        const view = instantiate(`vehicle-${v.type}`);
         view.normal = new THREE.Vector3();
         view.spin = 0;
         view.uid = v.uid || '';
         view.type = v.type;
+        view.battHeight = new THREE.Box3().setFromObject(view.root).max.y + 0.9;   // ikonka baterie nad střechou
         scene.add(prepare(view.root));
         vehicleViews[i] = view;
       }
@@ -232,8 +315,10 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       const b = remote ? null : vehicleBody(i);
       const p = remote ? remote.p : b.p, r = remote ? remote.r : b.r;
       view.root.position.set(p[0] * r, p[1] * r, p[2] * r);
-      view.root.visible = view.root.position.distanceTo(astro.root.position) < viewRange + 20;
+      const dist = view.root.position.distanceTo(astro.root.position);
+      view.root.visible = dist < viewRange + 20;
       view.remoteDriven = !!remote;
+      updateBatteryIcon(view, v, i, dist);
       if (!view.root.visible) return;
       // naklonění podle svahu (ve vzduchu drží poslední sklon)
       if (remote || b.grounded) terrainNormal(p, Math.max(0.8, view.radius * 0.7), view.normal);
@@ -252,7 +337,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   // ---------- stanice a roboti ----------
   const stationViews = [];
   const ghostMat = new THREE.MeshBasicMaterial({ color: 0x5fb8d9, transparent: true, opacity: 0.45, depthWrite: false });
-  const ghost = buildStation(ghostMat);
+  const ghost = instantiate('station', ghostMat);
   ghost.root.visible = false;
   scene.add(ghost.root);
   const areaLines = hexOutlines(scene, 0x5fb8d9);
@@ -261,8 +346,8 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   function syncStations(dt, viewRange) {
     const list = game.s.stations;
     while (stationViews.length < list.length) {
-      const station = buildStation();
-      const bot = buildBot();
+      const station = instantiate('station');
+      const bot = instantiate('robot');
       scene.add(prepare(station.root), prepare(bot.root));
       stationViews.push({ station, bot, placed: false, hex: -1 });
     }
@@ -296,7 +381,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   function syncDrones(dt, time, viewRange) {
     const list = game.s.drones || [];
     while (droneViews.length < list.length) {
-      const view = buildDrone();
+      const view = instantiate('drone');
       scene.add(prepare(view.root));
       droneViews.push({ view, placed: false });
     }
@@ -320,49 +405,21 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     });
   }
 
-  // ---------- depa a pásy ----------
-  const depotViews = [];
-  const siloGhost = buildSilo(ghostMat);
-  siloGhost.root.visible = false;
-  scene.add(siloGhost.root);
-  const belts = createBelts(scene);
-
-  function syncDepots(viewRange) {
-    const list = game.s.depots;
-    while (depotViews.length < list.length) {
-      const view = buildSilo();
-      scene.add(prepare(view.root));
-      depotViews.push({ view, hex: -1 });
-    }
-    list.forEach((d, i) => {
-      const v = depotViews[i];
-      if (v.hex !== d.hex) {
-        v.hex = d.hex;
-        const home = [grid.dirs[d.hex * 3], grid.dirs[d.hex * 3 + 1], grid.dirs[d.hex * 3 + 2]];
-        surface(home, v.view.root.position);
-        // násypka čelem k základně
-        orient(v.view.root, _up.set(...home), _f.set(-home[0], -home[1], 1 - home[2]));
-      }
-      v.view.root.visible = v.view.root.position.distanceTo(astro.root.position) < viewRange + 20;
-    });
-    for (let i = list.length; i < depotViews.length; i++) depotViews[i].view.root.visible = false;
-  }
+  // ---------- pásy, náklad a zásuvky (3.0, logistics.js) ----------
+  const belts = createBeltsView(scene);
 
   function updatePlacement() {
-    const depot = placing.active && (placing.kind === 'depot' || placing.kind === 'dmove');
-    ghost.root.visible = placing.active && !depot;
-    siloGhost.root.visible = depot;
-    areaLines.lines.visible = placing.active && !depot;
+    ghost.root.visible = placing.active;
+    areaLines.lines.visible = placing.active;
     if (!placing.active || !placing.point) return;
     const hex = dirToCell(placing.point);
     const home = [grid.dirs[hex * 3], grid.dirs[hex * 3 + 1], grid.dirs[hex * 3 + 2]];
-    const g = depot ? siloGhost : ghost;
-    surface(home, g.root.position);
-    orient(g.root, _up.set(...home), _f.set(...anyTangent(home)));
+    surface(home, ghost.root.position);
+    orient(ghost.root, _up.set(...home), _f.set(...anyTangent(home)));
     ghostMat.color.setHex(placing.valid ? 0x5fb8d9 : 0xe0654c);
-    if (depot) return;
     areaLines.lines.material.color.setHex(placing.valid ? 0x5fb8d9 : 0xe0654c);
-    areaLines.set(hexArea(hex));
+    const mk = placing.kind === 'move' ? game.s.stations[placing.index]?.mk | 0 : Math.max(1, placing.index);
+    areaLines.set(hexArea(hex, mk >= 2 ? 3 : 2));                 // Vysavač MK2 uklízí o prstenec dál
   }
 
   // ---------- snímek ----------
@@ -370,13 +427,12 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
 
   function update(dt, time, fx, viewRange) {
     const s = game.s;
-    views.garage.setBuilt(s.garage);
     syncVehicles(dt, viewRange);
     syncStations(dt, viewRange);
     syncDrones(dt, time, viewRange);
-    syncDepots(viewRange);
     belts.update(time, viewRange, astro.root.position);
     updatePlacement();
+    structures.update(dt, viewRange, focusPoint());
     holo.root.visible = views.depot.root.position.distanceTo(astro.root.position) < 90;
     if (holo.root.visible) {
       holo.spin.rotation.y = time * 0.25;
@@ -432,9 +488,12 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     astro.blob.visible = !shadowsOn && !sits && !rag;
     astro.setJetpack(s.jetpack ? (performance.now() - fx.jet < 700 ? 2 : 1) : 0);
 
-    lastTool = fx.tool;
+    const tp = toolPoint();                          // poloha nástroje v tomto snímku (zametání samo je 10× za s)
+    lastTool = tp;
     if (!driving) astro.setToolSize(ride ? 0 : eq.stats.width / 2);
-    updateRing(fx.tool, eq.stats.width / 2);
+    astro.setHammer(game.hammer && !driving && !ride && !rag);
+    if (build.hits !== lastHits) { lastHits = build.hits; astro.hammerSwing(); }
+    updateRing(tp, eq.stats.width / 2);
     updateHexLine(dirToCell(s.p));
   }
 
@@ -475,6 +534,11 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
 
   return {
     update,
+    // ukazatel kliknutí (D-09): target = cíl myší, vehicle = { radius, nose } při jízdě
+    updateMarker: (dt, target, vehicle, miss, clicks) => marker.update(dt, target, vehicle, miss, clicks),
+    preloadStructures: () => structures.preload(),
+    pickStructure: (x, y, camera, canvas) => structures.pick(x, y, camera, canvas),
+    pickCable: (x, y, camera, canvas) => structures.pickCable(x, y, camera, canvas),
     fadeOccluders: belts.fade,
     seatTransform,
     passengerTransform,
@@ -489,6 +553,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     feetPosition: () => surface(game.s.p, new THREE.Vector3()),
     toolTip: () => (game.s.driving >= 0 && lastTool ? surface(lastTool, new THREE.Vector3(), 0.3) : astro.toolTip()),
     setLamp: astro.setLamp,
+    setBaseDark: k => plaza.update(k),                       // tma u základny: lampy a obrubníky (D-12)
     lampIntensity: astro.lampIntensity,
     lampPosition: astro.lampPosition,
     lampDirection: astro.lampDirection,

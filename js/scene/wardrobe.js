@@ -1,6 +1,6 @@
 // Šatna: živý náhled astronauta (vlastní malý renderer, běží jen když je šatna otevřená)
 // a náhledové obrázky rekvizit na helmě.
-import { createAstronaut } from './astronaut.js';
+import { instantiate } from '../assets/models.js';
 import { DEFAULT_LOOK } from '../catalog.js';
 
 const THREE = window.THREE;
@@ -25,7 +25,7 @@ export function createWardrobe(thumb) {
     camera = new THREE.PerspectiveCamera(32, 1, 0.1, 20);
     camera.position.set(0, 1.25, 3.6);
     camera.lookAt(0, 0.95, 0);
-    astro = createAstronaut(DEFAULT_LOOK);
+    astro = instantiate('astronaut', DEFAULT_LOOK);
     scene.add(astro.root);
     canvas.addEventListener('pointerdown', e => { dragging = true; lastX = e.clientX; canvas.setPointerCapture(e.pointerId); });
     canvas.addEventListener('pointermove', e => { if (dragging) { angle += (e.clientX - lastX) * 0.012; lastX = e.clientX; } });
@@ -65,7 +65,7 @@ export function createWardrobe(thumb) {
     // Náhled hlavy s rekvizitou (pro karty v šatně).
     headThumb(propId) {
       return thumb(`prop-${propId}`, () => {
-        const a = createAstronaut({ ...DEFAULT_LOOK, top: propId.match(/^(none|noface|moustache|glasses|whiskers)$/) ? 'none' : propId, face: /^(moustache|glasses|whiskers)$/.test(propId) ? propId : 'noface' });
+        const a = instantiate('astronaut', { ...DEFAULT_LOOK, top: propId.match(/^(none|noface|moustache|glasses|whiskers)$/) ? 'none' : propId, face: /^(moustache|glasses|whiskers)$/.test(propId) ? propId : 'noface' });
         const head = a.head;
         head.parent.remove(head);
         head.position.set(0, 0, 0);

@@ -8,6 +8,8 @@ import { SUIT_COLORS, DEFAULT_LOOK } from '../catalog.js';
 import { RG, RG_COUNT } from '../ragdoll.js';
 import { buildProp } from './props.js';
 import { buildJetpack } from './models.js';
+import { buildHammerModel } from './toolModels.js';
+import { mergeJoints, mergeObject, snapshot } from './mergeParts.js';
 
 const THREE = window.THREE;
 
@@ -149,6 +151,7 @@ function buildTool(M) {
 export function createAstronaut(look = DEFAULT_LOOK) {
   const M = materials();
   const root = new THREE.Group();
+  root.userData.dbg = 'astronaut';                 // skupina pro ladicí výpis F3 (debug.js)
 
   const hips = new THREE.Group();
   hips.position.y = HIP_Y;
@@ -172,13 +175,53 @@ export function createAstronaut(look = DEFAULT_LOOK) {
 
   root.add(hips, shadow);
 
+  // O-13 krok 1: díly na stejném kloubu → jeden díl (barvy ve vrcholech), ~14 vykreslení místo ~50.
+  const merged = mergeJoints([hips, torso, head, armL.shoulder, armL.elbow, armR.shoulder, armR.elbow, legL.hip, legL.knee, legR.hip, legR.knee, tool, toolHead], hips);
+
+  // ---------- úroveň detailu (O-13 krok 3) ----------
+  // 0 = plný model, 1 = vzdálený: jeden snímek v neutrální póze (2 vykreslení), jen poskakuje; 2 = nekreslí se.
+  let far = null, detail = 0, farHop = 0;
+  function buildFar() {
+    const saved = BONES.map(b => b.quaternion.clone());
+    const hipsY = hips.position.y, hipsShown = hips.visible;
+    hips.visible = true;
+    for (const b of BONES) b.rotation.set(0, 0, 0);
+    hips.position.y = HIP_Y;
+    armL.shoulder.rotation.x = armR.shoulder.rotation.x = -0.55;   // ruce jako při chůzi
+    armL.elbow.rotation.x = armR.elbow.rotation.x = -0.75;
+    const toolParts = new Set(); tool.traverse(o => toolParts.add(o));
+    far = snapshot(root, o => !toolParts.has(o) && !(jetpack && isInside(o, jetpack)));
+    far.userData.far = true;
+    BONES.forEach((b, i) => b.quaternion.copy(saved[i]));
+    hips.position.y = hipsY;
+    hips.visible = hipsShown;
+    far.visible = false;
+    root.add(far);
+  }
+  const isInside = (o, parent) => { for (let p = o; p; p = p.parent) if (p === parent) return true; return false; };
+  // level: 0/1/2; vzdálený model se nepoužije při sezení, tlačení a ragdollu (tam je potřeba póza)
+  function setDetail(level) {
+    if (level === 1 && !far) buildFar();
+    detail = level;
+    const useFar = level === 1;
+    hips.visible = level === 0;
+    shadow.visible = shadow.visible && level === 0;
+    if (far) far.visible = useFar;
+    root.visible = level !== 2;
+  }
+
   // ---------- vzhled (šatna) ----------
   let props = [];
   function setLook(l) {
     suitColors(M, l.color);
+    merged.refresh();
+    if (far) { root.remove(far); far = null; }               // vzdálený snímek se postaví znovu s novým vzhledem
     for (const p of props) head.remove(p.root);
     props = [buildProp(l.top), buildProp(l.face)].filter(Boolean);
-    for (const p of props) head.add(p.root);
+    for (const p of props) {
+      if (!p.update) mergeObject(p.root);                // statická rekvizita = 1 díl (animované zůstávají)
+      head.add(p.root);
+    }
   }
   setLook(look);
 
@@ -188,6 +231,11 @@ export function createAstronaut(look = DEFAULT_LOOK) {
 
   // st: { moving, speed, swept, airborne, alt, vel, landed, seated, pushing }
   function update(dt, time, st) {
+    if (detail === 1 && far) {                         // vzdálený: jen poskakování při chůzi, bez kloubů
+      if (st.moving && !st.airborne) farHop += st.speed * dt / HOP_LENGTH * Math.PI;
+      far.position.y = st.moving && !st.airborne ? Math.pow(Math.abs(Math.sin(farHop)), 0.6) * HOP_HEIGHT : 0;
+      return;
+    }
     for (const p of props) p.update?.(dt, time);
     if (ragdolling) return;
     const ease = s => 1 - Math.exp(-dt * s);
@@ -274,6 +322,16 @@ export function createAstronaut(look = DEFAULT_LOOK) {
     armR.shoulder.rotation.z = cur.armZ;
     armL.elbow.rotation.x = armR.elbow.rotation.x = cur.elbow;
 
+    // kladivo v pravé ruce: drží ho dole před tělem (hlava kladiva vpředu, daleko od helmy),
+    // při stavění tři údery – nápřah do vodorovné polohy před sebou a úder dolů k zemi (D-07)
+    if (hammer?.visible && !st.seated) {
+      const t = (performance.now() - swingAt) / 1000;
+      const up = t < 0.9 ? Math.max(0, Math.sin(t / 0.3 * Math.PI)) : 0;
+      armR.shoulder.rotation.x = -0.35 - 1.15 * up;
+      armR.elbow.rotation.x = -0.5 + 0.35 * up;
+      armR.shoulder.rotation.z = 0.18;                       // ruka trochu do strany od těla
+    }
+
     // zametání: nástroj kmitá do stran, ve vzduchu se drží u těla
     tool.rotation.y = Math.sin(time * 11) * 0.22 * sweepAmp;
     tool.rotation.x = -0.35 * airAmp;
@@ -296,6 +354,24 @@ export function createAstronaut(look = DEFAULT_LOOK) {
   }
 
   const tip = new THREE.Vector3();
+
+  // Kladivo v ruce (místo zametacího nástroje) a údery při stavění.
+  let hammer = null, swingAt = -1e9;
+  function setHammer(on) {
+    if (!on && !hammer) return;
+    if (!hammer) {
+      const model = buildHammerModel();
+      mergeObject(model);
+      model.rotation.y = Math.PI / 2;                         // hlava kladiva otočená o 90° kolem násady (úderem dopředu)
+      hammer = new THREE.Group();
+      hammer.add(model);
+      hammer.position.set(0, -0.36, 0.03);
+      hammer.rotation.set(Math.PI / 2 - 0.15, 0, 0);          // násada z dlaně dopředu (s předloktím míří šikmo vpřed nahoru)
+      armR.elbow.add(hammer);
+    }
+    hammer.visible = !!on;
+  }
+  const hammerSwing = () => { swingAt = performance.now(); };
 
   // Jetpack na zádech (přes batoh): state 0 = není, 1 = na zádech, 2 = právě hoří.
   let jetpack = null;
@@ -406,7 +482,12 @@ export function createAstronaut(look = DEFAULT_LOOK) {
     endRagdoll,
     get ragdolling() { return ragdolling; },
     setToolSize,
+    arms: { L: armL, R: armR },                    // klouby rukou (póza v lobby – mávání)
     setJetpack,
+    setHammer,
+    hammerSwing,
+    setDetail,
+    get detail() { return detail; },
     setLamp: k => { lampK = k; },
     lampIntensity: () => lampK,
     lampPosition: out => lamp.getWorldPosition(out),

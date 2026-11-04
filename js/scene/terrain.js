@@ -8,7 +8,7 @@
 // a uloží do atributu vrcholů; shader (terrainMaterial.js) pak jen porovná úhel Slunce.
 import { MOON, DUST, RELIEF, PLANET } from '../config.js';
 import { FACES, faceOf, planar } from '../planet/icosa.js';
-import { heightAt } from '../planet/height.js';
+import { heightAt, takeTerrainChanges } from '../planet/height.js';
 import { grid, dirToCell, HEX_SPACING } from '../planet/hexgrid.js';
 import { W, H, atlasUv, hexes, dirty } from '../planet/dustmap.js';
 import { game } from '../state.js';
@@ -272,6 +272,7 @@ export function createTerrain(scene, renderer, viewDistance) {
     geo.computeBoundingSphere();
     ch.mesh = new THREE.Mesh(geo, material);
     ch.mesh.frustumCulled = true;
+    ch.mesh.userData.dbg = 'terrain';              // skupina pro ladicí výpis F3 (debug.js)
     scene.add(ch.mesh);
     ch.vertAB = vAB;
     const cached = shadowCache.get(ch.index);
@@ -279,7 +280,7 @@ export function createTerrain(scene, renderer, viewDistance) {
     else queued.add(ch.index);
 
     ch.lines = buildHexLines(ch.hexes);
-    if (ch.lines) scene.add(ch.lines);
+    if (ch.lines) { ch.lines.userData.dbg = 'terrain'; scene.add(ch.lines); }
     built++;
   }
 
@@ -414,6 +415,14 @@ export function createTerrain(scene, renderer, viewDistance) {
     const horizon = Math.acos(R / (R + alt + RELIEF.maxH)) + Math.acos(R / (R + RELIEF.maxH));   // + hory za obzorem
     const limit = Math.min(horizon, viewAngle);
 
+    // srovnaný terén pod stavbami (4. 11.): kusy, kterých se změna dotkla, se postaví znovu
+    for (const c of takeTerrainChanges()) {
+      for (const ch of CHUNKS) {
+        if (!ch.mesh) continue;
+        const a = Math.acos(Math.max(-1, Math.min(1, c.c[0] * ch.center[0] + c.c[1] * ch.center[1] + c.c[2] * ch.center[2])));
+        if (a - ch.radius < c.ang) disposeChunk(ch);
+      }
+    }
     const missing = [];
     const order = [];
     for (const ch of CHUNKS) {

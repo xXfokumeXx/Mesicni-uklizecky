@@ -47,6 +47,23 @@ export function buildToolModel(id) {
   return g;
 }
 
+// Stavební kladivo (D-07): žlutá rukojeť, dlouhé oranžové kování, tmavá úderná plocha.
+// Rukojeť podél +y (úchop dole u y = 0), hlava nahoře, kování podél x.
+export function buildHammerModel() {
+  const m = materials();
+  const g = new THREE.Group();
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.034, 0.62, 8), m.hivis);
+  grip.position.y = 0.31;
+  const wrap = new THREE.Mesh(new THREE.CylinderGeometry(0.037, 0.037, 0.16, 8), m.dark);
+  wrap.position.y = 0.08;
+  const head = box(0.34, 0.09, 0.09, m.orange, 0.03, 0.64, 0);
+  const face = box(0.07, 0.11, 0.11, m.dark, 0.21, 0.64, 0);
+  const claw = box(0.1, 0.05, 0.07, m.orange, -0.16, 0.66, 0);
+  claw.rotation.z = 0.35;
+  g.add(grip, wrap, head, face, claw);
+  return g;
+}
+
 // Měsíční boty pro náhled v Dílně; vyšší úroveň = výraznější podrážka a pružiny / trysky.
 export function buildBootsModel(lv) {
   const m = materials();

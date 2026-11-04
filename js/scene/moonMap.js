@@ -8,8 +8,9 @@ import { dirToCell, cellDir } from '../planet/hexgrid.js';
 import { atlasUv, hexes } from '../planet/dustmap.js';
 import { FLAT_WINDOW } from '../planet/sunwindow.js';
 import { game } from '../state.js';
-import { beltPath } from '../depots.js';
+import { DEPOT, samplePath } from '../logistics.js';
 import { ROCKET_SITE } from '../rocket.js';
+import { researchCenter, researchProgress } from '../research.js';
 import { createTerrainMaterial } from './terrainMaterial.js';
 
 const THREE = window.THREE;
@@ -50,6 +51,13 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
   // UFO drony (azurové, létají)
   const droneMat = new THREE.MeshBasicMaterial({ color: 0x6ff0e0 });
   const dronePins = [];
+  // výzkumné centrum (D-10): modrá značka a oblouk s průběhem výzkumu
+  const researchPin = mk(0x6fa8ff);
+  const arcMat = new THREE.MeshBasicMaterial({ color: 0x6fa8ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
+  const arc = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.2, 32, 1, Math.PI / 2, -0.001), arcMat);
+  let arcK = -1;
+  researchPin.visible = arc.visible = false;
+  group.add(researchPin, arc);
   // ostatní hráči (barva skafandru, bílý okraj, ať jdou rozeznat od staveb)
   const otherPins = [];
   const otherRingMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
@@ -123,24 +131,36 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
     });
   }
 
+  // depa 3.0: fialová značka + oblouk naplnění (žlutý nad 80 %, červený plné); pásy jako čáry po trase
+  const fillMat = { n: new THREE.MeshBasicMaterial({ color: 0xb48cf0, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+    y: new THREE.MeshBasicMaterial({ color: 0xf2b33d, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+    r: new THREE.MeshBasicMaterial({ color: 0xe0654c, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }) };
   function placeDepots() {
-    const key = game.s.depots.map(d => `${d.hex}${d.belt ? `b${d.to ?? -1}` : ''}`).join(',');
+    const list = (game.s.buildings || []).filter(b => b.type === 'depot');
+    const key = list.map(b => `${b.id}:${Math.round((b.data.store || 0) / DEPOT.cap * 25)}`).join(',') + '#' + (game.s.belts || []).map(b => b.id).join(',');
     if (key === depotKey) return;
     depotKey = key;
     for (const o of [...depotPins, ...beltLines]) group.remove(o);
-    beltLines.forEach(l => l.geometry.dispose());
-    depotPins = game.s.depots.map(d => {
+    for (const o of [...depotPins, ...beltLines]) { if (o.userData.own) o.geometry.dispose(); if (o.userData.ring) { group.remove(o.userData.ring); o.userData.ring.geometry.dispose(); } }
+    depotPins = list.map(b => {
       const pin = new THREE.Mesh(pinGeo, depotMat);
-      pin.userData.dir = cellDir(d.hex);
+      pin.userData.dir = b.p;
+      const k = Math.min(1, (b.data.store || 0) / DEPOT.cap);
+      if (k > 0.01) {
+        const ring = new THREE.Mesh(new THREE.RingGeometry(1.5, 2.1, 32, 1, Math.PI / 2, -Math.max(0.08, k * Math.PI * 2)), k >= 1 ? fillMat.r : k >= 0.8 ? fillMat.y : fillMat.n);
+        pin.userData.ring = ring;
+        group.add(ring);
+      }
       group.add(pin);
       return pin;
     });
-    beltLines = game.s.depots.filter(d => d.belt).map(d => {
-      const pts = beltPath(d.hex, d.to ?? -1).points.map(p => {
-        const r = R + heightAt(p) + 1.5;
+    beltLines = (game.s.belts || []).map(bl => {
+      const pts = samplePath(bl.pts, 3).map(({ p, h }) => {
+        const r = R + h + 1.5;
         return new THREE.Vector3(p[0] * r, p[1] * r, p[2] * r);
       });
       const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), beltMat);
+      line.userData.own = true;
       group.add(line);
       return line;
     });
@@ -265,8 +285,26 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
     placePin(basePin, BASE.dir, size * 1.1, size);
     placePin(rocketPin, ROCKET_SITE.dir, size * 1.1, size * 1.5);
     for (const pin of stationPins) placePin(pin, pin.userData.dir, size * 0.8, size * 0.8);
-    for (const pin of depotPins) placePin(pin, pin.userData.dir, size * 0.9, size * 0.9);
+    for (const pin of depotPins) {
+      placePin(pin, pin.userData.dir, size * 0.9, size * 0.9);
+      const ring = pin.userData.ring;
+      if (ring) { ring.position.copy(pin.position); ring.lookAt(0, 0, 0); ring.scale.setScalar(size); }
+    }
     if (target) placePin(targetPin, target, size * 0.9, size * 0.9);
+    const rc = researchCenter();
+    researchPin.visible = !!rc;
+    if (rc) {
+      placePin(researchPin, rc.p, size * 1.0, size);
+      const pr = researchProgress();
+      const k = pr ? Math.round(pr.k * 50) / 50 : 0;
+      arc.visible = !!pr;
+      if (pr && k !== arcK) {                                  // oblouk po směru hodin od „12“, přepočet po 2 %
+        arcK = k;
+        arc.geometry.dispose();
+        arc.geometry = new THREE.RingGeometry(1.6, 2.2, 32, 1, Math.PI / 2, -Math.max(0.05, k * Math.PI * 2));
+      }
+      if (pr) { arc.position.copy(researchPin.position); arc.lookAt(0, 0, 0); arc.scale.setScalar(size); }
+    } else arc.visible = false;
     const drones = game.s.drones || [];
     while (dronePins.length < drones.length) { const pin = new THREE.Mesh(pinGeo, droneMat); group.add(pin); dronePins.push(pin); }
     dronePins.forEach((pin, i) => {

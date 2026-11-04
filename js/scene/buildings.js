@@ -1,6 +1,6 @@
-// Budovy základny: výkup prachu, dílna, obchod s nástroji, garáž (staveniště / hotová),
-// stanice robota a betonová plocha základny. Model: „nahoru“ = +y, vchod směrem +z.
-import { MOON, DEPOT, BASE } from '../config.js';
+// Modely v kódu: garáž (staveniště / hotová), stanice robota, depo v2 a betonová plocha základny.
+// Výkup, Dílna a Obchod jsou od 3.0 modely GLB (assets/registry.js). Model: „nahoru“ = +y, vchod směrem +z.
+import { MOON, BASE } from '../config.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
@@ -86,76 +86,6 @@ function sign(text, w, h) {
 }
 
 // ---------- budovy ----------
-
-export function buildDepot() {
-  const m = materials();
-  const root = new THREE.Group();
-  root.add(
-    cyl(1.1, 1.25, 0.9, m.wall, 0, 0.45, 0),
-    cyl(1.17, 1.17, 0.08, m.hivis, 0, 0.72, 0),
-    box(0.55, 0.62, 0.12, m.dark, 0, 0.31, 1.18),
-    cyl(0.03, 0.03, 0.9, m.dark, 0, 2.3, 0, 6),
-  );
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(1.1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.wall);
-  dome.position.y = 0.9;
-  const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), m.beacon);
-  beacon.position.y = 2.82;
-  const beam = cyl(0.3, 0.3, 300, m.beam, 0, 152, 0, 8);
-  const zoneGeo = new THREE.RingGeometry(DEPOT.r - 0.15, DEPOT.r, 48);
-  zoneGeo.rotateX(-Math.PI / 2);
-  const zone = new THREE.Mesh(zoneGeo, m.zone);
-  zone.position.y = 0.1;
-  const label = sign('VÝKUP PRACHU', 2.4, 0.5);
-  label.position.set(0, 1.55, 1.05);
-  label.rotation.x = -0.35;
-  root.add(dome, beacon, beam, zone, label);
-  return { root, beacon };
-}
-
-export function buildWorkshop() {
-  const m = materials();
-  const root = new THREE.Group();
-  root.add(
-    box(9, 4.2, 7, m.wall, 0, 2.1, 0),
-    box(9.2, 0.35, 7.2, m.roof, 0, 4.35, 0),
-    box(9.02, 0.5, 7.02, m.shade, 0, 0.25, 0),
-    box(4.2, 3.2, 0.08, m.dark, 0, 1.6, 3.52),             // vrata
-    box(0.12, 4.2, 0.12, m.orange, -4.5, 2.1, 3.5),
-    box(0.12, 4.2, 0.12, m.orange, 4.5, 2.1, 3.5),
-    box(1.6, 0.8, 0.05, m.window, -3.0, 2.6, 3.52),
-    box(1.6, 0.8, 0.05, m.window, 3.0, 2.6, 3.52),
-    hazard(4.2, 0.3, 0, 3.35, 3.54),
-  );
-  const dish = new THREE.Mesh(new THREE.SphereGeometry(0.8, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2.6), m.wall);
-  dish.position.set(2.8, 4.9, -1.5);
-  dish.rotation.x = 0.6;
-  const label = sign('DÍLNA', 3.2, 0.7);
-  label.position.set(0, 3.85, 3.56);
-  root.add(dish, label);
-  return { root };
-}
-
-export function buildToolshop() {
-  const m = materials();
-  const root = new THREE.Group();
-  root.add(
-    box(7, 3.6, 6, m.wall, 0, 1.8, 0),
-    box(7.2, 0.3, 6.2, m.roof, 0, 3.75, 0),
-    box(7.02, 0.5, 6.02, m.shade, 0, 0.25, 0),
-    box(5.4, 1.6, 0.05, m.window, 0, 1.6, 3.02),           // výloha
-    box(1.4, 2.4, 0.06, m.dark, 2.0, 1.2, 3.04),            // dveře
-  );
-  const awning = box(7.2, 0.08, 1.8, m.orange, 0, 3.0, 3.8);
-  awning.rotation.x = 0.28;
-  const label = sign('NÁSTROJE', 3.4, 0.7);
-  label.position.set(0, 3.3, 3.06);
-  for (let i = 0; i < 4; i++) {
-    const post = cyl(0.04, 0.04, 1.6, m.dark, -2.4 + i * 1.6, 1.6, 2.98, 6);   // „nástroje“ ve výloze
-    root.add(post);
-  }
-  root.add(awning, label);
-  return { root };
-}
 
 // Hotová garáž: hangár s obloukovou střechou.
 function garageBuilt() {

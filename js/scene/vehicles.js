@@ -189,5 +189,7 @@ function crewTransport() {
 const BUILDERS = { push: pushSweeper, rideon: rideOn, lunar: lunarSweeper, mega: megaRover, crew: crewTransport };
 
 export function buildVehicle(type) {
-  return BUILDERS[type]();
+  const view = BUILDERS[type]();
+  view.root.userData.dbg = 'vehicle';            // skupina pro ladicí výpis F3 (debug.js)
+  return view;
 }

@@ -5,6 +5,7 @@ import { heightAt } from '../planet/height.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
+const HORIZON = 40;          // m – náhradní cíl, když kurzor při podrženém tlačítku míří nad obzor
 
 export function createPicker(canvas, camera) {
   const ray = new THREE.Raycaster();
@@ -22,7 +23,19 @@ export function createPicker(canvas, camera) {
     return true;
   }
 
-  return function pickDir(clientX, clientY) {
+  const up = new THREE.Vector3(), flat = new THREE.Vector3();
+  // Kurzor nad obzorem (malý Měsíc → při jízdě z kopce časté): směr paprsku po povrchu, HORIZON m před kamerou.
+  function horizonDir(origin, direction) {
+    up.copy(origin).normalize();
+    flat.copy(direction).addScaledVector(up, -direction.dot(up));
+    if (flat.lengthSq() < 1e-8) return null;
+    flat.normalize();
+    hit.copy(up).addScaledVector(flat, HORIZON / R).normalize();
+    return [hit.x, hit.y, hit.z];
+  }
+
+  // horizon = true: místo „nic“ (obloha) vrátit bod ve směru kurzoru (pro podržené tlačítko při jízdě / chůzi)
+  return function pickDir(clientX, clientY, horizon = false) {
     const r = canvas.getBoundingClientRect();
     ndc.set((clientX - r.left) / r.width * 2 - 1, -(clientY - r.top) / r.height * 2 + 1);
     ray.setFromCamera(ndc, camera);
@@ -30,7 +43,7 @@ export function createPicker(canvas, camera) {
 
     let radius = R;
     for (let i = 0; i < 3; i++) {
-      if (!hitSphere(origin, direction, radius)) return null;
+      if (!hitSphere(origin, direction, radius)) return horizon ? horizonDir(origin, direction) : null;
       const l = hit.length();
       radius = R + heightAt([hit.x / l, hit.y / l, hit.z / l]);
     }
