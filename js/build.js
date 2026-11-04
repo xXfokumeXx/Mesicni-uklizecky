@@ -14,7 +14,7 @@ import {
 import { ownsHammer } from './equipment.js';
 import { heldHammer, hammerSlot, previousSlot, selectSlot, putTool, hotbarSlots, HAMMER_ID } from './hotbar.js';
 import { autoConnect, cableCheck, addCable, removeCable } from './energy.js';
-import { nearestSocket, socketByRef, fullPath, checkPath, addBelt, cutBelt, beltSegmentAt, BELT } from './logistics.js';
+import { nearestSocket, socketByRef, fullPath, checkPath, addBelt, cutBelt, beltSegmentAt, retypeCheck, BELT } from './logistics.js';
 
 // Postaví stavbu a hned ji připojí kabelem k síti (L-06). Vrací id, nebo false. Volá i hostitel (net.js).
 export function placeAndWire(type, p, yaw) {
@@ -226,8 +226,10 @@ export function updateBuild(dt, cursor, keys, picked, pickedCable = null) {
       build.price = chk.price;
       build.len = chk.len;
       build.beltBridges = chk.ok ? chk.bridges || [] : [];          // mosty přes křížené pásy (náhled)
-      build.valid = chk.ok && !build.busy && (!target || s.money >= chk.price);
-      build.reason = !chk.ok ? chk.reason : target && s.money < chk.price ? `Chybí peníze ($${fmtMoney(chk.price - s.money)})` : '';
+      // navazující pás s jiným zbožím (zbytek prachového pásu → výstup slinovny): převezme zboží, ale až z něj sjede náklad
+      const wait = target && target.goods !== 'any' && target.goods !== from.goods && retypeCheck(target.ref, from.goods).wait;
+      build.valid = chk.ok && !wait && !build.busy && (!target || s.money >= chk.price);
+      build.reason = !chk.ok ? chk.reason : wait ? `Na navazujícím pásu ještě jede ${target.goods === 'brick' ? 'cihla' : 'prach'} – počkej, až dojede` : target && s.money < chk.price ? `Chybí peníze ($${fmtMoney(chk.price - s.money)})` : '';
     }
   }
 

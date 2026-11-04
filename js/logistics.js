@@ -78,6 +78,30 @@ function beltEndSockets() {
   return out;
 }
 
+// Pás bl a pásy za ním po proudu (řetěz končí stavbou, Výkupem nebo volným koncem)
+function beltChain(bl) {
+  const out = [], seen = new Set();
+  while (bl && !seen.has(bl.id)) { seen.add(bl.id); out.push(bl); bl = beltOfRef(bl.to); }
+  return out;
+}
+// 4. 11.: smí pás s volným začátkem (ref ['belt:<id>', 'start']) a pásy za ním převzít zboží goods? Např. zbytek
+// prachového pásu do Výkupu napojený na výstup slinovny (cihly). Cíl řetězu musí brát 'any' (Výkup) nebo goods,
+// rozdělovač / spojovač ne. wait = na řetězu ještě jede jiné zboží – napojit až dojede.
+export function retypeCheck(ref, goods) {
+  const bl = ref?.[1] === 'start' ? beltOfRef(ref) : null;
+  if (!bl || !goods) return { ok: false, wait: false };
+  const chain = beltChain(bl);
+  if (chain.every(x => x.goods === goods)) return { ok: true, wait: false };
+  const end = chain[chain.length - 1].to;
+  if (end && !end[0].startsWith('belt:')) {
+    const owner = end[0] === 'buyback' ? 'buyback' : structureById(end[0]);
+    if (!owner || isNode(owner)) return { ok: false, wait: false };
+    const s = socketByRef(end);
+    if (!s || (s.goods !== 'any' && s.goods !== goods)) return { ok: false, wait: false };
+  }
+  return { ok: true, wait: chain.some(x => x.goods !== goods && x.items.length > 0) };
+}
+
 export function socketsOf(b) {
   if (b === 'buyback') {
     return BUYBACK_SOCKETS.map(s => {
@@ -119,7 +143,7 @@ export function nearestSocket(p, dir, goods = null) {
   for (const s of allSockets()) {
     if (s.dir !== dir || !socketFree(s.ref)) continue;
     if (dir === 'out' && !s.goods) continue;                         // výstup rozdělovače bez přivedeného pásu
-    if (goods && s.goods !== 'any' && s.goods !== goods) continue;
+    if (goods && s.goods !== 'any' && s.goods !== goods && !retypeCheck(s.ref, goods).ok) continue;   // navazující pás převezme zboží
     const d = angleBetween(p, s.p) * R;
     if (d < bestD) { bestD = d; best = s; }
   }
@@ -293,7 +317,12 @@ export function addBelt(fromRef, toRef, bends) {
   const from = socketByRef(fromRef), to = socketByRef(toRef);
   if (!from || !to || from.dir !== 'out' || to.dir !== 'in' || !from.goods) return false;
   if (!socketFree(fromRef) || !socketFree(toRef)) return false;
-  if (to.goods !== 'any' && to.goods !== from.goods) return false;
+  let retype = false;
+  if (to.goods !== 'any' && to.goods !== from.goods) {
+    const rc = retypeCheck(toRef, from.goods);
+    if (!rc.ok || rc.wait) return false;
+    retype = true;
+  }
   if (fromRef[0] === toRef[0]) return false;
   const pts = fullPath(from, bends || [], to);
   const chk = checkPath(pts, [fromRef[0], toRef[0]]);
@@ -306,6 +335,7 @@ export function addBelt(fromRef, toRef, bends) {
   // navázání na volné konce pásů: předchozí pás předává do nového, nový do následujícího
   const A = beltOfRef(fromRef); if (A) A.to = [beltRef(id), 'start'];
   const B = beltOfRef(toRef); if (B) B.from = [beltRef(id), 'end'];
+  if (retype && B) for (const x of beltChain(B)) if (x.goods !== bl.goods) { x.goods = bl.goods; x.items = []; }   // prázdné (retypeCheck)
   return id;
 }
 // Odpojí navazující pásy od pásu id (jejich konec / začátek zůstane volný), nebo je přepojí na pás newId.
