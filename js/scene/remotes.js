@@ -6,6 +6,7 @@ import { net } from '../net.js';
 import { remoteRagdoll, advanceRemote, correctRemote, ragdollPoints } from '../ragdoll.js';
 import { game } from '../state.js';
 import { instantiate } from '../assets/models.js';
+import { rankName } from '../ranks.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
@@ -37,14 +38,18 @@ export function createRemotes(scene, camera, actors, layer) {
       const tag = document.createElement('div');
       tag.className = 'nametag';
       layer.append(tag);
-      v = { astro, tag, lookKey: '', wasAir: false, name: '' };
+      v = { astro, tag, lookKey: '', wasAir: false, name: '', rank: null };
       views.set(r.peer, v);
     }
     const key = `${r.look.color}|${r.look.top}|${r.look.face}`;
     if (key !== v.lookKey) { v.lookKey = key; v.astro.setLook(r.look); }
-    if (v.name !== r.name) {
+    if (v.name !== r.name || v.rank !== r.rank) {           // jmenovka: hodnost (malým písmem) nad jménem
       v.name = r.name;
-      v.tag.textContent = r.name;
+      v.rank = r.rank;
+      const rk = rankName(r.rank);
+      v.tag.replaceChildren();
+      if (rk) v.tag.append(Object.assign(document.createElement('small'), { className: 'nametag__rank', textContent: rk }));
+      v.tag.append(document.createTextNode(r.name));
       v.tag.style.setProperty('--tag', '#' + SUIT_COLORS[r.look.color].hex.toString(16).padStart(6, '0'));
     }
     return v;

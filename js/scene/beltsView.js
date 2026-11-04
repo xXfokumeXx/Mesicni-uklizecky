@@ -9,7 +9,7 @@ import { MOON } from '../config.js';
 import { game } from '../state.js';
 import { STRUCTURES, padTopHeight, localToDir } from '../structures.js';
 import { build, hammerActive } from '../build.js';
-import { BELT, DEPOT, beltSamples, beltPointAt, beltPointInto, allSockets, socketFree, samplePath, tickPhase, beltSpeed } from '../logistics.js';
+import { BELT, DEPOT, beltSamples, beltPointAt, beltPointInto, allSockets, socketFree, samplePath, liftSamples, tickPhase, beltSpeed } from '../logistics.js';
 import { heightAt, terrainVersion } from '../planet/height.js';
 import { settings } from '../settings.js';
 
@@ -124,8 +124,8 @@ export function createBeltsView(scene) {
         box(mid.clone().addScaledVector(n, -0.06), side, n, t, HALF_W * 2 + 0.1, 0.12, L + 0.02, 0x4b4f59);
         box(mid.clone().addScaledVector(side, -HALF_W - 0.04).addScaledVector(n, 0.07), side, n, t, 0.07, 0.16, L + 0.02, 0xf2b33d);
         box(mid.clone().addScaledVector(side, HALF_W + 0.04).addScaledVector(n, 0.07), side, n, t, 0.07, 0.16, L + 0.02, 0xf2b33d);
-        // nožky každé ~3 m
-        if (i % 3 === 0) {
+        // nožky každé ~3 m (na vršku mostu ne – stály by v kříženém pásu)
+        if (i % 3 === 0 && !((a.lift || 0) > 0.6)) {
           for (const sgn of [-1, 1]) {
             const top = P.clone().addScaledVector(side, sgn * (HALF_W - 0.08)).addScaledVector(n, -0.1);
             const g = R + heightAt(a.p) - 0.2, hTop = top.length();
@@ -309,11 +309,11 @@ export function createBeltsView(scene) {
     const pts = build.mode === 'belt' ? build.beltPts : null;
     if (!pts || pts.length < 2) { preview.visible = false; return; }
     preview.material.color.setHex(build.valid ? (build.beltTo ? 0x7fd38a : 0x5fb8d9) : 0xe0654c);
-    const key = pts.map(p => p.map(v => v.toFixed(6)).join(',')).join('|');
+    const key = pts.map(p => p.map(v => v.toFixed(6)).join(',')).join('|') + '/' + (build.beltBridges || []).join(',');
     preview.visible = true;
     if (key === prevSig) return;
     prevSig = key;
-    const S = samplePath(pts, 1);
+    const S = liftSamples(samplePath(pts, 1), build.beltBridges);   // náhled ukáže i mosty přes jiné pásy
     const P = prevGeo.attributes.position;
     let k = 0;
     for (let i = 0; i < S.length - 1 && k < PREV_MAX; i++, k++) {
@@ -486,7 +486,7 @@ export function createBeltsView(scene) {
 
   return {
     update(time, viewRange, focus) {
-      const s = (game.s.belts || []).map(b => `${b.id}:${b.pts.length}`).join('|') + '#' + terrainVersion();
+      const s = (game.s.belts || []).map(b => `${b.id}:${b.pts.length}:${b.br?.length || 0}`).join('|') + '#' + terrainVersion();
       if (s !== sig) { sig = s; rebuild(); }
       deckMat.uniforms.time.value = time;
       deckMat.uniforms.speed.value = beltSpeed();                 // výzkum Rychlejší pásy
