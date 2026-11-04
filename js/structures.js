@@ -45,9 +45,9 @@ export const GARAGE_SLOTS = 6;
 // Katalog staveb (L-11). Stavby dalších fází se sem přidají spolu se svou logikou (ready: true).
 export const STRUCTURES = {
   garage: {
-    name: 'Garáž', cat: 'vehicles', model: 'garage-3', price: 2000, inBase: true, ready: true,
+    name: 'Garáž', cat: 'vehicles', model: 'garage-3', price: 2000, priceMult: 1.3, inBase: true, ready: true,   // každá další garáž ×1,3
     padTop: 0.412,                                   // horní plocha betonové desky nad počátkem modelu (m)
-    desc: 'Hangár pro 6 vozidel. Vozidla koupíš v okně garáže, parkují v řadě před vraty. První garáž je zdarma.',
+    desc: 'Hangár pro 6 vozidel. Vozidla koupíš v okně garáže, parkují v řadě před vraty. První garáž stojí $2 000, každá další 1,3× víc.',
     pad: [-11.25, 11.25, -10.13, 10.13],
     foot: [-14.5, 14.5, -10.13, 17],
     solid: [[-7, 10.6, -8.6, 3.8]],
@@ -365,11 +365,11 @@ export function canPlace(type, p, yaw, ignoreId = null, footOverride = null) {
 export const structuresOf = type => (game.s.buildings || []).filter(b => b.type === type);
 export const structureById = id => (game.s.buildings || []).find(b => b.id === id) || null;
 
-// Cena stavby právě teď (první garáž je zdarma – L-13).
+// Cena stavby právě teď. Garáž: $2 000 a každá další (podle počtu stojících garáží) ×1,3 – první už není zdarma (L-13 zrušeno 4. 11.).
 export function buildPrice(type) {
   const def = STRUCTURES[type];
   if (!def) return Infinity;
-  if (type === 'garage' && !game.s.gfree && !structuresOf('garage').length) return 0;
+  if (def.priceMult) return Math.round(def.price * def.priceMult ** structuresOf(type).length);
   return def.price;
 }
 
@@ -382,7 +382,6 @@ export function placeStructure(type, p, yaw, id = null) {
   if (s.money < price || !canPlace(type, p, yaw).ok) return false;
   s.money -= price;
   if (def.bricks) s.bricks = (s.bricks || 0) - def.bricks;
-  if (type === 'garage' && price === 0) s.gfree = true;
   const b = { id: id || newUid(), type, p: norm(p), yaw: normYaw(yaw), lv: 0, paid: price, data: initData(type) };
   (s.buildings ||= []).push(b);
   return b.id;

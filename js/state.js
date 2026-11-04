@@ -35,7 +35,7 @@ export function newGame(title = 'Nová směna', dust = game.dust) {
     sel: 0,                                       // vybrané políčko hotbaru
     garage: false,                                // (v2) postavená garáž – ve v3 jsou garáže stavby v buildings
     buildings: [],                                // stavby 3.0 { id, type, p, yaw, lv, paid, data } (structures.js)
-    gfree: false,                                 // první garáž zdarma už využitá
+    gfree: false,                                 // (nepoužívá se od 4. 11. – první garáž už není zdarma; zůstává kvůli síti / uložení)
     hammer: 0,                                    // 1 = koupené kladivo (osobní, Dílna; v hotbaru jako 'hammer')
     cables: [],                                   // kabely vedení [[id stavby, id stavby], …] (energy.js)
     research: { done: [], current: null, queue: [] },   // výzkum (fáze 4)
