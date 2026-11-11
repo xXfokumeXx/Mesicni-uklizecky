@@ -2,6 +2,16 @@
 
 Hra ukazuje poslední 3 verze (okno Novinky po kliknutí na číslo verze v menu). Formát: nadpis `## verze · datum`, pod ním body `- …`.
 
+## 3.2.0 · 11. 11. 2026
+- Nové vozidlo Lunar Prachocuc 5000 ($100 000 v Garáži): měsíční traktor se sběrným ramenem a přívěsem. Klávesa F přepíná jízdu (ramena nahoře) a sběr (ramena do stran, o 35 % pomaleji) – čistí pás 4 m za sebou.
+- Prachocuc jde vylepšit v Dílně: Sběrné rameno až na 8,5 m a Přívěs až na 6 000 kg. V garáži zabere 2 místa. Vysypává se přívěsem – ve Výkupu i pod výsypkou depa musí stát přívěs.
+- Všechna pozemní vozidla mají nové modely: Ruční vozík, Zametač se sedačkou, Měsíční zametací vůz, Mega rover i Přepravník posádky.
+- Baterie je na vozidle vidět: modrý pás znamená nabitá, červený skoro vybitá. Výměník i dron ji berou přímo z kolébky vozidla – ve výměníku už nemusíš stát přesně uprostřed.
+- Zametač se sedačkou má řidiče vzadu a baterii vpředu. Měsíční zametací vůz a Přepravník jsou o něco delší.
+- Mula a Kondor nesou vozidlo za žluté závěsné oko. Prachocuc s přívěsem neunesou.
+- Kabel nabíječky vede do zásuvky vozidla.
+- Stará a nová verze spolu nehrají – po aktualizaci dejte všichni Ctrl+F5.
+
 ## 3.1.1 · 11. 11. 2026
 - Nasbírané cihly jde ve Výkupu prodat ze zásoby – kolik chceš (Burza → Cihly).
 - Mula na laně unese nejvýš Měsíční zametací vůz. Mega rover přenese jen Kondor robotickou rukou.
