@@ -44,6 +44,8 @@
 <link rel="stylesheet" href="css/exchange.css">
 <link rel="stylesheet" href="css/build.css">
 <link rel="stylesheet" href="css/research.css">
+<link rel="stylesheet" href="css/laac.css">
+<link rel="stylesheet" href="css/version.css">
 </head>
 <body>
 <canvas class="viewport" id="scene-canvas" aria-label="Měsíční povrch"></canvas>
@@ -75,6 +77,15 @@
         <div class="batt__body"><span class="batt__cell"></span><span class="batt__cell"></span><span class="batt__cell"></span><span class="batt__cell"></span><span class="batt__cell"></span><span class="batt__bolt">⚡</span></div>
         <span class="batt__nub"></span>
       </div>
+    </div>
+    <div class="stats__row stats__row--drone" id="row-drone" hidden>
+      <span class="stats__label">Dron · B</span>
+      <span class="stats__value" id="stat-drone">připravený</span>
+      <button class="button stats__btn" id="btn-drone" type="button" tabindex="-1">Objednat baterii</button>
+    </div>
+    <div class="stats__row" id="row-alt" hidden>
+      <span class="stats__label">Výška · mezerník / Shift</span>
+      <span class="stats__value" id="stat-alt">6 m</span>
     </div>
     <div class="stats__row" id="row-auto" hidden>
       <span class="stats__label">Autopilot · C</span>
@@ -263,6 +274,7 @@
       <div class="modal__footer-group">
         <button class="button" id="settings-reset" type="button">Obnovit výchozí</button>
       </div>
+      <div class="ver--settings" data-ver></div>
       <button class="button button--primary" id="settings-done" type="button">Hotovo</button>
     </footer>
   </div>
@@ -332,7 +344,6 @@
           <dt><kbd>L</kbd></dt><dd>světla vozidla a čelovka zapnout / vypnout</dd>
           <dt><kbd>M</kbd></dt><dd>pohled: ptačí perspektiva (hraješ dál) → celá planeta (WSAD / šipky otáčí, Q / E přibližuje, klik = jdi tam) → zpátky za postavu</dd>
           <dt><kbd>U</kbd></dt><dd>úspěchy</dd>
-          <dt><kbd>T</kbd></dt><dd>zrychlit čas (v multiplayeru jen hostitel)</dd>
           <dt><kbd>Enter</kbd></dt><dd>chat</dd>
           <dt><kbd>Esc</kbd></dt><dd>menu, zrušit stavbu</dd>
         </dl>
@@ -341,6 +352,7 @@
         <h3 class="pause__slots-title" id="pause-slots-title">Sloty</h3>
         <ul class="slot-list" id="pause-slot-list"></ul>
       </div>
+      <div class="ver--pause" data-ver></div>
     </div>
   </div>
 </div>
@@ -350,7 +362,7 @@
   <div class="menu__sky" aria-hidden="true"><img class="menu__moon-img" src="assets/lobby/moon.png" alt=""></div>
   <div class="menu__inner" id="menu-inner">
     <header class="menu__brand">
-      <p class="menu__eyebrow">Měsíční úklidová služba · verze 3</p>
+      <p class="menu__eyebrow">Měsíční úklidová služba · verze <span data-ver-mm>3.1</span></p>
       <h1 class="menu__title">Měsíční <span class="menu__title-line">zametačky</span></h1>
       <div class="menu__haz" aria-hidden="true"></div>
       <p class="menu__moon-status" id="menu-moon">Připravuji Měsíc…</p>
@@ -363,6 +375,7 @@
           <label class="menu__label" for="menu-name">Tvé jméno ve hře</label>
           <input class="field__input menu__name" id="menu-name" type="text" maxlength="16" autocomplete="off">
           <p class="menu__rank" id="menu-rank"></p>
+          <p class="menu__rank-next" id="menu-rank-next"></p>
           <p class="menu__outfit"><span id="menu-outfit">Výchozí skafandr</span><button class="menu__link" id="menu-wardrobe-open" type="button">Změnit oblečení</button></p>
         </div>
         <div class="menu__choices">
@@ -405,6 +418,8 @@
       <button class="button" id="menu-loading-back" type="button" hidden>Zpět do menu</button>
     </section>
   </div>
+
+  <div class="ver--menu" id="menu-ver" data-ver></div>
 
   <!-- lobby: plošina s hráči (nejvýš 6, vlastní uprostřed), vpravo světy, dole počet online -->
   <section class="lobby-screen" id="menu-lobby" hidden aria-label="Lobby">
@@ -454,6 +469,7 @@
       </div>
       <button class="lobby-btn lobby-btn--primary lobby-side__host" id="lobby-host" type="button">Založit vlastní svět</button>
       <p class="lobby-side__info">Založ svět a pošli kamarádům odkaz nebo kód (najdeš ho v menu pauzy). Svět se ukládá i do cloudu: když hostitel odejde, převezme ho další hráč, a když nikdo nehostuje, může ho otevřít kdokoli z party (s heslem, pokud ho svět má).</p>
+      <div class="ver--lobby" data-ver></div>
     </aside>
   </section>
 </div>
