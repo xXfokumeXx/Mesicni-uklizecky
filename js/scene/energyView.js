@@ -9,6 +9,7 @@ import { STRUCTURES, axes, localToDir, padTopHeight } from '../structures.js';
 import { live, cableEnds, sagOf, cablePoint, vehicleOnSlot, autoTargets, anchorAt, cableFlows } from '../energy.js';
 import { build } from '../build.js';
 import { heightAt, terrainVersion } from '../planet/height.js';
+import { VEHICLE_POINTS } from '../catalog.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
@@ -243,8 +244,18 @@ export function createEnergyView(scene, views) {
         const veh = game.s.vehicles[i];
         const [sx, sz] = def.stands[s];
         _v.set(sx, 2.0, sz).applyMatrix4(v.root.matrixWorld);
-        const r = R + heightAt(veh.p) + 1.1;
-        k = sagLine(lineGeo, k, _v.toArray(), [veh.p[0] * r, veh.p[1] * r, veh.p[2] * r], 0.45, 8);
+        // konec kabelu: nabíjecí zásuvka vozidla (uzel „nabijeni“, 07 fáze B), jinak bok vozidla ve výšce 1,1 m
+        const pl = veh.f ? VEHICLE_POINTS[veh.type]?.plug : null;
+        let end;
+        if (pl) {
+          const p = veh.p, f = veh.f, rt = [p[1] * f[2] - p[2] * f[1], p[2] * f[0] - p[0] * f[2], p[0] * f[1] - p[1] * f[0]];   // osa +x vozidla = nahoru × dopředu
+          const r = R + heightAt(p) + (def.padTop || 0) + pl[1];
+          end = [0, 1, 2].map(c => p[c] * r + rt[c] * pl[0] + f[c] * pl[2]);
+        } else {
+          const r = R + heightAt(veh.p) + 1.1;
+          end = [veh.p[0] * r, veh.p[1] * r, veh.p[2] * r];
+        }
+        k = sagLine(lineGeo, k, _v.toArray(), end, 0.45, 8);
       }
     }
     lineGeo.setDrawRange(0, k * 2);

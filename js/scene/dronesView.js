@@ -102,7 +102,8 @@ function makeDrone(n, prepare) {
 
 // Póza háků a baterií (místní souřadnice dronu). carry: 'full' (nese nabitou v B) | 'empty' (vybitá v A).
 function rest(d, carry, slide = 0, slideWhich = null) {
-  for (const k of d.hooks) { k.h.position.y = HOOK_Y; k.cab.visible = false; }
+  for (const k of d.hooks) { k.h.position.set(k.x, HOOK_Y, k.z); k.h.rotation.y = 0; k.cab.position.x = k.x; k.cab.position.z = k.z; k.cab.visible = false; }
+  d.bat.full.rotation.y = d.bat.empty.rotation.y = 0;
   const pts = P();
   d.bat.full.visible = carry === 'full';
   d.bat.empty.visible = carry === 'empty';
@@ -118,18 +119,31 @@ function hookTo(k, y) {
 const lerp = (a, b, t) => a + (b - a) * Math.max(0, Math.min(1, t));
 const seg = (t, a, b) => (t - a) / (b - a);
 // Výměna (t 0–1): A dolů → vybitá nahoru do rámu A → B s nabitou dolů → B nahoru prázdný. Střecha je 3 m pod dronem.
+// Hák ve výšce y mezi rámem dronu (nahoře) a kolébkou vozidla (dole = low). Dron visí středem nad baterií vozidla
+// (07, fáze B), proto hák cestou dolů sjede pod střed a otočí se o 90°: baterie leží delší stranou podél vozidla.
+function reach(k, y, low) {
+  const u = (y - low) / (HOOK_Y - low), s = Math.max(0, Math.min(1, (u - 0.25) / 0.6));
+  const at = { x: k.x * s, z: k.z * s, yaw: (1 - s) * Math.PI / 2 };
+  hookTo(k, y);
+  k.h.position.x = k.cab.position.x = at.x;
+  k.h.position.z = k.cab.position.z = at.z;
+  k.h.rotation.y = at.yaw;
+  return at;
+}
 function swapPose(d, t) {
-  const [A, B] = d.hooks, pts = P();
-  const roof = -DRONE.above, low = roof + HANG;
-  d.bat.empty.visible = true; d.bat.full.visible = true;
+  const [A, B] = d.hooks;
+  const roof = -DRONE.above, low = roof + HANG;         // roof = spodek baterie v kolébce (DRONE.above pod dronem)
+  const put = (bat, x, y, z, yaw) => { bat.visible = true; bat.position.set(x, y, z); bat.rotation.y = yaw; };
   // hák A + vybitá baterie
-  if (t < 0.2) { hookTo(A, lerp(HOOK_Y, low, seg(t, 0, 0.2))); d.bat.empty.position.set(pts.frameA[0], roof, pts.frameA[2]); }
-  else if (t < 0.25) { hookTo(A, low); d.bat.empty.position.set(pts.frameA[0], roof, pts.frameA[2]); }
-  else { const y = lerp(low, HOOK_Y, seg(t, 0.25, 0.45)); hookTo(A, y); d.bat.empty.position.set(pts.frameA[0], y - HANG, pts.frameA[2]); }
+  const yA = t < 0.2 ? lerp(HOOK_Y, low, seg(t, 0, 0.2)) : t < 0.25 ? low : lerp(low, HOOK_Y, seg(t, 0.25, 0.45));
+  const a = reach(A, yA, low);
+  if (t < 0.25) put(d.bat.empty, 0, roof, 0, Math.PI / 2);
+  else put(d.bat.empty, a.x, yA - HANG, a.z, a.yaw);
   // hák B + nabitá baterie
-  if (t < 0.5) { hookTo(B, HOOK_Y); d.bat.full.position.set(pts.frameB[0], FRAME_Y, pts.frameB[2]); }
-  else if (t < 0.72) { const y = lerp(HOOK_Y, low, seg(t, 0.5, 0.72)); hookTo(B, y); d.bat.full.position.set(pts.frameB[0], y - HANG, pts.frameB[2]); }
-  else { hookTo(B, lerp(low, HOOK_Y, seg(t, 0.76, 0.95))); d.bat.full.position.set(pts.frameB[0], roof, pts.frameB[2]); }
+  const yB = t < 0.5 ? HOOK_Y : t < 0.72 ? lerp(HOOK_Y, low, seg(t, 0.5, 0.72)) : lerp(low, HOOK_Y, seg(t, 0.76, 0.95));
+  const b = reach(B, yB, low);
+  if (t < 0.72) put(d.bat.full, b.x, yB - HANG, b.z, b.yaw);
+  else put(d.bat.full, 0, roof, 0, Math.PI / 2);
 }
 
 const _up = new THREE.Vector3(), _f = new THREE.Vector3(), _x = new THREE.Vector3(), _m = new THREE.Matrix4(), _l = new THREE.Matrix4();

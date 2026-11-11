@@ -1,7 +1,7 @@
 // Všechno, co se ve scéně hýbe nebo patří k základně: astronaut, vozidla, budovy,
 // stanice s roboty, UFO drony, hologram při umisťování stanice, kruh nástroje a obrys hexu.
 import { MOON, BUYBACK } from '../config.js';
-import { DRONE, batteryCap, vehicleById } from '../catalog.js';
+import { DRONE, batteryCap, vehicleById, hangPoint, BATTERY_LOW, VEHICLE_UPGRADES } from '../catalog.js';
 import { game } from '../state.js';
 import { activeEquipment } from '../equipment.js';
 import { activeBody, vehicleBody, pusherOffset, ragdollState, riding, toolPoint, walkFacing, playerFx } from '../player.js';
@@ -11,7 +11,9 @@ import { createDepotDump } from './depotDump.js';
 import { createRopeView, sagCurve } from './ropeView.js';
 import { ropePoints, armPose, carrying } from '../carry.js';
 import { remoteCarries } from '../net.js';
-import { roofOf } from './swapperCrane.js';
+import { roofOf, swapPhase } from './swapperCrane.js';
+import { createVehicleBatteries } from './vehicleBatteries.js';
+import { missionFor } from '../dronport.js';
 import { placing } from '../interact.js';
 import { carriedStation } from '../hotbar.js';
 import { hexArea } from '../robots.js';
@@ -253,6 +255,64 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   const vehicleViews = [];
   const toolGround = new THREE.Vector3(), toolNormal = new THREE.Vector3();   // hlava nástroje na terénu (11. 11.)
   const ropeView = createRopeView(scene);                 // lano Muly (3.1)
+  const vehicleBatteries = createVehicleBatteries(scene); // baterie v kolébkách vozidel (07, fáze B)
+
+  // ---------- přívěs Prachocucu (07, fáze E) ----------
+  // Samostatný model ve scéně: střed náprav za tažným bodem traktoru podle úhlu v.tr, stojí na terénu a míří ojí k traktoru.
+  // Velikost podle vylepšení Přívěs (jiný GLB), hladina prachu podle náplně, hadice od traktoru k hrdlu přívěsu.
+  const hoseGeo = new THREE.CylinderGeometry(0.09, 0.09, 1, 6).translate(0, 0.5, 0).rotateX(Math.PI / 2);   // délka 1 podél +z
+  const hoseMat = new THREE.MeshLambertMaterial({ color: 0x2d313b });
+  const _h = new THREE.Vector3(), _n = new THREE.Vector3(), _e = new THREE.Vector3();
+  function dropTrailer(view) {
+    const T = view.trailer;
+    if (!T) return;
+    scene.remove(T.root, T.hose);
+    const k = prepared.indexOf(T.root);
+    if (k >= 0) prepared.splice(k, 1);
+    view.trailer = null;
+  }
+  function syncTrailer(view, v, lift) {
+    const lv = Math.min(3, v.lv?.privez | 0);
+    if (view.trailer && view.trailer.lv !== lv) dropTrailer(view);          // vylepšení → větší model
+    if (!view.trailer) {
+      const inst = instantiate(`trailer-${lv + 1}`);
+      const E = inst.empties || {}, X = inst.extras || {};
+      const hose = new THREE.Mesh(hoseGeo, hoseMat);
+      view.trailer = {
+        lv, root: inst.root, hose, level: inst.nodes.hladina || null, levelY: X.hladina_y || null,
+        wheels: Object.keys(inst.nodes).filter(n => n.startsWith('kolo_')).map(n => inst.nodes[n]), wheelR: X.polomer_kol || 0.5,
+        L: E.oj ? E.oj.p.z : 2.55, intake: E.prijem ? E.prijem.p.clone() : null,
+      };
+      inst.root.userData.dbg = 'vehicle';
+      scene.add(prepare(inst.root), hose);
+    }
+    const T = view.trailer, tr = v.tr || 0;
+    const hz = view.hitch ? view.hitch.z : -3.35, hy = view.hitch ? view.hitch.y : 0.56;
+    view.root.updateMatrix();
+    _h.set(0, hy, hz).applyMatrix4(view.root.matrix);                       // tažný bod ve světě
+    _e.set(-Math.sin(tr) * T.L, 0, hz - Math.cos(tr) * T.L).applyMatrix4(view.root.matrix).normalize();
+    const dir = [_e.x, _e.y, _e.z];
+    surface(dir, T.root.position, lift);
+    terrainNormal(dir, 1.2, _n);
+    orient(T.root, _n, _e.subVectors(_h, T.root.position));
+    T.root.visible = true;
+    for (const w of T.wheels) w.rotation.x = view.spin * (view.wheelR / T.wheelR);
+    if (T.level && T.levelY) {
+      const fill = Math.max(0, Math.min(1, (v.load || 0) / VEHICLE_UPGRADES.privez.values[lv]));
+      T.level.position.y = T.level.userData.rest.y + (T.levelY.plny - T.levelY.prazdny) * fill;
+      T.level.visible = lv === 3 || fill > 0.01;                              // prázdná korba nemá hladinu (cisterna má ukazatel vždy)
+    }
+    // hadice: od konce trubek na traktoru k hrdlu přívěsu
+    T.hose.visible = !!(view.hose && T.intake);
+    if (T.hose.visible) {
+      T.root.updateMatrix();
+      T.hose.position.copy(view.hose).applyMatrix4(view.root.matrix);
+      _e.copy(T.intake).applyMatrix4(T.root.matrix);
+      T.hose.up.copy(_n);
+      T.hose.lookAt(_e);
+      T.hose.scale.set(1, 1, Math.max(0.05, T.hose.position.distanceTo(_e)));
+    }
+  }
 
   // Ikonka baterie nad vozidlem, ve kterém nesedím (do 45 m): 0–5 dílků, barva podle nabití, blesk při nabíjení.
   const battTex = new Map();
@@ -304,6 +364,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       if (old && (!v || old.uid !== (v.uid || '') || old.type !== v.type)) {
         scene.remove(old.root);
         if (old.batt) scene.remove(old.batt);
+        dropTrailer(old);
         const k = prepared.indexOf(old.root);
         if (k >= 0) prepared.splice(k, 1);
         vehicleViews[i] = null;
@@ -320,6 +381,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       }
     }
     vehicleViews.length = list.length;
+    vehicleBatteries.begin();
     list.forEach((v, i) => {
       const view = vehicleViews[i];
       const remote = vehicleOverride(i);
@@ -332,7 +394,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       view.root.visible = dist < (aloft ? viewRange + 160 : viewRange + 20);
       view.remoteDriven = !!remote;
       updateBatteryIcon(view, v, i, dist);
-      if (!view.root.visible) return;
+      if (!view.root.visible) { if (view.trailer) view.trailer.root.visible = view.trailer.hose.visible = false; return; }
       // naklonění podle svahu (ve vzduchu drží poslední sklon)
       if (view.kind === 'air') view.normal.set(...p);                         // letoun drží vodorovně (3.1)
       else if (v.carriedUp) view.normal.set(...v.carriedUp);                  // nese ho můj letoun (lano / ruka)
@@ -351,10 +413,39 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       }
       const driving = game.s.driving === i || !!remote;
       view.spin += speed * dt / view.wheelR;
-      for (const w of view.wheels) w.rotation.x = view.spin;
+      for (const w of view.wheels) w.rotation.x = view.spin * (w.userData.spinK || 1);   // spinK = jiný poloměr kola (traktor)
       const sweeping = driving && (remote ? speed > 0.2 : b.grounded);
       for (const br of view.brushes) br.rotation.y += (sweeping ? 9 : 0) * dt * (br.position.x < 0 ? 1 : -1);
+      // Prachocuc: ramena (plynulé sklápění i u vozidla, které řídí někdo jiný; díly podle vylepšení; konce sledují terén)
+      if (view.arm) {
+        const want = v.mod === 'sber' ? 1 : 0, lv = Math.min(3, v.lv?.rameno | 0);
+        const cur = view.armShow ?? want;
+        view.armShow = want > cur ? Math.min(1, cur + dt / 1.5) : Math.max(0, cur - dt / 1.5);
+        let tilt = null;
+        if (view.armShow > 0.5 && view.armJoint) {
+          const [jx, , jz] = view.armJoint, len = view.armLen(lv);
+          view.root.updateMatrix();
+          tilt = {};
+          for (const [tag, sign] of [['L', -1], ['P', 1]]) {
+            _a.set(sign * (jx + len), 0, jz).applyMatrix4(view.root.matrix);
+            const rr = _a.length();
+            const dh = heightAt([_a.x / rr, _a.y / rr, _a.z / rr]) - (r - R);
+            tilt[tag] = Math.max(-0.175, Math.min(0.175, Math.atan2(dh, len)));     // nejvýš ±10°
+          }
+        }
+        view.arm(lv, view.armShow, tilt);
+        syncTrailer(view, v, Math.max(0, (r - R) - heightAt(p)));            // lift = traktor stojí na desce stavby
+      }
+      // baterie v kolébce (GLB): při výměně ji drží jeřáb / dron, jinak modrý nebo červený pás podle nabití
+      if (view.battery) {
+        const ph = swapPhase(i) || (missionFor(i)?.m.ph === 'swap' ? 'hidden' : null);
+        if (ph !== 'hidden') {
+          view.root.updateMatrix();
+          vehicleBatteries.add(view.root, view.battery, ph || ((v.charge || 0) < batteryCap(v) * BATTERY_LOW ? 'empty' : 'full'));
+        }
+      }
     });
+    vehicleBatteries.end();
     {                                                                       // lana (moje simulace + prověšená lana ostatních)
       const ropes = [];
       const mine = ropePoints();
@@ -362,7 +453,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       for (const c of remoteCarries()) {
         if (c.mode !== 'rope') continue;
         const vv = list[c.i];
-        const top = c.p.map((x, k) => x * c.r + c.up[k] * roofOf(vv?.type || 'rideon'));
+        const top = c.p.map((x, k) => x * c.r + c.up[k] * (hangPoint(vv?.type)?.y ?? roofOf(vv?.type || 'rideon')));
         const d = Math.hypot(top[0] - c.hook[0], top[1] - c.hook[1], top[2] - c.hook[2]);
         ropes.push({ pts: sagCurve(c.hook, top, Math.max(0, 12 - d) * 0.5), taut: d > 11.5 });
       }
@@ -564,10 +655,10 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   // Body pro ruce na volantu / madle vozidla i ve světě [L, P] (AST-08, registr SEATS), nebo null.
   function handsFor(i) {
     const view = vehicleViews[i];
-    const seat = SEATS[game.s.vehicles[i]?.type];
-    if (!view || !seat) return null;
+    const hands = view?.hands || SEATS[game.s.vehicles[i]?.type]?.hands;     // GLB: uzly ruka_* / madlo_*, jinak tabulka
+    if (!view || !hands) return null;
     view.root.updateMatrixWorld();
-    return seat.hands.map(h => view.root.localToWorld(new THREE.Vector3(h[0], h[1], h[2])));
+    return hands.map(h => view.root.localToWorld(new THREE.Vector3(h[0], h[1], h[2])));
   }
 
   // Sedadlo vozidla i ve světě (pro astronauty jiných hráčů, kteří řídí).
