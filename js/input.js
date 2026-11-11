@@ -50,7 +50,7 @@ export const input = {
 // onAlt = R (jiný cíl pásu), onSlot(k) = klávesa 1–3 (políčko hotbaru), onDrop = X (s kladivem = bourání; nástroj se ničí jen × v políčku hotbaru)
 // onMove = G (přesunout depo), onLights = L (světla zapnout / vypnout), onBattery = B (baterie dronem, 3.1)
 // tilt(dy) = tažení pravým tlačítkem nahoru / dolů (náklon kamery)
-export function bindInput(canvas, { pickDir, rotate, tilt, zoom, onAction, onCancel, onJump, onAlt, onSlot, onDrop, onMove, onLights, onHammer, onBuildMenu, onAuto, onBattery }) {
+export function bindInput(canvas, { pickDir, rotate, tilt, zoom, onAction, onCancel, onJump, onAlt, onSlot, onDrop, onMove, onLights, onHammer, onBuildMenu, onAuto, onBattery, onMode }) {
   input.pick = (x, y) => pickDir(x, y);
   addEventListener('keydown', e => {
     if (!input.enabled) return;
@@ -66,6 +66,7 @@ export function bindInput(canvas, { pickDir, rotate, tilt, zoom, onAction, onCan
     if (key === 'l' && !e.repeat) { onLights?.(); return; }
     if (key === 'c' && !e.repeat) { onAuto?.(); return; }
     if (key === 'b' && !e.repeat) { onBattery?.(); return; }
+    if (key === 'f' && !e.repeat) { onMode?.(); return; }             // F = mód Prachocucu (jízda / sběr)
     // klávesy 1–9 podle polohy (česká klávesnice má nahoře +ěščř…)
     if (/^(Digit|Numpad)[1-9]$/.test(e.code) && !e.repeat) { onSlot?.(Number(e.code.slice(-1)) - 1); return; }
     input.keys[key] = true;

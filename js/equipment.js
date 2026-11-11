@@ -27,11 +27,13 @@ export function vehicleStats(v) {
   const base = vehicleById(v.type);
   const sp = v.lv.special | 0;                       // letouny (3.1): Speciální = sací lišta Prachovky / dosah skeneru Kolibříku
   return {
-    width: base.width * (1 + VEHICLE_UPGRADES.width.step * (v.lv.width | 0)) * (base.kind === 'air' ? 1 + VEHICLE_UPGRADES.special.step * sp : 1),
+    width: base.arm ? VEHICLE_UPGRADES.rameno.values[Math.min(3, v.lv.rameno | 0)]            // Prachocuc: záběr podle dílů ramene
+      : base.width * (1 + VEHICLE_UPGRADES.width.step * (v.lv.width | 0)) * (base.kind === 'air' ? 1 + VEHICLE_UPGRADES.special.step * sp : 1),
     speed: base.speed * (1 + VEHICLE_UPGRADES.speed.step * (v.lv.speed | 0)) * (1 + VEHICLE_UPGRADES.motor.step * (v.lv.motor | 0)),
     scan: base.scan ? base.scan + 150 * sp : 0,
-    sweepSpeed: base.sweepSpeed ? base.sweepSpeed * (1 + VEHICLE_UPGRADES.motor.step * (v.lv.motor | 0)) : 0,
-    hopper: base.hopper * (1 + VEHICLE_UPGRADES.hopper.step * (v.lv.hopper | 0)) * (base.carry === 'arm' ? 1 + 0.5 * sp : 1),   // Kondor: náklad +50 % (3.1)
+    sweepSpeed: base.sweepSpeed ? base.sweepSpeed * (1 + VEHICLE_UPGRADES.speed.step * (v.lv.speed | 0)) * (1 + VEHICLE_UPGRADES.motor.step * (v.lv.motor | 0)) : 0,
+    hopper: base.arm ? VEHICLE_UPGRADES.privez.values[Math.min(3, v.lv.privez | 0)]            // Prachocuc: kapacita podle přívěsu
+      : base.hopper * (1 + VEHICLE_UPGRADES.hopper.step * (v.lv.hopper | 0)) * (base.carry === 'arm' ? 1 + 0.5 * sp : 1),   // Kondor: náklad +50 % (3.1)
     rope: base.rope ? base.rope : 0,
     power: base.power,
     boost: boostFactor(v.lv.boost | 0),
@@ -227,10 +229,10 @@ export { fleetFull };
 // Flotila: stejný typ jde koupit víckrát. Vozidlo dostane domovskou garáž gid (když má volné místo, jinak jinou).
 export function buyVehicle(type, gid = null) {
   const base = vehicleById(type);
-  const slot = base?.kind === 'air' ? airSlot(base) : freeGarageSlot(gid);   // letoun: volná plošina LAAC (3.1)
+  const slot = base?.kind === 'air' ? airSlot(base) : freeGarageSlot(gid, base?.slots || 1);   // letoun: volná plošina LAAC (3.1)
   if (!base || !slot || (base.kind !== 'air' && fleetFull()) || game.s.money < base.price) return false;
   game.s.money -= base.price;
-  const v = { uid: newUid(), type, garage: slot.garage, spot: slot.spot, load: 0, lv: { width: 0, speed: 0, boost: 0, hopper: 0, battery: 0, solar: 0, motor: 0, abatt: 0, special: 0 } };
+  const v = { uid: newUid(), type, garage: slot.garage, spot: slot.spot, load: 0, lv: { width: 0, speed: 0, boost: 0, hopper: 0, battery: 0, solar: 0, motor: 0, abatt: 0, special: 0, rameno: 0, privez: 0 } };
   v.charge = batteryCap(v);                                    // nové vozidlo je plně nabité (L-01)
   const h = homeSpot(v);
   v.p = h.dir;
@@ -251,7 +253,7 @@ function airSlot(base) {
 export function rehomeVehicle(i, gid) {
   const v = game.s.vehicles[i];
   if (!v || v.garage === gid) return false;
-  const slot = freeGarageSlot(gid);
+  const slot = freeGarageSlot(gid, vehicleById(v.type)?.slots || 1);
   if (!slot || slot.garage !== gid) return false;
   v.garage = slot.garage;
   v.spot = slot.spot;
@@ -265,7 +267,7 @@ export function vehicleSellValue(i) {
   const base = vehicleById(v.type);
   let paid = base.price;
   for (const key in VEHICLE_UPGRADES) {
-    for (let lv = 0; lv < (v.lv[key] | 0); lv++) paid += upgradeCost(base.price, lv, VEHICLE_UPGRADES[key].share || 0.25);
+    for (let lv = 0; lv < (v.lv[key] | 0); lv++) paid += VEHICLE_UPGRADES[key].prices?.[lv] ?? upgradeCost(base.price, lv, VEHICLE_UPGRADES[key].share || 0.25);
   }
   return Math.round(paid * (base.sell ?? SELL_REFUND));          // letouny 60 % (L-64)
 }
@@ -289,6 +291,7 @@ export function callBackVehicle(i) {
   const spot = homeSpot(v);
   v.p = spot.dir;
   v.f = tangentTo(spot.dir, spot.facing);
+  v.tr = 0;                                         // přívěs Prachocucu rovně za traktorem
   v.moved = true;                                   // fyzika vozidla se znovu založí
   return true;
 }
@@ -308,7 +311,8 @@ export function vehicleUpgradeCost(i, key) {
   if (!v || !VEHICLE_UPGRADES[key] || !upgradeFits(v.type, key)) return null;
   const lv = v.lv[key] | 0;
   if (vehicleUpgradeLock(key, lv, v)) return null;             // zamčeno výzkumem (i kontrola u hostitele)
-  return lv >= VEHICLE_UPGRADES[key].max ? null : upgradeCost(vehicleById(v.type).price, lv, VEHICLE_UPGRADES[key].share || 0.25);
+  if (lv >= VEHICLE_UPGRADES[key].max) return null;
+  return VEHICLE_UPGRADES[key].prices?.[lv] ?? upgradeCost(vehicleById(v.type).price, lv, VEHICLE_UPGRADES[key].share || 0.25);   // prices = pevné ceny (Prachocuc)
 }
 
 export function upgradeVehicle(i, key) {

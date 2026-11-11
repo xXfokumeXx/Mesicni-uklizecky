@@ -109,6 +109,9 @@ export function upgradeState(s = game.s) {
   for (const v of s.vehicles) {
     if (!v.uid) v.uid = newUid();
     v.lv.boost = v.lv.boost | 0;
+    v.lv.rameno = v.lv.rameno | 0;                 // Prachocuc (07): díly ramene, velikost přívěsu, mód, úhel přívěsu
+    v.lv.privez = v.lv.privez | 0;
+    if (v.type === 'prachocuc') { v.mod = v.mod === 'sber' ? 'sber' : 'jizda'; v.armT = v.mod === 'sber' ? 1 : 0; v.tr = Number(v.tr) || 0; }
     v.lv.hopper = v.lv.hopper | 0;
     v.lv.battery = v.lv.battery | 0;
     v.lv.solar = v.lv.solar | 0;

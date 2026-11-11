@@ -22,9 +22,11 @@ export const TOOL_UPGRADES = {
 };
 
 // kind: 'push' = jdeš za ním, 'drive' = sedíš za volantem, 'transport' = jen rychlý přesun.
+// front = jak daleko před středem vozidla je střed kruhu zametání (poloměr = width / 2). U modelů z GLB (07, fáze C)
+// leží kousek před středy kartáčů / sací hlavy: vozík 0,62 · zametač 1,17 · měsíční vůz 2,42 · mega 2,94 m.
 export const VEHICLES = [
   { id: 'push',  name: 'Ruční zametací vozík',  kind: 'push',      width: 1.35, hopper: 100,  speed: 4,  power: 60,  price: 1500,
-    desc: 'Tlačíš ho před sebou: pás 1,35 m a zásobník 100 kg.', front: 1.0, camera: 12 },
+    desc: 'Tlačíš ho před sebou: pás 1,35 m a zásobník 100 kg.', front: 0.8, camera: 12 },
   { id: 'rideon', name: 'Zametač se sedačkou',  kind: 'drive',     width: 2.0,  hopper: 250,  speed: 6,  power: 70,  price: 6000,
     desc: 'Sedneš a jedeš. Dva rotační kartáče vpředu.', front: 1.3, camera: 14 },
   { id: 'lunar', name: 'Měsíční zametací vůz',  kind: 'drive',     width: 3.0,  hopper: 600,  speed: 7, power: 80,  price: 20000,
@@ -34,6 +36,12 @@ export const VEHICLES = [
   { id: 'crew',  name: 'Přepravník posádky',    kind: 'transport', width: 0,    hopper: 0,    speed: 12, power: 0,   price: 4000,
     desc: 'Nezametá, ale odveze řidiče a až 5 cestujících rychle na druhou stranu Měsíce.', front: 0, camera: 16, seats: 5,
     body: [1.2, 5, 3] },
+  // Lunar Prachocuc 5000 (07, fáze D): traktor se sběrným ramenem ZA sebou (front < 0 = osa ramene) a přívěsem na prach.
+  // arm = dva módy (F): jízda / sběr (sweepSpeed, zametá pás přes rameno – prachocuc.js); záběr a kapacita jdou z vylepšení
+  // rameno / privez (VEHICLE_UPGRADES.values), ne z width / hopper × procenta. slots = kolik míst zabere v garáži.
+  { id: 'prachocuc', name: 'Lunar Prachocuc 5000', kind: 'drive', width: 4.0, hopper: 3000, speed: 8, sweepSpeed: 5.2, power: 100, price: 100000,
+    desc: 'Měsíční traktor se sběrným ramenem a přívěsem. F přepíná jízdu (ramena nahoře) a sběr (ramena do stran, o 35 % pomaleji): čistí pás 4 m za sebou, s vylepšeními až 8,5 m.',
+    front: -2.95, camera: 24, arm: true, slots: 2 },
   // ---------- letouny (3.1, L-65, D-17): kind 'air', domov = plošina LAAC, pilotují se jako vozidla (player.js fly) ----------
   // sweepSpeed = nejvyšší rychlost při zametání, sell = podíl ceny při prodeji (60 %), scan = dosah skeneru (m)
   { id: 'prachovka', name: 'Prachovka', kind: 'air', width: 4.0, hopper: 600, speed: 12, sweepSpeed: 6, power: 80, price: 45000, research: 'aviation',
@@ -50,6 +58,21 @@ export const VEHICLES = [
 export const AIR_TYPES = VEHICLES.filter(v => v.kind === 'air').map(v => v.id);
 export const GROUND_TYPES = VEHICLES.filter(v => v.kind !== 'air').map(v => v.id);
 export const isAirType = type => AIR_TYPES.includes(type);
+
+// Body pozemních vozidel z GLB (07, fáze B). Čísla jsou z uzlů modelů (Update 3.1/vozidla/README-vozidla.md);
+// jsou tady, protože je potřebuje i logika bez scény (výměník u hostitele, dron, lano). Souřadnice vozidla: +y nahoru, +z dopředu.
+//   batt = [y, z] spodek baterie (uzel „baterie“), hang = [y, z] závěsné oko („zaves“), plug = [x, y, z] nabíjecí zásuvka („nabijeni“)
+export const VEHICLE_POINTS = {
+  push: { hang: [1.01, -0.2] },
+  rideon: { batt: [0.64, 0.35], hang: [1.36, -0.92], plug: [-1.05, 0.42, -0.2] },
+  lunar: { batt: [1.42, -0.3], hang: [3.05, 1.02], plug: [-1.15, 1.22, -2.3] },
+  mega: { batt: [2.04, 0.2], hang: [3.11, -1.5], plug: [-1.52, 1.6, -1.9] },
+  crew: { batt: [2.42, -0.2], hang: [2.48, 1.25], plug: [0, 1.55, -2.47] },
+  prachocuc: { batt: [1.24, 1.3], hang: [3.12, -0.75], plug: [-0.82, 0.9, 2.3] },
+};
+export const batteryPoint = type => { const b = VEHICLE_POINTS[type]?.batt; return b ? { y: b[0], z: b[1] } : null; };
+export const hangPoint = type => { const h = VEHICLE_POINTS[type]?.hang; return h ? { y: h[0], z: h[1] } : null; };
+export const BATTERY_LOW = 0.15;               // pod tímto podílem nabití má baterie na vozidle červený pás (vybitá)
 
 // Fyzika vozidla (physics.js createBody): [maxVr, grip, airG] – jak prudce vyletí z hřebene,
 // jak drží na zemi a kolikrát gravitace planety táhne vozidlo dolů ve vzduchu.
@@ -100,6 +123,7 @@ export const VEHICLE_BATTERY = {
   lunar: { cap: 1800, drive: 2.8, sweep: 1.2 },
   mega: { cap: 4800, drive: 7.0, sweep: 3.6 },
   crew: { cap: 2400, drive: 4.0, sweep: 0 },
+  prachocuc: { cap: 3000, drive: 3, sweep: 2 },                          // ≈ 10 min sběru
   // letouny (L-65): hover = spotřeba ve vznášení, drive = při plné rychlosti
   prachovka: { cap: 2200, hover: 3, drive: 5, sweep: 2 },
   kolibrik: { cap: 1200, hover: 2, drive: 6, sweep: 0 },
@@ -112,7 +136,10 @@ export const batteryCap = v => (VEHICLE_BATTERY[v?.type]?.cap || 0) * (1 + 0.25 
 
 export const VEHICLE_UPGRADES = {
   width: { name: 'Šířka sání',    max: 5, step: 0.1,  unit: 'm',   desc: '+10 % šířky sání za úroveň', only: ['push', 'rideon', 'lunar', 'mega'] },
-  speed: { name: 'Rychlost vozu', max: 5, step: 0.12, unit: 'm/s', desc: '+12 % rychlosti za úroveň', only: ['push', 'rideon', 'lunar', 'mega', 'crew'] },
+  speed: { name: 'Rychlost vozu', max: 5, step: 0.12, unit: 'm/s', desc: '+12 % rychlosti za úroveň', only: ['push', 'rideon', 'lunar', 'mega', 'crew', 'prachocuc'] },
+  // Prachocuc (07, fáze D): pevné hodnoty a ceny po úrovních (values[úroveň], prices[úroveň → další])
+  rameno: { name: 'Sběrné rameno', max: 3, unit: 'm', desc: '+1,5 m záběru za úroveň (další díl ramene na každé straně)', only: ['prachocuc'], values: [4, 5.5, 7, 8.5], prices: [35000, 50000, 70000] },
+  privez: { name: 'Přívěs', max: 3, unit: 'kg', desc: 'Větší přívěs: +1 000 kg za úroveň, prach v něm zůstane', only: ['prachocuc'], values: [3000, 4000, 5000, 6000], prices: [40000, 50000, 60000] },
   // letouny (3.1, L-65): 3 úrovně, cena podle upgradeCost
   motor: { name: 'Motory', max: 3, step: 0.15, unit: 'm/s', desc: '+15 % rychlosti za úroveň', only: ['prachovka', 'kolibrik', 'mula', 'kondor'] },
   abatt: { name: 'Baterie', max: 3, step: 0.25, unit: '⚡', desc: '+25 % kapacity baterie za úroveň', only: ['prachovka', 'kolibrik', 'mula', 'kondor'] },
@@ -121,12 +148,12 @@ export const VEHICLE_UPGRADES = {
   hopper: { name: 'Kapacita zásobníku', max: 5, step: 0.25, unit: 'kg', desc: '+25 % kapacity zásobníku za úroveň', only: ['push', 'rideon', 'lunar', 'mega'] },
   boost: { name: 'Boost (Shift)', max: 3, step: 0.5,  unit: '×',   desc: 'Shift = skokově 200 % rychlosti, každá další úroveň +50 %', only: ['crew'] },
   // L-03: úrovně 1–2 hned, 3–4 až po výzkumu „Baterie T3“ (research.from = od které úrovně je potřeba výzkum)
-  battery: { name: 'Větší baterie', max: 4, step: 0.25, unit: '⚡', desc: '+25 % kapacity baterie za úroveň', only: ['rideon', 'lunar', 'mega', 'crew'], research: { from: 2, id: 'batteryT3' } },
+  battery: { name: 'Větší baterie', max: 4, step: 0.25, unit: '⚡', desc: '+25 % kapacity baterie za úroveň', only: ['rideon', 'lunar', 'mega', 'crew', 'prachocuc'], research: { from: 2, id: 'batteryT3' } },
   // L-04: celá střecha až po výzkumu „Solární střecha“ (from 0)
-  solar: { name: 'Solární střecha', max: 3, step: 1, unit: '%', desc: 'Na přímém Slunci pokryje část spotřeby, ve stání dobíjí', only: ['rideon', 'lunar', 'mega', 'crew'], research: { from: 0, id: 'solarRoof' } },
+  solar: { name: 'Solární střecha', max: 3, step: 1, unit: '%', desc: 'Na přímém Slunci pokryje část spotřeby, ve stání dobíjí', only: ['rideon', 'lunar', 'mega', 'crew', 'prachocuc'], research: { from: 0, id: 'solarRoof' } },
   // L-40 / L-41: autopilot (autopilot.js), klávesa C. share = podíl ceny vozidla (autocruise 0,3 podle zadání),
   // needs = vylepšení, které vozidlo už musí mít
-  cruise: { name: 'Autocruise', max: 1, step: 1, unit: '', share: 0.3, desc: 'C = jede samo vpřed nastavenou rychlostí, zastaví před překážkou', only: ['rideon', 'lunar', 'mega', 'crew'], research: { from: 0, id: 'cruise' } },
+  cruise: { name: 'Autocruise', max: 1, step: 1, unit: '', share: 0.3, desc: 'C = jede samo vpřed nastavenou rychlostí, zastaví před překážkou', only: ['rideon', 'lunar', 'mega', 'crew', 'prachocuc'], research: { from: 0, id: 'cruise' } },
   edge: { name: 'Sledování hrany prachu', max: 1, step: 1, unit: '', share: 0.5, desc: 'C 2× = asistent drží vozidlo podél hrany prachu, kterou už máš (jako asistent jízdy v pruhu)', only: ['rideon', 'lunar', 'mega'], research: { from: 0, id: 'edgeFollow' }, needs: 'cruise' },
 };
 // Solární střecha podle úrovně (L-04): cover = podíl spotřeby při jízdě, rest = dobíjení ve stání ⚡/s (vše × sin výšky Slunce)

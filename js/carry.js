@@ -24,8 +24,10 @@ export const CARRY = {
 };
 
 // Napojení (player.js): těleso vozidla, výška střechy podle typu, kdo vozidlo řídí, položení (klient → hostitel)
-let hooks = { body: null, roof: () => 1.8, taken: () => false, placed: () => {} };
+let hooks = { body: null, roof: () => 1.8, hang: () => null, taken: () => false, placed: () => {} };
 export function setCarryHooks(h) { hooks = { ...hooks, ...h }; }
+// Bod, za který se vozidlo nese: závěsné oko modelu { y, z } (z = posun podél jízdy), jinak střed střechy.
+const hangOf = type => hooks.hang(type) || { y: hooks.roof(type), z: 0 };
 
 // ---------- vektory ve světě ----------
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -53,9 +55,9 @@ function candidate(av, air) {
     if (v === av || isAirType(v.type) || hooks.taken(i) || carriedBy(i)) return;
     const d = angleBetween(v.p, air.p) * R;
     if (d > P.reachH + 6) return;
-    const top = groundAt(v.p) + hooks.roof(v.type);
+    const top = groundAt(v.p) + hangOf(v.type).y;
     const above = air.r - R - top;
-    if (base.carryFits && !base.carryFits.includes(v.type)) { why ||= mode === 'rope' ? 'Mega rover je na lano moc těžký – unese ho jen Kondor' : 'Tohle vozidlo neunese'; return; }   // 11. 11.: hned nad ním, ať pilot nehledá výšku zbytečně
+    if (base.carryFits && !base.carryFits.includes(v.type)) { why ||= v.type === 'prachocuc' ? 'Prachocuc je s přívěsem moc těžký' : mode === 'rope' ? 'Mega rover je na lano moc těžký – unese ho jen Kondor' : 'Tohle vozidlo neunese'; return; }   // 11. 11.: hned nad ním, ať pilot nehledá výšku zbytečně
     if (d > P.reachH) { why ||= `Leť nad vozidlo (do ${P.reachH} m)`; return; }
     if (above < P.minUp) { why ||= `Vystoupej výš nad vozidlo (${P.minUp}–${P.maxUp} m)`; return; }
     if (above > P.maxUp) { why ||= `Klesni níž k vozidlu (${P.minUp}–${P.maxUp} m nad ním)`; return; }
@@ -84,7 +86,8 @@ export function carryPrompt(av, air) {
 
 function attach(av, air, i) {
   const v = game.s.vehicles[i], base = vehicleById(av.type);
-  const top = world(v.p, R + groundAt(v.p) + hooks.roof(v.type));
+  const hg = hangOf(v.type);
+  const top = world(norm(madd(v.p, v.f || anyTangent(v.p), hg.z / R)), R + groundAt(v.p) + hg.y);
   Object.assign(C, { active: true, a: av, i, uid: v.uid, mode: base.carry, phase: base.carry === 'arm' ? 'grab' : 'attach', t: 0, hold: 0,
     up: v.p.slice(), f: v.f?.slice() || anyTangent(v.p), veh: top, vprev: top, vehAlt: 0, vehSpeed: 0, pts: null, prev: null, armK: 0, hookPrev: null });
   av.carry = { i, uid: v.uid };
@@ -143,7 +146,8 @@ export function carryTick(dt, av, air, holdE) {
       const grip = local(air, CARRY.arm.grip);
       C.up = air.p.slice(); C.f = air.f.slice();
       C.veh = grip;
-      writeVehicle(v, sub(grip, mul(air.p, hooks.roof(v.type))), air.p, air.f);
+      const hg = hangOf(v.type);
+      writeVehicle(v, sub(sub(grip, mul(air.p, hg.y)), mul(air.f, hg.z)), air.p, air.f);
     }
   } else {
     const P = CARRY.rope;
@@ -171,7 +175,7 @@ export function carryTick(dt, av, air, holdE) {
 function rope(dt, hook, L, free, v) {
   const P = CARRY.rope, n = P.n, seg = L / (n - 1);
   const h = Math.min(dt, 0.05) / P.sub;
-  const roofH = hooks.roof(v.type);
+  const roofH = hangOf(v.type).y, hangZ = hangOf(v.type).z;
   const pts = C.pts, prev = C.prev;
   let pull = [0, 0, 0];
   // posun háku za podkrok – tlumení kyvu měří rychlost bodů vůči háku (houpání se utlumí, let s hákem ne)
@@ -227,7 +231,7 @@ function rope(dt, hook, L, free, v) {
   C.f = tangentTo(norm(end3), add(mul(C.f, 0.98), mul(tangentTo(norm(end3), C.af || C.f), 0.02)));
   C.vehSpeed = len3(sub(end3, C.veh)) / Math.max(1e-3, dt);
   C.veh = end3.slice();
-  const origin = sub(end3, mul(C.up, roofH));
+  const origin = sub(sub(end3, mul(C.up, roofH)), mul(C.f, hangZ));
   C.vehAlt = len3(origin) - R - groundAt(norm(origin));
   writeVehicle(v, origin, C.up, C.f);
   return pull;

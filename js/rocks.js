@@ -26,7 +26,7 @@ export const ROCK_TYPES = [
   { model: 'rock-m2', w: 2.9, h: 0.9, d: 1.8, big: true },
 ].map(t => ({ ...t, rad: (t.w + t.d) / 4 * 0.85 }));
 export const ROCK_MODELS = ROCK_TYPES.map(t => t.model);
-export const ROCK_BREAKERS = new Set(['lunar', 'mega']);   // Měsíční zametací vůz, Mega vysávací rover
+export const ROCK_BREAKERS = new Set(['lunar', 'mega', 'prachocuc']);   // Měsíční zametací vůz, Mega vysávací rover
 
 const AREA_PER_ROCK = 100;      // m² na kámen v průměru (zadání: 25 – na hratelnost s menšími vozidly řidčeji)
 const BIG_SHARE = 0.4;          // podíl míst se středním kamenem (malé jsou ve skupinkách 1–3 → ~28 % středních kamenů)

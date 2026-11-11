@@ -28,7 +28,8 @@ import { syncTerrainPatches } from './structures.js';
 import { takeTerrainChanges } from './planet/height.js';
 
 // Budovy základny (GLB) se staví hned se scénou – načtou se spolu s přípravou Měsíce.
-const BASE_MODELS = ['building-buyback', 'building-workshop', 'building-toolshop', 'aircraft-prachovka', 'aircraft-kolibrik', 'aircraft-mula', 'aircraft-kondor'];   // letouny: builder vozidla potřebuje GLB (3.1)
+const BASE_MODELS = ['building-buyback', 'building-workshop', 'building-toolshop', 'aircraft-prachovka', 'aircraft-kolibrik', 'aircraft-mula', 'aircraft-kondor',
+  'ground-push', 'ground-rideon', 'ground-lunar', 'ground-mega', 'ground-crew', 'ground-prachocuc', 'trailer-1', 'trailer-2', 'trailer-3', 'trailer-4', 'swap-battery-full', 'swap-battery-empty'];   // letouny: builder vozidla potřebuje GLB (3.1)
 import { updateUi, setPrompt, flashMoney, floatText, toast, updatePlayers, showAchievement, navTarget } from './ui.js';
 import { saveGame, loadGame, importV1, lockSaves, savePlanet, peekSave, saveFresh, stashHandoff, takeHandoff, logWorldLoad } from './storage.js';
 import { cloudMeta, loadCloud, cloudHasMap, hostOf, releaseHost, resetCloudMap, setWorldPassword, checkAccess, blockCloud } from './cloud.js';
@@ -52,7 +53,8 @@ import { stationMk } from './catalog.js';
 import { loadFromSilo } from './player.js';
 import { vehicleStats } from './equipment.js';
 import { researchCenter, researchTick, researchOffline, techById } from './research.js';
-import { batteryCap } from './catalog.js';
+import { batteryCap, batteryPoint, hangPoint } from './catalog.js';
+import { hasArm, toggleArm, takeArmNote, swapArmHint, trailerPoint } from './prachocuc.js';
 import { build as bld, hammerActive, toggleHammer, toggleMenu, toggleDemolish, cancelBuild, rotateBy, updateBuild, placeNow, closeAll, startCable, connectNow, beltClick } from './build.js';
 import { initBuildUi, updateBuildUi, placeHoldRing, placeStructLabel } from './buildUi.js';
 import { describe as describeStructure } from './energy.js';
@@ -68,7 +70,7 @@ import { initChat, showChat, addMessage, openChat, chatOpen } from './chat.js';
 import { initMenu, initPause, showLoading, hideMenu, setMoonStatus } from './menu.js';
 import { sunElevationDeg, sunAngle } from './planet/sun.js';
 import { sunVisible } from './planet/sunwindow.js';
-import { angleBetween } from './planet/vec.js';
+import { angleBetween, norm, madd } from './planet/vec.js';
 import { altitude } from './physics.js';
 import { initGrid } from './planet/hexgrid.js';
 import { hexes, generateDust, adoptGenerated } from './planet/dustmap.js';
@@ -213,17 +215,21 @@ setDroneHooks({
   vehicle: i => {
     const s = game.s, v = s.vehicles[i];
     if (!v) return null;
-    if (i === s.driving) return { p: v.p, speed: Math.abs(currentVehicleSpeed()) };
+    // dron míří nad baterii vozidla (uzel baterie nebývá nad středem, 07 fáze B)
+    const bp = batteryPoint(v.type);
+    const at = (p, f) => (bp && f ? norm(madd(p, f, bp.z / MOON.radius)) : p);
+    if (i === s.driving) return { p: at(v.p, v.f), speed: Math.abs(currentVehicleSpeed()) };
     const o = net.mode !== 'off' ? vehicleOverride(i) : null;
-    return o ? { p: o.p, speed: o.speed || 0 } : { p: v.p, speed: 0 };
+    return o ? { p: at(o.p, o.f || v.f), speed: o.speed || 0 } : { p: at(v.p, v.f), speed: 0 };
   },
-  roof: type => roofOf(type || 'rideon'),
+  roof: type => batteryPoint(type)?.y ?? roofOf(type || 'rideon'),   // „střecha“ pro dron = spodek baterie v kolébce
 });
 // B / tlačítko v HUD: objednat baterii dronem, podruhé zrušit
 function orderBattery() {
   const s = game.s, i = s.driving;
   if (i < 0) { toast('Baterii dronem objednáš, když sedíš ve vozidle (B).', 4000); return; }
   const v = s.vehicles[i], cur = missionFor(i);
+  if (hasArm(v) && (v.armT || 0) > 0) { toast('Zvedni ramena (F) – dron vymění baterii jen s rameny nahoře.', 4000); return; }
   const send = (on, ok) => Promise.resolve(purchase('dorder', [i, v.uid, on ? 1 : 0], 0, () => orderDrone(i, on))).then(r => toast(r ? ok : 'Objednávka dronu se nepovedla – zkus to znovu.', 4000));
   if (cur) {
     if (cur.m.carry !== 'full' || cur.m.cancel) return;
@@ -238,6 +244,7 @@ function orderBattery() {
 // Převoz vozidel (3.1, L-67): výška střechy, kdo vozidlo řídí, položené vozidlo klient nahlásí hostiteli
 setCarryHooks({
   roof: type => roofOf(type || 'rideon'),
+  hang: type => hangPoint(type),                // závěsné oko vozidla (GLB); null = střed střechy
   taken: i => i === game.s.driving || !!vehicleTakenBy(i),
   placed: i => { if (net.mode === 'client' && i >= 0) reportParked(i); },
 });
@@ -807,12 +814,14 @@ function frame(now) {
   actors.update(rdt, now / 1000, playerFx, 45 + cam.distance * 2.5);
   rocks3d.update(focus);
   { const rn = takeRockNote(); if (rn) toast(rn, 4000); }
+  { if (s.driving >= 0) swapArmHint(s.vehicles[s.driving]); const an = takeArmNote(); if (an) toast(an, 4000); }   // Prachocuc: rameno narazilo / výměník s rameny dole
   updateBuildUi();
   placeHoldRing(input.cursor);
   updateStructLabel(rdt);
   {
     const drv = s.driving >= 0 ? eq.base : null;
-    const nose = drv ? [s.p[0] + s.f[0] * (drv.front || 0) / MOON.radius, s.p[1] + s.f[1] * (drv.front || 0) / MOON.radius, s.p[2] + s.f[2] * (drv.front || 0) / MOON.radius] : null;
+    const fr = Math.max(0, drv?.front || 0);                  // Prachocuc má záběr za sebou → značka se měří od středu
+    const nose = drv ? [s.p[0] + s.f[0] * fr / MOON.radius, s.p[1] + s.f[1] * fr / MOON.radius, s.p[2] + s.f[2] * fr / MOON.radius] : null;
     actors.updateMarker(rdt, map.active ? null : input.target, drv ? { radius: actors.vehicleRadius(s.driving), nose } : null, input.miss, input.clicks);
   }
   if (remotes) remotes.update(rdt, now / 1000, map.active);
@@ -1103,6 +1112,11 @@ function build() {
     onBuildMenu: () => { if (!toggleMenu() && !hammerActive()) toast(game.s.hammer ? 'Nejdřív vezmi kladivo do ruky (Q nebo číslo jeho políčka).' : 'Stavět jde kladivem – kup ho v Dílně (záložka Astronaut).', 4000); promptTimer = 0; },
     onLights: toggleLights,
     onBattery: orderBattery,                                   // B = objednat baterii dronem (3.1, L-62)
+    onMode: () => {                                            // F = Prachocuc: jízda (ramena nahoře) ↔ sběr (ramena do stran)
+      const v = game.s.vehicles[game.s.driving];
+      if (!v || !hasArm(v)) return;
+      toast(toggleArm(v, activeEquipment().stats.width), 3500);
+    },
     onAuto: () => {                                            // C = autocruise → asistent hrany → vypnuto (L-40, L-41)
       if (game.s.driving < 0) return;
       if (isAirType(game.s.vehicles[game.s.driving]?.type)) { toast('Letoun nemá autopilota – klikni do terénu a doletí tam sám.', 4000); return; }
@@ -1117,6 +1131,7 @@ function build() {
       if (i === game.s.driving) return;
       const o = net.mode !== 'off' ? vehicleOverride(i) : null;
       out.push({ p: o ? o.p : v.p, dyn: !!o });
+      if (hasArm(v)) out.push({ p: trailerPoint(v, o ? o.p : v.p, o?.f || v.f), dyn: !!o });      // přívěs Prachocucu je taky překážka
     });
     for (const r of net.remotes.values()) if (r.d < 0 && r.sp && !r.rd) out.push({ p: r.sp, dyn: true });
     return out;

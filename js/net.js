@@ -249,6 +249,8 @@ function myWorldPresence(fx, vehicleSpeed) {
     m: [Math.round(fx.speed * 10), Math.round(fx.alt * 100), Math.round(fx.vr * 10), fx.swept ? 1 : 0, fx.airborne ? 1 : 0],
     d: s.driving,
     vs: s.driving >= 0 ? Math.round(vehicleSpeed * 10) : 0,
+    am: s.driving >= 0 && s.vehicles[s.driving]?.type === 'prachocuc'      // Prachocuc: [mód 0/1, úhel přívěsu mrad, ramena 0–100]
+      ? [s.vehicles[s.driving].mod === 'sber' ? 1 : 0, Math.round((s.vehicles[s.driving].tr || 0) * 1000), Math.round((s.vehicles[s.driving].armT || 0) * 100)] : null,
     bt: s.driving >= 0 && batteryCap(s.vehicles[s.driving]) ? Math.round(s.vehicles[s.driving].charge * 10) / 10 : null,   // baterie řízeného vozidla (L-51)
     tl: s.tool,
     tw: Math.round(fx.toolWidth * 100),
@@ -311,6 +313,14 @@ function readRemote(peer, pr) {
   if (okVec(pr.m, 0, 5)) r.m = pr.m;
   r.d = Number.isInteger(pr.d) ? pr.d : -1;
   r.vs = isNum(pr.vs) ? pr.vs / 10 : 0;
+  if (r.d >= 0 && okVec(pr.am, 0, 3)) {                  // Prachocuc řízený tímto hráčem: mód, přívěs a ramena rovnou do vozidla
+    const v = game.s.vehicles[r.d];
+    if (v && v.type === 'prachocuc' && game.s.driving !== r.d) {
+      v.mod = pr.am[0] ? 'sber' : 'jizda';
+      v.tr = Math.max(-1.1, Math.min(1.1, pr.am[1] / 1000));
+      v.armT = Math.max(0, Math.min(1, pr.am[2] / 100));  // hostitel podle toho pouští výměník (jen s rameny nahoře)
+    }
+  }
   r.bt = isNum(pr.bt) ? pr.bt : null;
   if (net.mode === 'host' && r.d >= 0 && r.bt !== null && game.s.vehicles[r.d] && Math.abs(r.vs) > 0.3) {   // za jízdy platí nabití od řidiče (ve stání nabíjí hostitel)
     const v = game.s.vehicles[r.d];
@@ -806,7 +816,8 @@ function hostState() {
     go: s.go || 0,
     mk: s.market | 0,
     hu: s.hexup | 0,
-    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '', v.lv.boost | 0, v.lv.hopper | 0, v.garage || '', Math.round(v.charge || 0), v.lv.battery | 0, v.lv.solar | 0, v.lv.cruise | 0, v.lv.edge | 0, v.lv.motor | 0, v.lv.abatt | 0, v.lv.special | 0]),   // 20–22: letouny (3.1)
+    v: s.vehicles.map((v, i) => [VEHICLES.findIndex(x => x.id === v.type), v.lv.width, v.lv.speed, v.spot ?? i, ...enc(v.p), ...encF(v.f), Math.round(v.load * 10), v.uid || '', v.lv.boost | 0, v.lv.hopper | 0, v.garage || '', Math.round(v.charge || 0), v.lv.battery | 0, v.lv.solar | 0, v.lv.cruise | 0, v.lv.edge | 0, v.lv.motor | 0, v.lv.abatt | 0, v.lv.special | 0,
+      v.lv.rameno | 0, v.lv.privez | 0, v.mod === 'sber' ? 1 : 0, Math.round((v.tr || 0) * 1000)]),   // 20–22: letouny (3.1) · 23–26: Prachocuc (rameno, přívěs, mód, úhel přívěsu mrad)
     st: s.stations.map(st => st.hex),
     sm: s.stations.map(st => st.mk | 0).join(''),            // úroveň stanic (MK1 / MK2) jako řetězec číslic
     b: s.stations.map(botEnc),
@@ -1090,6 +1101,13 @@ function applyHostState(H) {
       v.lv.motor = e[20] | 0;                        // letouny (3.1): Motory, Baterie, Speciální
       v.lv.abatt = e[21] | 0;
       v.lv.special = e[22] | 0;
+      v.lv.rameno = e[23] | 0;                       // Prachocuc (07, fáze F): díly ramene, velikost přívěsu
+      v.lv.privez = e[24] | 0;
+      if (s.driving !== i && !vehicleTakenBy(i)) {         // mód a přívěs stojícího vozidla od hostitele (řízené posílá řidič v presence)
+        v.mod = e[25] ? 'sber' : 'jizda';
+        v.armT = e[25] ? 1 : 0;
+        if (isNum(e[26])) v.tr = e[26] / 1000;
+      }
       if (s.driving === i) {                         // řídím ho já → poloha i baterie jsou moje; ve stání (nabíjení) vyšší od hostitele
         if (isNum(e[15]) && e[15] > v.charge + 0.5 && Math.abs(currentVehicleSpeed()) < 0.3) v.charge = e[15];
         return;

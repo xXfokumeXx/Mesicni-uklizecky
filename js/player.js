@@ -13,6 +13,7 @@ import { heightAt } from './planet/height.js';
 import { depotAt, depotRoom, dumpZoneAt, dumpRate, DUMP } from './logistics.js';
 import { pushOut, structureById } from './structures.js';
 import { roofCover } from './solarRoof.js';
+import { hasArm, armDown, armEnds, armBlocked, stepArm, armHitNote, ARM, stepTrailer, trailerPoint } from './prachocuc.js';
 import { rockHit, rockPush, rockHeight, breakRock, rockBlockedNote, ROCK_TYPES, ROCK_BREAKERS, rocks } from './rocks.js';
 import { autopilotDrive, autopilotOff } from './autopilot.js';
 import { inBuyback } from './base.js';
@@ -386,16 +387,23 @@ function drive(input, dt) {
   // baterie (L-01, L-02): při 0 % nouzový režim – 15 % rychlosti, nezametá, bez boostu
   const cap = batteryCap(v);
   const empty = cap > 0 && !(v.charge > 0);
+  // Prachocuc (07, fáze D): sklápění ramen; ve sběru i během přepínání jede pomaleji; rameno se zastaví o stavbu / kámen
+  const arm = hasArm(v);
+  const p0 = b.p.slice(), f0 = s.f.slice();
+  const armOut = arm && (v.armT || 0) > 0;
+  const armWas = armOut && armBlocked(p0, f0, eq.stats.width);           // už v překážce (rozložil se u zdi) → nezaseknout
+  if (arm) stepArm(v, dt);
+  const top = arm && (v.mod === 'sber' || armOut) ? eq.stats.sweepSpeed : eq.stats.speed;
   // autopilot (L-40, L-41): místo plynu a jízdy myší dá cílovou rychlost a otáčení
   const ap = autopilotDrive(dt, input, {
-    max: eq.stats.speed * (empty ? EMERGENCY_SPEED : 1), speed: vehicleSpeed, front: eq.base.front || 0, width: eq.stats.width,
+    max: top * (empty ? EMERGENCY_SPEED : 1), speed: vehicleSpeed, front: Math.max(0, eq.base.front || 0), width: arm ? 2.6 : eq.stats.width,
     empty, full: eq.stats.hopper > 0 && v.load >= eq.stats.hopper - 0.01, manual: input.turn() !== 0,
   });
   const boost = eq.stats.boost || 1;
   const boosting = !ap && boost > 1 && input.boost && boostLeft > 0 && b.grounded && !empty;
   boostLeft = boosting ? Math.max(0, boostLeft - dt) : Math.min(BOOST.duration, boostLeft + dt * BOOST.duration / BOOST.recharge);
   playerFx.boosting = boosting;
-  const max = eq.stats.speed * (boosting ? boost : 1) * (empty ? EMERGENCY_SPEED : 1);
+  const max = top * (boosting ? boost : 1) * (empty ? EMERGENCY_SPEED : 1);
 
   let throttle = 0;
   const m = ap ? null : input.move();
@@ -437,7 +445,7 @@ function drive(input, dt) {
   vehicleSpeed += Math.max(-accel, Math.min(accel, target - vehicleSpeed));
 
   stepBody(b, dt, s.f.map(c => c * vehicleSpeed), 0);   // vozidlo ve vzduchu neřídí
-  const bodyR = Math.max(1, (eq.base.front || 1) * 0.9);
+  const bodyR = Math.max(1, Math.abs(eq.base.front || 1) * 0.9);
   if (blockByStructures(b, bodyR)) vehicleSpeed *= 0.5;
   // kameny: Měsíční zametací vůz a Mega rover je nárazem rozbijí, ostatní vozidla se o ně zastaví (s hláškou)
   if (b.grounded) {
@@ -453,11 +461,17 @@ function drive(input, dt) {
       }
     }
   }
+  if (armOut && !armWas && armBlocked(b.p, s.f, eq.stats.width)) {           // rameno narazilo: krok se vrátí, vozidlo stojí
+    b.p = p0; b.v = [0, 0, 0]; s.f = f0;
+    vehicleSpeed = 0;
+    armHitNote();
+  }
   if (!b.grounded) vehicleSpeed = dot(b.v, s.f);
   s.p = b.p;
   s.f = tangentTo(s.p, s.f);
   v.p = b.p;
   v.f = s.f;
+  if (arm) stepTrailer(v, dt, vehicleSpeed);                       // přívěs se táhne za traktorem (07, fáze E)
 
   // spotřeba: P = jízda × (0,3 + 0,7 × |v| / vmax) + zametání; stojící vozidlo nespotřebovává nic
   if (cap > 0 && Math.abs(vehicleSpeed) > 0.2) {
@@ -663,7 +677,7 @@ export function toolPoint() {
   if (rag || ride) return null;
   const s = game.s;
   const eq = activeEquipment();
-  if (!(eq.stats.width > 0)) return null;
+  if (!(eq.stats.width > 0) || eq.base.arm) return null;        // rameno Prachocucu nemá kruh nástroje
   const ahead = eq.kind === 'vehicle' ? eq.base.front : TOOL_AHEAD;
   const face = tangentTo(s.p, eq.kind === 'vehicle' ? s.f : (playerFx.face || s.f));
   return norm(madd(s.p, face, ahead / R));
@@ -680,7 +694,8 @@ export function collect() {
   playerFx.completed = [];
 
   const flat = eq.kind === 'vehicle' && batteryCap(eq.item) > 0 && !(eq.item.charge > 0);   // vybitá baterie = nezametá
-  const width = flat ? 0 : eq.stats.width;
+  const armV = eq.kind === 'vehicle' && !!eq.base.arm;                                         // Prachocuc: zametá jen s rameny dole
+  const width = flat || (armV && !armDown(eq.item)) ? 0 : eq.stats.width;
   if (width > 0) {
     const ahead = eq.kind === 'vehicle' ? eq.base.front : TOOL_AHEAD;
     const face = tangentTo(s.p, eq.kind === 'vehicle' ? s.f : (playerFx.face || s.f));
@@ -692,7 +707,12 @@ export function collect() {
     const onGround = airV ? altitude(b) <= AIR.sweepAlt + 0.5 : b.grounded || altitude(b) < SWEEP_ALT;   // Prachovka zametá v 1,5 m (3.1)
     if (onGround && item.load < eq.stats.hopper) {
       const limit = Math.ceil((eq.stats.hopper - item.load) * UNITS_PER_KG);
-      const r = sweepCapsule(prevTool || tool, tool, width / 2, eq.stats.power, limit);
+      let r;
+      if (armV) {                                                   // pás přes celé rameno; tloušťka podle ujeté dráhy, ať nevznikají mezery
+        const [a, c] = armEnds(s.p, face, width);
+        const moved = prevTool ? angleBetween(prevTool, tool) * R : 0;
+        r = sweepCapsule(a, c, Math.max(ARM.sweepR, Math.min(1.5, moved / 2 + 0.15)), eq.stats.power * ARM.passes, limit);
+      } else r = sweepCapsule(prevTool || tool, tool, width / 2, eq.stats.power, limit);
       item.load = Math.min(eq.stats.hopper, item.load + r.got / UNITS_PER_KG);
       playerFx.swept = r.got;
       playerFx.completed = r.completed;
@@ -721,7 +741,8 @@ export function collect() {
   }
   const total = loads.reduce((a, it) => a + (it.load || 0), 0);
   if (!(total > 0)) return 0;
-  if (inBuyback(s.p)) {
+  // Prachocuc vysypává přívěs: rozhoduje poloha přívěsu, ne traktoru (07, fáze E)
+  if (inBuyback(eq.kind === 'vehicle' && eq.base.arm ? trailerPoint(eq.item) : s.p)) {
     const earned = total * dustPrice();
     s.money += earned;
     for (const it of loads) it.load = 0;
@@ -750,7 +771,7 @@ export function unloadToDepot(dt) {
   if (s.driving < 0 || rag || ride) { dumpStill = 0; return; }
   const eq = activeEquipment();
   if (!(eq.stats.hopper > 0)) return;
-  const b = dumpZoneAt(activeBody().p);
+  const b = dumpZoneAt(eq.base.arm ? trailerPoint(eq.item) : activeBody().p);      // Prachocuc: pod výsypkou musí stát přívěs
   if (!b) { dumpStill = 0; return; }
   dumpStill = playerFx.speed < DUMP.maxSpeed ? dumpStill + dt : 0;
   const v = eq.item, rate = dumpRate();

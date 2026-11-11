@@ -207,6 +207,7 @@ function vehiclesShopTab(air = false) {
         ...(v.width ? [['Sací lišta', m(v.width)], ['Zásobník', kg(v.hopper)]] : []), ...(v.seats ? [['Místa', `pilot + ${v.seats}`]] : []), ...(v.scan ? [['Skener', `${v.scan} m`]] : [])]
       : v.kind === 'transport'
       ? [['Max. rychlost', `${v.speed.toFixed(1)} m/s`], ['Zametání', 'ne – jen přesun']]
+      : v.arm ? [['Sběrné rameno', m(v.width)], ['Přívěs', kg(v.hopper)], ['Max. rychlost', `${v.speed.toFixed(1)} m/s (při sběru ${String(v.sweepSpeed).replace('.', ',')})`], ['Garáž', '2 místa vedle sebe']]
       : [['Šířka sání', m(v.width)], ['Zásobník', kg(v.hopper)], ['Max. rychlost', `${v.speed.toFixed(1)} m/s`]];
     stats.push(['Ve flotile', `${count}×`]);
     return {
@@ -334,6 +335,10 @@ function vehiclesUpgradeTab(air = false) {
         const after = key === 'cruise' || key === 'edge' ? auto(lv + 1) : key === 'width' ? m(v.width * (1 + u.step * (lv + 1)))
           : key === 'boost' ? pct(lv + 1) : key === 'hopper' ? kg(v.hopper * (1 + u.step * (lv + 1)))
             : key === 'battery' ? cap(lv + 1) : key === 'solar' ? roof(lv + 1) : `${(v.speed * (1 + u.step * (lv + 1))).toFixed(1)} m/s`;
+        if (u.values) {                                                     // Prachocuc: rameno / přívěs – pevné hodnoty po úrovních
+          const at = x => (u.unit === 'm' ? m(u.values[x]) : kg(u.values[x]));
+          return { name: u.name, lv, max: u.max, effect: cost === null ? at(lv) : `${at(lv)} → ${at(lv + 1)}`, cost, locked: '', run: () => purchase('vup', [i, key], cost, () => upgradeVehicle(i, key)) };
+        }
         const locked = vehicleUpgradeLock(key, lv, veh);
         if (key === 'motor' || key === 'abatt' || key === 'special') {      // letouny (3.1, L-65)
           const at = x => (key === 'motor' ? `${(v.speed * (1 + u.step * x)).toFixed(1)} m/s` : key === 'abatt' ? cap(x)

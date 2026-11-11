@@ -17,7 +17,7 @@ import { cellDir, dirToCell } from './planet/hexgrid.js';
 import { hexes } from './planet/dustmap.js';
 import { siteDir } from './rocket.js';
 import { setGroundHook } from './physics.js';
-import { isAirType } from './catalog.js';
+import { isAirType, vehicleById } from './catalog.js';
 
 const R = MOON.radius;
 
@@ -483,7 +483,7 @@ export function demolishStructure(id) {
   if (b.type === 'garage') {
     for (const v of s.vehicles) {                    // vozidla zůstanou stát, jen dostanou nový domov
       if (v.garage !== id) continue;
-      const slot = freeGarageSlot();
+      const slot = freeGarageSlot(null, slotsNeeded(v));
       v.garage = slot?.garage || null;
       v.spot = slot?.spot ?? 0;
     }
@@ -586,16 +586,19 @@ export const garages = () => structuresOf('garage');
 export const fleetCapacity = () => garages().length * GARAGE_SLOTS;
 export const fleetFull = () => game.s.vehicles.filter(v => !isAirType(v.type)).length >= fleetCapacity();   // letouny mají místo na plošinách LAAC (3.1)
 
+const slotsNeeded = v => vehicleById(v?.type)?.slots || 1;      // Prachocuc s přívěsem zabere 2 sousední místa (07, fáze D)
 export function freeSlots(gid) {
-  const used = new Set(game.s.vehicles.filter(v => v.garage === gid).map(v => v.spot));
+  const used = new Set();
+  for (const v of game.s.vehicles) if (v.garage === gid) for (let k = 0; k < slotsNeeded(v); k++) used.add(v.spot + k);
   return Array.from({ length: GARAGE_SLOTS }, (_, k) => k).filter(k => !used.has(k));
 }
 // První volné místo: v garáži gid (když jde), jinak v kterékoli jiné. { garage, spot } nebo null.
-export function freeGarageSlot(gid = null) {
+export function freeGarageSlot(gid = null, need = 1) {
   const list = garages();
   if (gid) list.sort((a, b) => (a.id === gid ? -1 : b.id === gid ? 1 : 0));
   for (const g of list) {
-    const k = freeSlots(g.id)[0];
+    const free = freeSlots(g.id);
+    const k = need > 1 ? free.find(x => free.includes(x + 1)) : free[0];      // need 2 = dvě místa vedle sebe
     if (k !== undefined) return { garage: g.id, spot: k };
   }
   return null;
@@ -610,11 +613,21 @@ export function garageSlot(g, k) {
   return { dir, facing: tangentTo(dir, ax.Z) };
 }
 
+// Dlouhé vozidlo na místech k a k + 1 (Prachocuc s přívěsem, asi 10–12 m): stojí napříč před vraty, souprava vystředěná
+// na obě místa (střed traktoru 2,5 m před středem soupravy), o metr dál od garáže.
+function wideSlot(g, k) {
+  const def = STRUCTURES.garage;
+  const a = def.slots[Math.max(0, Math.min(def.slots.length - 2, k | 0))], b = def.slots[Math.max(1, Math.min(def.slots.length - 1, (k | 0) + 1))];
+  const ax = axes(g.p, g.yaw);
+  const dir = localToDir(g.p, g.yaw, (a[0] + b[0]) / 2 + 2.5, a[1] + 1, ax);
+  return { dir, facing: tangentTo(dir, ax.X) };
+}
+
 // Kam patří vozidlo (domovská garáž a místo v ní). Bez garáže = u Výkupu.
 export function homeSpot(v) {
   const g = v.garage && structureById(v.garage);
   if (g?.type === 'laac') { const h = STRUCTURES.laac.homeFor?.(v); if (h) return h; }   // letoun: plošina LAAC (3.1)
-  else if (g) return garageSlot(g, v.spot);
+  else if (g) return slotsNeeded(v) > 1 ? wideSlot(g, v.spot) : garageSlot(g, v.spot);
   return { dir: baseDir(0, -14), facing: [0, -1, 0] };
 }
 export function isParkedHome(v) {

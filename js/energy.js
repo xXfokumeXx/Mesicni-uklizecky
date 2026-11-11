@@ -5,10 +5,10 @@
 // Stavba bez kabelu nefunguje (nabíječka nenabíjí, solár vyrábí do prázdna) a má nad sebou ikonu přeškrtnutého blesku.
 import { MOON } from './config.js';
 import { game, gameTime } from './state.js';
-import { batteryCap } from './catalog.js';
+import { batteryCap, batteryPoint } from './catalog.js';
 import { STRUCTURES, structureById, localToDir, axes, padTopHeight, CHARGER_RATE, garageSlot, SWAP } from './structures.js';
 import { heightAt } from './planet/height.js';
-import { angleBetween, norm, dot } from './planet/vec.js';
+import { angleBetween, norm, dot, madd } from './planet/vec.js';
 import { sunElevationDeg, sunAngle } from './planet/sun.js';
 import { sunWindow } from './planet/sunwindow.js';
 import { researching, researchProgress, RESEARCH_POWER } from './research.js';
@@ -193,8 +193,9 @@ export function vehicleOnBay(b, busy = () => false) {
   const dir = localToDir(b.p, b.yaw, x, z);
   let best = -1, bestD = SWAP.bayR;
   game.s.vehicles.forEach((v, i) => {
-    if (!batteryCap(v) || busy(i)) return;
-    const d = angleBetween(v.p, dir) * R;
+    if (!batteryCap(v) || busy(i) || (v.armT || 0) > 0) return;       // Prachocuc: jen s rameny nahoře (hák by do nich narazil)
+    const bp = batteryPoint(v.type);                                   // baterie nebývá nad středem vozidla (07, fáze B)
+    const d = angleBetween(bp && v.f ? norm(madd(v.p, v.f, bp.z / R)) : v.p, dir) * R;
     if (d < bestD) { bestD = d; best = i; }
   });
   return best;

@@ -113,6 +113,13 @@ export function updateUi() {
   const auto = s.driving >= 0 ? autopilotStatus() : null;
   $('row-auto').hidden = !auto;
   if (auto) $('stat-auto').textContent = auto;
+  // Prachocuc (07, fáze D): mód ramen „Jízda“ / „Sběr · 7 m“ (během sklápění „…“)
+  const armV = s.driving >= 0 && !!eq.base?.arm;
+  $('row-arm').hidden = !armV;
+  if (armV) {
+    const t = eq.item.armT || 0, w = String(eq.stats.width).replace('.', ',');
+    $('stat-arm').textContent = eq.item.mod === 'sber' ? (t >= 1 ? `Sběr · ${w} m` : `Sklápím ramena… · ${w} m`) : (t > 0 ? 'Zvedám ramena…' : 'Jízda');
+  }
   // letoun (3.1): výška a režim, pod 20 % šipka k plošině LAAC
   const plane = s.driving >= 0 && isAirType(eq.item?.type);
   $('row-alt').hidden = !plane;
