@@ -2,6 +2,11 @@
 
 Hra ukazuje poslední 3 verze (okno Novinky po kliknutí na číslo verze v menu). Formát: nadpis `## verze · datum`, pod ním body `- …`.
 
+## 3.1.1 · 11. 11. 2026
+- Nasbírané cihly jde ve Výkupu prodat ze zásoby – kolik chceš (Burza → Cihly).
+- Mula na laně unese nejvýš Měsíční zametací vůz. Mega rover přenese jen Kondor robotickou rukou.
+- Autopilot ve vozidle už nezastaví před strmým svahem – projede jakýkoli terén.
+
 ## 3.1.0 · 11. 11. 2026
 - Vyčištěný Měsíc se už nezasype, když svět střídavě hostují různí hráči nebo když někdo hraje sdílený svět sám – vyčištění ze slotu i z cloudu se vždycky spojí.
 - Když se svět nepodaří uložit do cloudu (výpadek připojení), hra to oznámí a zkusí to znovu.
