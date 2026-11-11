@@ -13,6 +13,7 @@ import { buildBot, buildDrone, buildJetpack, buildBelt, buildRtg } from '../scen
 import { mergeObject } from '../scene/mergeParts.js';
 import { buildToolModel, buildBootsModel, buildHammerModel } from '../scene/toolModels.js';
 import { buildBeltPiece, buildBeltNode } from '../scene/beltsView.js';
+import { buildAircraft } from '../scene/aircraft.js';
 
 const M = 'assets/models/';
 
@@ -57,6 +58,25 @@ export const MODELS = {
   'swapper-hook': { src: M + 'vymenik-hak.glb' },
   'swap-battery-full': { src: M + 'vymenik-baterie-nabita.glb', instanced: true },
   'swap-battery-empty': { src: M + 'vymenik-baterie-vybita.glb', instanced: true },
+  // LAAC (3.1, A-10, D-16): věž (radar = otočný uzel) a plošina pro sousední hex
+  'laac': { src: M + 'laac.glb', nodes: ['radar'] },
+  'laac-pad': { src: M + 'laac-plocha.glb' },
+  // letouny (3.1, A-11, D-17): GLB, ve hře přes builder vehicle-<typ> (scene/aircraft.js). Body: sedadla, trysky, štítky čísla
+  'aircraft-prachovka': { src: M + 'letoun-prachovka.glb', nodes: ['zasobnik_hladina'], radius: 2.9,
+    points: { seat: [0, 1.72, 0.95], thrusters: [[-1.45, 0.68, 1.15], [1.45, 0.68, 1.15], [-1.45, 0.68, -1.15], [1.45, 0.68, -1.15]], labelL: [-2.61, 1.42, -0.1], labelR: [2.61, 1.42, -0.1], level: [1.62, 2.25], nose: 2.4 } },
+  'aircraft-kolibrik': { src: M + 'letoun-kolibrik.glb', nodes: ['skener'], radius: 3.6,
+    points: { seat: [0, 1.75, 1.35], seat2: [0, 1.75, -0.05], thrusters: [[-1.45, 0.9, -2], [1.45, 0.9, -2], [0, 0.85, 2.3], [0, 0.85, 0.6]], rear: [[-1.45, 1.7, -3.47], [1.45, 1.7, -3.47]], labelL: [-0.92, 1.62, -1.55], labelR: [0.92, 1.62, -1.55], beam: [0, 2.2, 3.43], nose: 3.5 } },
+  'aircraft-mula': { src: M + 'letoun-mula.glb', nodes: ['navijak_buben'], radius: 4.6,
+    points: { seat: [0, 3.2, 1.6], thrusters: [[-2.9, 1.78, 2.55], [2.9, 1.78, 2.55], [-2.9, 1.78, -2.55], [2.9, 1.78, -2.55]], labelL: [-2.01, 2.95, -1.4], labelR: [2.01, 2.95, -1.4], winch: [0, 0.9, 0], nose: 3.3 } },
+  'aircraft-kondor': { src: M + 'letoun-kondor.glb', nodes: ['poklop', 'naklad_ukazatel', 'ruka_rameno', 'ruka_predlokti', 'ruka_klesti'], radius: 3.9,
+    points: { seat: [0, 2.35, 2.55], thrusters: [[-2.45, 1.68, 1.75], [2.45, 1.68, 1.75], [-2.45, 1.68, -2.2], [2.45, 1.68, -2.2]], labelL: [-1.52, 2.95, 1.6], labelR: [1.52, 2.95, 1.6], nose: 3.5 } },
+  // dronport a dron s baterií (3.1, A-11, D-14). Skupiny: stavová světla a 2. místo přistání (ukáže se s 2. dronem).
+  'dronport': {
+    src: M + 'vymenik-dronport.glb',
+    groups: { stav1: [-3.45, -2.85, 5.9, 7.0, 3.0, 3.6], stav2: [-3.45, -2.85, 5.9, 7.0, -3.6, -3.0], pad2: [-3.1, 3.1, 6.005, 6.3, -6.7, -0.15] },
+    hideEffects: [[-3.15, 6.72, 3.3], [-3.15, 6.72, -3.3]],     // záře stavových světel kreslí hra podle stavu dronu
+  },
+  'drone-battery': { src: M + 'dron-baterie.glb', points: { hookA: [0, 0.84, 0.9], hookB: [0, 0.84, -0.9], frameA: [0, 0.12, 0.9], frameB: [0, 0.12, -0.9], thrusters: [[-1.75, 0.7, 1.75], [1.75, 0.7, 1.75], [-1.75, 0.7, -1.75], [1.75, 0.7, -1.75]], labelL: [-1.39, 1.24, 0], labelR: [1.39, 1.24, 0] } },
   'sinter': { src: M + 'budova-slinovna.glb', foundation: true },
   'battery-t1': { src: M + 'baterie-T1-bedna.glb', instanced: true },
   'battery-t2': { src: M + 'baterie-T2-skrin.glb', instanced: true },
@@ -69,9 +89,11 @@ export const MODELS = {
   'solar-t4': { src: M + 'solar-T4-slunecnice.glb', instanced: true },
   'solar-t5': { src: M + 'solar-T5-koruna.glb', instanced: true },
 
+  // ---------- postava (3.1, AST-02): GLB převedený na kostru + paletu (character.js); bez něj náhradní kapsle (A-04) ----------
+  'astronaut': { src: M + 'astronaut.glb', clips: 'assets/anim/astronaut-klipy.json', character: true, builder: look => createAstronaut(look) },
+
   // ---------- dnešní modely v kódu ----------
-  'astronaut': { builder: look => createAstronaut(look) },
-  ...Object.fromEntries(VEHICLES.map(v => [`vehicle-${v.id}`, { builder: () => buildVehicle(v.id) }])),
+  ...Object.fromEntries(VEHICLES.map(v => [`vehicle-${v.id}`, { builder: () => (v.kind === 'air' ? buildAircraft(v.id) : buildVehicle(v.id)) }])),   // letouny z GLB (3.1)
   'station': { builder: ghost => buildStation(ghost) },
   'robot': { builder: () => buildBot() },
   'drone': { builder: () => buildDrone() },
@@ -88,3 +110,28 @@ export const MODELS = {
 };
 
 export const GLB_IDS = Object.keys(MODELS).filter(id => MODELS[id].src);
+
+// Sedadla vozidel pro astronauta (AST-08): body pro ruce [L, P] v souřadnicích vozidla (L = levá ruka postavy = +x),
+// ruce se k nim dotáhnou IK dvou kostí. Poloha pánve je view.seat z modelu vozidla (scene/vehicles.js).
+// Ruční vozík: madlo. Cestující ruce nedotahují.
+export const SEATS = {
+  push: { hands: [[0.3, 1.28, -0.92], [-0.3, 1.28, -0.92]] },
+  rideon: { hands: [[0.15, 1.5, 0.04], [-0.15, 1.5, 0.04]] },
+  lunar: { hands: [[-0.3, 1.6, 1.75], [-0.6, 1.6, 1.75]] },
+  mega: { hands: [[0.15, 2.6, -1.1], [-0.15, 2.6, -1.1]] },
+  crew: { hands: [[-0.3, 1.4, 1.75], [-0.6, 1.4, 1.75]] },
+  prachovka: { hands: [[0.22, 1.95, 1.35], [-0.22, 1.95, 1.35]] },     // řídicí páky před sedadlem (3.1)
+  kolibrik: { hands: [[0.2, 1.98, 1.75], [-0.2, 1.98, 1.75]] },
+  mula: { hands: [[0.22, 3.45, 2.0], [-0.22, 3.45, 2.0]] },
+  kondor: { hands: [[0.22, 2.6, 2.95], [-0.22, 2.6, 2.95]] },
+};
+
+// Úchop nástrojů v pravé ruce astronauta (AST-06): len = délka od hlavy nástroje (dole, y = 0) k místu úchopu,
+// reach = jak daleko před tělem leží hlava nástroje na zemi (m) – stejně jako bod zametání v player.js (TOOL_AHEAD 0,95).
+export const TOOL_GRIPS = {
+  toothbrush: { len: 1.05, reach: 0.95 },
+  handbrush: { len: 1.05, reach: 0.95 },
+  broom: { len: 1.25, reach: 0.95 },
+  handvac: { len: 1.05, reach: 0.95 },
+  squeegee: { len: 1.35, reach: 0.95 },
+};

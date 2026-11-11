@@ -8,6 +8,7 @@
 // Záře a paprsky (userData.efekty) jsou jedna geometrie s billboard shaderem na model (1–2 vykreslení navíc).
 import { MODELS } from './registry.js';
 import { buildEffects } from './effects.js';
+import { prepareCharacter } from './character.js';
 
 const THREE = window.THREE;
 const prepared = new Map();        // id → { parts: [{ geometry, material, kind }], anchors, size, center, effects }
@@ -16,7 +17,10 @@ let loader = null;
 
 const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
 
-export const isReady = id => prepared.has(id) || !!MODELS[id]?.builder;
+export const isReady = id => prepared.has(id) || (!!MODELS[id]?.builder && !MODELS[id]?.character);
+
+// Postava z GLB převedená na kostru + paletu (character.js, 3.1) – null, když se ještě nenačetla nebo selhala.
+export const characterData = id => prepared.get(id)?.character || null;
 
 export async function preloadModels(ids = Object.keys(MODELS)) {
   const glb = ids.filter(id => MODELS[id]?.src && !prepared.has(id));
@@ -33,8 +37,13 @@ function loadOne(id) {
   if (!loader) loader = THREE.GLTFLoader ? new THREE.GLTFLoader() : null;
   const p = new Promise(resolve => {
     if (!loader) { console.warn('[models] chybí THREE.GLTFLoader (vendor/GLTFLoader.js)'); resolve(fallback(id)); return; }
-    loader.load(def.src, gltf => {
-      try { resolve(prepare(id, def, gltf)); } catch (e) { console.warn(`[models] ${id}: chyba přípravy`, e); resolve(fallback(id)); }
+    loader.load(def.src, async gltf => {
+      // postava: k modelu i klipy animací z JSON (A-12); když se nenačtou, zůstanou klipy z modelu
+      let extra = null;
+      if (def.character && def.clips) {
+        try { extra = await (await fetch(def.clips, { cache: 'no-cache' })).json(); } catch (e) { console.warn(`[models] ${id}: klipy ${def.clips} se nenačetly`, e); }
+      }
+      try { resolve(def.character ? { id, character: prepareCharacter(gltf, extra) } : prepare(id, def, gltf)); } catch (e) { console.warn(`[models] ${id}: chyba přípravy`, e); resolve(fallback(id)); }
     }, undefined, e => { console.warn(`[models] ${id}: nepodařilo se načíst ${def.src}`, e); resolve(fallback(id)); });
   }).then(m => { prepared.set(id, m); loading.delete(id); return m; });
   loading.set(id, p);
@@ -59,16 +68,28 @@ function prepare(id, def, gltf) {
     if (!buckets.has(grp)) buckets.set(grp, { solid: [], glow: [], textured: new Map(), clear: [] });
     return buckets.get(grp);
   };
+  // Pohyblivé uzly (registry `nodes`, 3.1): díly pod uzlem se nesloučí s trupem, dostanou vlastní skupinu 'node:<jméno>'
+  // a otočný bod v poloze uzlu (instantiate → inst.nodes[jméno] = Group, kterou jde otáčet / posouvat).
+  // Vnořené uzly (ruka Kondoru: rameno → předloktí → kleště) se zavěsí pod rodičovský uzel (pivotParents).
+  const pivots = {}, pivotParents = {};
+  const nodeOf = o => { for (let x = o; x && x !== scene; x = x.parent) if (def.nodes?.includes(x.name)) return x; return null; };
+  if (def.nodes) scene.traverse(o => {
+    if (!def.nodes.includes(o.name)) return;
+    pivots[o.name] = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+    const up = o.parent ? nodeOf(o.parent) : null;
+    if (up) pivotParents[o.name] = up.name;
+  });
   scene.traverse(o => {
     if (!o.isMesh) return;
     const src = o.material;
+    const node = def.nodes ? nodeOf(o) : null;
     let whole = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
     whole.applyMatrix4(o.matrixWorld);
     if (!whole.attributes.normal) whole.computeVertexNormals();
     const color = srgb(src.color);
     const emissive = src.emissive ? srgb(src.emissive) : new THREE.Color(0, 0, 0);
     const lit = emissive.r + emissive.g + emissive.b > 0.05;
-    for (const [grp, g] of def.groups ? splitByBoxes(whole, def.groups) : [['', whole]]) {
+    for (const [grp, g] of node ? [[`node:${node.name}`, whole]] : def.groups ? splitByBoxes(whole, def.groups) : [['', whole]]) {
       const b = bucket(grp);
       if (src.map) {
         // textura (solární články, výstražné pruhy, cedule): vlastní materiál, sdílený pro stejný obrázek
@@ -115,11 +136,12 @@ function prepare(id, def, gltf) {
   const anchors = (def.anchors || ud.kotevni_body || []).map(a => new THREE.Vector3(...a));
   // efekty, které hra nahrazuje vlastními (např. kontrolky stojanů nabíječky – barva podle stavu)
   const hide = def.hideEffects || [];
-  let list = (ud.efekty || []).filter(e => !hide.some(h => e.pozice && Math.hypot(e.pozice[0] - h[0], e.pozice[1] - h[1], e.pozice[2] - h[2]) < 0.35));
+  // paprsek zadaný uzlem (skener Kolibříku, A-11) kreslí hra sama – efekty umí jen paprsek od–do
+  let list = (ud.efekty || []).filter(e => e.typ !== 'paprsek' || (Array.isArray(e.od) && Array.isArray(e.do))).filter(e => !hide.some(h => e.pozice && Math.hypot(e.pozice[0] - h[0], e.pozice[1] - h[1], e.pozice[2] - h[2]) < 0.35));
   // paprsky mířící k zemi prodloužit (model se ve hře zvedá výš, např. kotva vedení)
   if (def.stretchBeams) list = list.map(e => (e.typ === 'paprsek' && e.do && e.do[1] <= 0.01 ? { ...e, do: [e.do[0], e.do[1] - def.stretchBeams, e.do[2]], polomer_do: e.polomer_do * 1.6 } : e));
   const effects = buildEffects(list, def);
-  return { id, parts, anchors, points: def.points || {}, size, center, effects, triangles: parts.reduce((n, p) => n + p.geometry.attributes.position.count / 3, 0) };
+  return { id, parts, anchors, points: def.points || {}, pivots, pivotParents, size, center, effects, triangles: parts.reduce((n, p) => n + p.geometry.attributes.position.count / 3, 0) };
 }
 
 // Rozdělí neindexovanou geometrii podle krabic: [[skupina, geometrie], …] (trojúhelník patří krabici, ve které je jeho těžiště).
@@ -215,7 +237,7 @@ function fallback(id) {
 export function instantiate(id, ...args) {
   const def = MODELS[id];
   if (!def) throw new Error(`[models] neznámý model: ${id}`);
-  if (def.builder) {
+  if (def.builder) {                 // model v kódu, nebo postava z GLB (character: builder si data vezme přes characterData)
     const view = def.builder(...args);
     view.root.userData.model = id;
     return view;
@@ -224,17 +246,32 @@ export function instantiate(id, ...args) {
   if (!m) { console.warn(`[models] ${id} není načtený (preloadModels), dočasně krabice`); loadOne(id); m = fallback(id); }
   const root = new THREE.Group();
   root.userData.model = id;
-  const groups = {};
+  const groups = {}, nodes = {};
   for (const p of m.parts) {
     const mesh = new THREE.Mesh(p.geometry, p.material);
     mesh.userData.part = p.kind;
     if (p.group) { mesh.userData.group = p.group; (groups[p.group] ||= []).push(mesh); }
     if (p.kind === 'glow' || p.kind === 'clear') mesh.userData.noShadow = true;
-    root.add(mesh);
+    const nodeName = p.group?.startsWith('node:') ? p.group.slice(5) : null;
+    if (nodeName && m.pivots?.[nodeName]) {                    // pohyblivý uzel: otočný bod v poloze uzlu
+      mesh.position.copy(m.pivots[nodeName]).negate();
+      pivotOf(nodeName).add(mesh);
+    } else root.add(mesh);
   }
+  // pivoty bez vlastních dílů (kvůli rodičovství) a zavěšení pod rodiče: poloha = rozdíl poloh uzlů
+  function pivotOf(name) {
+    if (nodes[name]) return nodes[name];
+    const g = nodes[name] = new THREE.Group();
+    const par = m.pivotParents?.[name];
+    if (par && m.pivots[par]) { g.position.copy(m.pivots[name]).sub(m.pivots[par]); pivotOf(par).add(g); }
+    else { g.position.copy(m.pivots[name]); root.add(g); }
+    g.userData.rest = g.position.clone();
+    return g;
+  }
+  for (const name of Object.keys(m.pivots || {})) pivotOf(name);
   if (m.effects) root.add(m.effects.clone());
   return {
-    root, id, groups,
+    root, id, groups, nodes,
     anchors: m.anchors.map(a => a.clone()),
     points: m.points,
     size: m.size.clone(),
