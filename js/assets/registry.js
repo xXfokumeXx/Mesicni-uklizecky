@@ -14,6 +14,7 @@ import { mergeObject } from '../scene/mergeParts.js';
 import { buildToolModel, buildBootsModel, buildHammerModel } from '../scene/toolModels.js';
 import { buildBeltPiece, buildBeltNode } from '../scene/beltsView.js';
 import { buildAircraft } from '../scene/aircraft.js';
+import { buildGroundVehicle } from '../scene/groundVehicle.js';
 
 const M = 'assets/models/';
 
@@ -77,6 +78,22 @@ export const MODELS = {
     hideEffects: [[-3.15, 6.72, 3.3], [-3.15, 6.72, -3.3]],     // záře stavových světel kreslí hra podle stavu dronu
   },
   'drone-battery': { src: M + 'dron-baterie.glb', points: { hookA: [0, 0.84, 0.9], hookB: [0, 0.84, -0.9], frameA: [0, 0.12, 0.9], frameB: [0, 0.12, -0.9], thrusters: [[-1.75, 0.7, 1.75], [1.75, 0.7, 1.75], [-1.75, 0.7, -1.75], [1.75, 0.7, -1.75]], labelL: [-1.39, 1.24, 0], labelR: [1.39, 1.24, 0] } },
+  // pozemní vozidla (07, fáze A): GLB s pohyblivými koly a kartáči, ve hře přes builder vehicle-<typ> (scene/groundVehicle.js).
+  // Sedadla, ruce, světla, baterie, závěs… jsou prázdné uzly modelu (inst.empties), rozměry v extras.
+  'ground-push': { src: M + 'vozidlo-push.glb', nodes: ['kolo_1', 'kolo_2', 'kolo_3', 'kolo_4', 'kartac_1', 'kartac_2'] },
+  'ground-rideon': { src: M + 'vozidlo-rideon.glb', nodes: ['kolo_1', 'kolo_2', 'kolo_3', 'kolo_4', 'kartac_1', 'kartac_2'] },
+  'ground-lunar': { src: M + 'vozidlo-lunar.glb', nodes: ['kolo_1', 'kolo_2', 'kolo_3', 'kolo_4', 'kartac_1', 'kartac_2', 'kartac_3', 'kartac_4'] },
+  'ground-mega': { src: M + 'vozidlo-mega.glb', nodes: ['kolo_1', 'kolo_2', 'kolo_3', 'kolo_4', 'kolo_5', 'kolo_6', 'saci_hlava'] },
+  'ground-crew': { src: M + 'vozidlo-crew.glb', nodes: ['kolo_1', 'kolo_2', 'kolo_3', 'kolo_4'] },
+  // Prachocuc (07, fáze D): ramena = řetěz uzlů (rameno_X → _u1 → _u2 → _u3), každý díl má oporu konce (_opora)
+  'ground-prachocuc': { src: M + 'vozidlo-prachocuc.glb', nodes: ['kolo_1', 'kolo_2', 'kolo_3', 'kolo_4',
+    'rameno_L', 'rameno_L_u1', 'rameno_L_u2', 'rameno_L_u3', 'rameno_P', 'rameno_P_u1', 'rameno_P_u2', 'rameno_P_u3',
+    'rameno_L_opora', 'rameno_L_u1_opora', 'rameno_L_u2_opora', 'rameno_L_u3_opora', 'rameno_P_opora', 'rameno_P_u1_opora', 'rameno_P_u2_opora', 'rameno_P_u3_opora'] },
+  // přívěsy Prachocucu (07, fáze E): 4 velikosti podle vylepšení Přívěs; hladina = uzel, který se posouvá podle náplně
+  'trailer-1': { src: M + 'vozidlo-prachocuc-privez-1.glb', nodes: ['kolo_1', 'kolo_2', 'hladina'] },
+  'trailer-2': { src: M + 'vozidlo-prachocuc-privez-2.glb', nodes: ['kolo_1', 'kolo_2', 'kolo_3', 'kolo_4', 'hladina'] },
+  'trailer-3': { src: M + 'vozidlo-prachocuc-privez-3.glb', nodes: ['kolo_1', 'kolo_2', 'kolo_3', 'kolo_4', 'hladina'] },
+  'trailer-4': { src: M + 'vozidlo-prachocuc-privez-4.glb', nodes: ['kolo_1', 'kolo_2', 'kolo_3', 'kolo_4', 'hladina'] },
   'sinter': { src: M + 'budova-slinovna.glb', foundation: true },
   'battery-t1': { src: M + 'baterie-T1-bedna.glb', instanced: true },
   'battery-t2': { src: M + 'baterie-T2-skrin.glb', instanced: true },
@@ -93,7 +110,7 @@ export const MODELS = {
   'astronaut': { src: M + 'astronaut.glb', clips: 'assets/anim/astronaut-klipy.json', character: true, builder: look => createAstronaut(look) },
 
   // ---------- dnešní modely v kódu ----------
-  ...Object.fromEntries(VEHICLES.map(v => [`vehicle-${v.id}`, { builder: () => (v.kind === 'air' ? buildAircraft(v.id) : buildVehicle(v.id)) }])),   // letouny z GLB (3.1)
+  ...Object.fromEntries(VEHICLES.map(v => [`vehicle-${v.id}`, { builder: () => (v.kind === 'air' ? buildAircraft(v.id) : buildGroundVehicle(v.id)) }])),   // letouny i pozemní vozidla z GLB; bez GLB starý model v kódu
   'station': { builder: ghost => buildStation(ghost) },
   'robot': { builder: () => buildBot() },
   'drone': { builder: () => buildDrone() },
@@ -113,6 +130,7 @@ export const GLB_IDS = Object.keys(MODELS).filter(id => MODELS[id].src);
 
 // Sedadla vozidel pro astronauta (AST-08): body pro ruce [L, P] v souřadnicích vozidla (L = levá ruka postavy = +x),
 // ruce se k nim dotáhnou IK dvou kostí. Poloha pánve je view.seat z modelu vozidla (scene/vehicles.js).
+// Pozemní vozidla z GLB mají ruce v uzlech ruka_L / ruka_P (view.hands) – čísla tady platí jen pro starý model v kódu a letouny.
 // Ruční vozík: madlo. Cestující ruce nedotahují.
 export const SEATS = {
   push: { hands: [[0.3, 1.28, -0.92], [-0.3, 1.28, -0.92]] },

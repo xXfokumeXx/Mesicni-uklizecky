@@ -1,6 +1,6 @@
 // Jediný vstup k modelům pro zbytek hry (A-02, A-04):
 //   await preloadModels(ids)  – stáhne a připraví GLB (po jednom za snímek, ať se hra nezasekne)
-//   instantiate(id, …args)    – nová instance: { root, anchors, points, size, effects, … } (builder vrací svůj view objekt)
+//   instantiate(id, …args)    – nová instance: { root, anchors, points, nodes, empties, extras, size, effects, … } (builder vrací svůj view objekt)
 //   geometryFor(id)           – sloučené geometrie + materiály pro InstancedMesh (O-03)
 //   isReady(id)
 // Příprava GLB: materiály → MeshLambertMaterial (barvy převedené do sRGB, renderer hry je lineární),
@@ -141,7 +141,16 @@ function prepare(id, def, gltf) {
   // paprsky mířící k zemi prodloužit (model se ve hře zvedá výš, např. kotva vedení)
   if (def.stretchBeams) list = list.map(e => (e.typ === 'paprsek' && e.do && e.do[1] <= 0.01 ? { ...e, do: [e.do[0], e.do[1] - def.stretchBeams, e.do[2]], polomer_do: e.polomer_do * 1.6 } : e));
   const effects = buildEffects(list, def);
-  return { id, parts, anchors, points: def.points || {}, pivots, pivotParents, size, center, effects, triangles: parts.reduce((n, p) => n + p.geometry.attributes.position.count / 3, 0) };
+  // Prázdné uzly modelu (sedadlo, baterie, závěs… u vozidel z GLB): název → { p, q } v souřadnicích modelu.
+  // extras = userData kořenového uzlu (vozidla tam mají radius, poloměr kol…), jinak scény.
+  const empties = {};
+  scene.traverse(o => {
+    if (o === scene || o.isMesh || !o.name || o.children.length) return;
+    empties[o.name] = { p: new THREE.Vector3().setFromMatrixPosition(o.matrixWorld), q: o.getWorldQuaternion(new THREE.Quaternion()) };
+  });
+  const rootUd = scene.children.length === 1 ? scene.children[0].userData : null;
+  const extras = rootUd && Object.keys(rootUd).length ? rootUd : ud;
+  return { id, parts, anchors, points: def.points || {}, pivots, pivotParents, empties, extras, size, center, effects, triangles: parts.reduce((n, p) => n + p.geometry.attributes.position.count / 3, 0) };
 }
 
 // Rozdělí neindexovanou geometrii podle krabic: [[skupina, geometrie], …] (trojúhelník patří krabici, ve které je jeho těžiště).
@@ -274,6 +283,8 @@ export function instantiate(id, ...args) {
     root, id, groups, nodes,
     anchors: m.anchors.map(a => a.clone()),
     points: m.points,
+    empties: m.empties || {},          // sdílené, jen pro čtení
+    extras: m.extras || {},
     size: m.size.clone(),
     center: m.center.clone(),
     effects: root.children.find(c => c.userData.effects) || null,
