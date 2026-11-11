@@ -11,7 +11,6 @@ import { MOON } from './config.js';
 import { game } from './state.js';
 import { VEHICLE_BATTERY } from './catalog.js';
 import { probeDust } from './planet/dustmap.js';
-import { heightAt } from './planet/height.js';
 import { pushOut } from './structures.js';
 import { rockHit, ROCK_BREAKERS } from './rocks.js';
 import { cross, norm } from './planet/vec.js';
@@ -19,7 +18,6 @@ import { cross, norm } from './planet/vec.js';
 const R = MOON.radius;
 const TURN_MAX = 1.4;                          // rad/s – stejně jako A/D ve vozidle (main.js)
 const LOOK = 6;                                // m – kontrola překážek před přední hranou (L-40)
-const SLOPE_MAX = Math.tan(30 * Math.PI / 180);
 const LAT = 13;                                // vzorků v řadě (2 řady)
 const ROWS = [2, 4];                           // m před přední hranou
 const SPREAD = 0.8;                            // řada sahá ± 0,8 šířky sání (sání + 30 % do stran)
@@ -133,20 +131,15 @@ function guessSide() {
   return 0;
 }
 
-// ---------- překážky (L-40: do 6 m před vozidlem, svah nad 30°) ----------
+// ---------- překážky (L-40: do 6 m před vozidlem) ----------
+// 11. 11. (rozhodl hráč): svah už překážka není – autopilot projede jakýkoli terén; zastaví jen stavba, kámen a vozidlo
 
 let breaker = false;                                        // řízené vozidlo kameny rozbíjí (jede přes ně)
 function obstacle(p, f, r, front, w) {
-  let hPrev = heightAt(at(p, f, r, front, 0, _q));
   for (let d = 1; d <= LOOK; d++) {
     const q = at(p, f, r, front + d, 0, _q);
     if (pushOut(q, Math.max(0.6, w / 2))) return 'static';
     if (!breaker && rockHit(q, Math.max(0.6, w / 2)) >= 0) return 'static';   // kámen, který toto vozidlo nerozbije
-    if (d % 2 === 0) {
-      const h = heightAt(q);
-      if (Math.abs(h - hPrev) / 2 > SLOPE_MAX) return 'static';
-      hPrev = h;
-    }
   }
   for (const m of movers()) {
     const dx = (m.p[0] - p[0]) * f[0] + (m.p[1] - p[1]) * f[1] + (m.p[2] - p[2]) * f[2];

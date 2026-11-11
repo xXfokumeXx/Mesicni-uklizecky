@@ -36,6 +36,15 @@ export const BRIDGE = { lift: 1.0, flat: 1.5, ramp: 4, minEnd: 6, near: 1.1, max
 export const BRICK_PRICE = 80;
 // Cena cihly roste s burzovní cenou prachu ve Výkupu stejně jako prach (+6 % za úroveň), zaokrouhleno na celé $
 export const brickPrice = () => Math.round(BRICK_PRICE * (1 + MARKET.step * (game.s?.market | 0)));
+// Prodej cihel ze zásoby ve Výkupu (11. 11.): n kusů po brickPrice() (sám / hostitel; klient přes žádost 'bricksell')
+export function sellBricks(n) {
+  const s = game.s;
+  n = Math.floor(Number(n));
+  if (!(n >= 1) || n > (s.bricks | 0)) return false;
+  s.bricks = (s.bricks | 0) - n;
+  s.money += n * brickPrice();
+  return true;
+}
 // Rychlost pásů: základ 1,125 m/s (4. 11.: o 25 % pomalejší), výzkumy „Rychlejší pásy I / II“ každý +25 % základu
 export const beltSpeed = () => BELT.speed * (1 + 0.25 * ['beltSpeed1', 'beltSpeed2'].filter(id => game.s?.research?.done?.includes(id)).length);
 export const TICK = 0.1;                                 // s – pevný krok simulace (O-08)

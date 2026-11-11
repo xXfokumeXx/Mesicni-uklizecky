@@ -42,7 +42,7 @@ import { batteryCap } from './catalog.js';
 import { placeStation, moveStation, upgradeStation } from './robots.js';
 import { breakRockHost, applyRocks } from './rocks.js';
 import { myRank } from './ranks.js';
-import { depositToDepot, takeFromDepot, addBelt, removeBelt, cutBelt, encodeBelts, applyBelts, encodeLogistics, applyLogistics, upgradeSinter } from './logistics.js';
+import { depositToDepot, takeFromDepot, addBelt, removeBelt, cutBelt, encodeBelts, applyBelts, encodeLogistics, applyLogistics, upgradeSinter, sellBricks } from './logistics.js';
 import { buyDrone } from './drones.js';
 import { startResearch, unqueueResearch, encodeResearch, applyResearch, techById } from './research.js';
 import { ensureHotbar } from './hotbar.js';
@@ -759,6 +759,7 @@ function hostRequest(kind, a, cost, r) {
     case 'beltcut': return cutBelt(String(a[0]), a[1] | 0);              // [id pásu, úsek] – zbourat úsek od kloubu ke kloubu
     case 'sinterup': return upgradeSinter(String(a[0]));             // vylepšení slinovny Rychlejší lis
     case 'brickmode': s.brickMode = a[0] === 'store' ? 'store' : 'sell'; return true;
+    case 'bricksell': return sellBricks(a[0] | 0);                       // [počet] – prodej cihel ze zásoby (11. 11.)
     case 'drone': return buyDrone();
     case 'research': return startResearch(String(a[0]));
     case 'unqueue': return unqueueResearch(String(a[0]));

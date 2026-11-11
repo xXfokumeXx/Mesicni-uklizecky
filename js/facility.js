@@ -32,7 +32,7 @@ import { laac, freePad, padOffer, addPad, padRemoveInfo, removePad, LAAC } from 
 import { VEHICLE_BATTERY } from './catalog.js';      // DRONE z catalog.js = UFO dron (uklízeč)
 import { angleBetween } from './planet/vec.js';
 import { instantiate, isReady, preloadModels } from './assets/models.js';
-import { brickPrice, SINTER, beltAt, sinterTime, sinterUpPrice, upgradeSinter } from './logistics.js';
+import { brickPrice, sellBricks, SINTER, beltAt, sinterTime, sinterUpPrice, upgradeSinter } from './logistics.js';
 import {
   TECH, TECH_MODEL, BRANCHES, techById, techState, researchOffer, startResearch, unqueueResearch, researchProgress, researchCenter, isDone, RESEARCH_POWER,
 } from './research.js';
@@ -509,16 +509,24 @@ function marketTab() {
 }
 
 // Cihly z pásu ve Výkupu (L-24): prodávat po $80, nebo skladovat do zásoby (baterie T5, výzkumy, stavby)
+// 11. 11.: zásobu jde kdykoli prodat – zvolené množství (posuvník / číslo / rychlé volby), cena brickPrice() za kus
+const cihel = n => (n === 1 ? 'cihlu' : n >= 2 && n <= 4 ? 'cihly' : 'cihel');
 function bricksItem() {
   const store = game.s.brickMode === 'store';
+  const stock = game.s.bricks | 0, price = brickPrice();
   return {
     key: 'bricks', name: 'Cihly', chip: [store ? 'SKLADUJE' : 'PRODÁVÁ', store ? 'owned' : 'active'],
     thumb: () => modelThumb('sinter'),
     detail: {
       eyebrow: 'Výkup · cihly ze slinovny', title: store ? 'Cihly se skladují' : 'Cihly se prodávají',
-      desc: `Cihly, které do Výkupu přiveze pás ze slinovny, se buď prodají po $${brickPrice()} (cena roste s burzou jako prach), nebo přibývají do zásoby (číslo v HUD pod penězi). Zásoba je potřeba na baterii Jádro, solár Koruna a vyšší výzkumy.`,
+      desc: `Cihly, které do Výkupu přiveze pás ze slinovny, se buď prodají po $${brickPrice()} (cena roste s burzou jako prach), nebo přibývají do zásoby (číslo v HUD pod penězi). Zásoba je potřeba na baterii Jádro, solár Koruna a vyšší výzkumy – a kdykoli ji tu prodáš (zvolené množství).`,
       stats: [['Zásoba cihel', fmtInt(game.s.bricks | 0)], ['Cena cihly', money(brickPrice())], ['Prach z pásu', `$${dustPrice().toFixed(2)} / kg`]],
       action: { label: store ? `Přepnout na prodej ($${brickPrice()} za cihlu)` : 'Přepnout na skladování', run: () => purchase('brickmode', [store ? 'sell' : 'store'], 0, () => { game.s.brickMode = store ? 'sell' : 'store'; return true; }) },
+      qty: {
+        title: 'Prodat cihly ze zásoby', max: stock, empty: 'Zásoba je prázdná – cihly přibývají, když je Výkup skladuje.',
+        label: n => `Prodat ${fmtInt(n)} ${cihel(n)} · ${money(n * price)}`,
+        run: n => { n = Math.min(n, game.s.bricks | 0); return n >= 1 ? purchase('bricksell', [n], 0, () => sellBricks(n)) : false; },
+      },
     },
   };
 }
@@ -1036,6 +1044,7 @@ function render() {
 }
 
 let current = null;
+let qtyPick = 0;                                  // zvolené množství v detailu (prodej cihel); 0 = vše
 
 function detailHtml(it) {
   const d = it.detail;
@@ -1061,6 +1070,25 @@ function detailHtml(it) {
   const action2 = a2
     ? `<button class="detail__action detail__action--secondary${a2.danger ? ' detail__action--danger' : ''}${a2.armed ? ' detail__action--armed' : ''}" type="button" data-action2 ${busy || a2.disabled ? 'disabled' : ''}>${esc(a2.label)}</button>`
     : '';
+  // výběr množství (prodej cihel ze zásoby, 11. 11.): posuvník + číslo + rychlé volby, tlačítko s cenou
+  const q = d.qty;
+  let qty = '';
+  if (q && q.max < 1) qty = `<div class="detail__qty"><p class="detail__qty-title">${esc(q.title)}</p><p class="detail__note">${esc(q.empty)}</p></div>`;
+  else if (q) {
+    const n = qtyPick = Math.max(1, Math.min(q.max, qtyPick || q.max));
+    const presets = [[10, '10'], [100, '100'], ['half', 'Polovinu'], ['max', 'Vše']].filter(([v]) => typeof v !== 'number' || v < q.max)
+      .map(([v, t]) => `<button type="button" class="detail__qty-preset" data-qty-set="${v}">${t}</button>`).join('');
+    qty = `
+    <div class="detail__qty">
+      <p class="detail__qty-title">${esc(q.title)}</p>
+      <div class="detail__qty-row">
+        <input class="detail__qty-range" type="range" min="1" max="${q.max}" step="1" value="${n}" data-qty-in aria-label="Množství">
+        <input class="detail__qty-num" type="number" min="1" max="${q.max}" step="1" value="${n}" data-qty-in aria-label="Množství">
+      </div>
+      <div class="detail__qty-presets">${presets}</div>
+      <button class="detail__action detail__action--secondary" type="button" data-qty-go ${busy ? 'disabled' : ''}>${esc(q.label(n))}</button>
+    </div>`;
+  }
   const shared = isClient() && (d.action || d.upgrades) ? '<p class="detail__note">Peníze jsou společné pro celý svět – nákup schvaluje hostitel.</p>' : '';
   return `
     <div class="detail__head">
@@ -1073,6 +1101,7 @@ function detailHtml(it) {
     <p class="detail__desc">${esc(d.desc)}</p>
     <div class="detail__specs">${stats}</div>
     ${ups ? `<div class="detail__upgrades">${ups}</div>` : ''}
+    ${qty}
     ${action}
     ${action2}
     ${shared}`;
@@ -1103,11 +1132,16 @@ export function initFacility(renderThumb, h) {
   hooks = h;
   const root = $('facility');
   root.addEventListener('click', e => {
-    const t = e.target.closest('[data-tab],[data-sel],[data-up],[data-action],[data-action2],[data-color],[data-prop],[data-random],[data-skin]');
+    const t = e.target.closest('[data-tab],[data-sel],[data-up],[data-action],[data-action2],[data-color],[data-prop],[data-random],[data-skin],[data-qty-set],[data-qty-go]');
     if (!t) return;
     if (!t.hasAttribute('data-action2')) sellArmed = null;      // potvrzení prodeje platí jen pro další klik
-    if (t.dataset.tab) { view.tab = t.dataset.tab; view.sel = null; render(); return; }
-    if (t.dataset.sel) { view.sel = t.dataset.sel; render(); return; }
+    if (t.dataset.tab) { view.tab = t.dataset.tab; view.sel = null; qtyPick = 0; render(); return; }
+    if (t.dataset.sel) { view.sel = t.dataset.sel; qtyPick = 0; render(); return; }
+    if (t.dataset.qtySet && current?.detail.qty) {
+      const max = current.detail.qty.max, v = t.dataset.qtySet;
+      setQty(v === 'max' ? max : v === 'half' ? Math.ceil(max / 2) : Number(v));
+      return;
+    }
     if (t.dataset.skin) { setLook({ skin: t.dataset.skin, color: skinById(t.dataset.skin).color }); return; }   // 3.1: hotové oblečení
     if (t.dataset.color !== undefined) { setLook({ color: Number(t.dataset.color) }); return; }
     if (t.dataset.prop) { const p = propById(t.dataset.prop); setLook({ [p.slot]: p.id }); return; }
@@ -1125,7 +1159,10 @@ export function initFacility(renderThumb, h) {
     if (t.dataset.up !== undefined) finish(current.detail.upgrades[Number(t.dataset.up)].run());
     else if (t.hasAttribute('data-action')) finish(current.detail.action.run?.());
     else if (t.hasAttribute('data-action2')) finish(current.detail.action2.run?.());
+    else if (t.hasAttribute('data-qty-go') && current?.detail.qty) finish(current.detail.qty.run(qtyPick));   // zvolené množství zůstane (omezí se na novou zásobu)
   });
+  // posuvník / číslo množství: obě pole a popisek tlačítka bez překreslení (fokus zůstane)
+  root.addEventListener('input', e => { if (e.target.matches?.('[data-qty-in]')) setQty(Number(e.target.value), e.target); });
   root.addEventListener('change', e => {
     if (e.target.id !== 'wardrobe-name') return;
     const name = sanitizeName(e.target.value);
@@ -1146,6 +1183,16 @@ export function initFacility(renderThumb, h) {
 }
 
 let openedAt = 0;
+
+// Množství v detailu (prodej cihel): obě vstupní pole + popisek tlačítka, omezené na 1 … max
+function setQty(n, from = null) {
+  const q = current?.detail.qty;
+  if (!q || q.max < 1 || !Number.isFinite(n)) return;
+  qtyPick = Math.max(1, Math.min(q.max, Math.round(n)));
+  for (const el of $('facility-detail').querySelectorAll('[data-qty-in]')) if (el !== from) el.value = qtyPick;
+  const go = $('facility-detail').querySelector('[data-qty-go]');
+  if (go && !busy) go.textContent = q.label(qtyPick);
+}
 
 export const facilityOpen = () => !$('facility').hidden;
 

@@ -41,10 +41,11 @@ export const VEHICLES = [
   { id: 'kolibrik', name: 'Kolibřík', kind: 'air', width: 0, hopper: 0, speed: 30, power: 0, price: 30000, research: 'aviation',
     desc: 'Rychlý dvoumístný letoun na přesuny a průzkum. Skener prachu ukáže na mapě (M) 5 nejšpinavějších hexů do 300 m.', front: 0, camera: 20, seats: 1, scan: 300, sell: 0.6 },
   // fáze 8 (L-67): carry = převoz vozidel (rope = lano 12 m, arm = robotická ruka), loadSpeed = rychlost s nákladem
-  { id: 'mula', name: 'Mula', kind: 'air', width: 0, hopper: 0, speed: 14, loadSpeed: 9, power: 0, price: 70000, research: 'heavyLift', carry: 'rope', rope: 12,
-    desc: 'Těžký nosič s navijákem: na 12m laně unese jakékoli vozidlo, i Mega rover. Náklad se pomalu houpe – kyv tlumíš protipohybem.', front: 0, camera: 24, sell: 0.6 },
-  { id: 'kondor', name: 'Kondor', kind: 'air', width: 0, hopper: 2000, speed: 20, loadSpeed: 14, power: 0, price: 90000, research: 'roboticArm', carry: 'arm', armFits: ['push', 'rideon', 'lunar'],
-    desc: 'Nákladní letoun: robotická ruka unese ruční vozík, Zametač se sedačkou i Měsíční vůz, nákladový prostor 2 000 kg prachu se plní ze sila depa shora.', front: 0, camera: 22, sell: 0.6 },
+  // carryFits = co unese (11. 11., rozhodl hráč): Mula nejvýš Měsíční zametací vůz, Kondor všechna pozemní vozidla i Mega rover
+  { id: 'mula', name: 'Mula', kind: 'air', width: 0, hopper: 0, speed: 14, loadSpeed: 9, power: 0, price: 70000, research: 'heavyLift', carry: 'rope', rope: 12, carryFits: ['push', 'rideon', 'lunar', 'crew'],
+    desc: 'Těžký nosič s navijákem: na 12m laně unese vozidla až po Měsíční zametací vůz (Mega rover jen Kondor). Náklad se pomalu houpe – kyv tlumíš protipohybem.', front: 0, camera: 24, sell: 0.6 },
+  { id: 'kondor', name: 'Kondor', kind: 'air', width: 0, hopper: 2000, speed: 20, loadSpeed: 14, power: 0, price: 90000, research: 'roboticArm', carry: 'arm', carryFits: ['push', 'rideon', 'lunar', 'crew', 'mega'],
+    desc: 'Nákladní letoun: robotická ruka unese jakékoli pozemní vozidlo, i Mega rover, nákladový prostor 2 000 kg prachu se plní ze sila depa shora.', front: 0, camera: 22, sell: 0.6 },
 ];
 export const AIR_TYPES = VEHICLES.filter(v => v.kind === 'air').map(v => v.id);
 export const GROUND_TYPES = VEHICLES.filter(v => v.kind !== 'air').map(v => v.id);

@@ -55,10 +55,10 @@ function candidate(av, air) {
     if (d > P.reachH + 6) return;
     const top = groundAt(v.p) + hooks.roof(v.type);
     const above = air.r - R - top;
+    if (base.carryFits && !base.carryFits.includes(v.type)) { why ||= mode === 'rope' ? 'Mega rover je na lano moc těžký – unese ho jen Kondor' : 'Tohle vozidlo neunese'; return; }   // 11. 11.: hned nad ním, ať pilot nehledá výšku zbytečně
     if (d > P.reachH) { why ||= `Leť nad vozidlo (do ${P.reachH} m)`; return; }
     if (above < P.minUp) { why ||= `Vystoupej výš nad vozidlo (${P.minUp}–${P.maxUp} m)`; return; }
     if (above > P.maxUp) { why ||= `Klesni níž k vozidlu (${P.minUp}–${P.maxUp} m nad ním)`; return; }
-    if (mode === 'arm' && !base.armFits.includes(v.type)) { why ||= 'Na to potřebuješ Mulu'; return; }
     if (d < bestD) { bestD = d; best = i; }
   });
   return best >= 0 ? { i: best } : { reason: why };
