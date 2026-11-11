@@ -192,3 +192,63 @@
   background: var(--surface-raised);
   cursor: default;
 }
+
+/* Výběr množství (prodej cihel ze zásoby, 11. 11.): posuvník + číslo, rychlé volby, tlačítko s cenou */
+.detail__qty {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius);
+}
+
+.detail__qty-title {
+  margin: 0;
+  font: 600 var(--step--1) / 1.2 var(--font-display);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hivis);
+}
+
+.detail__qty-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail__qty-range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--orange);
+}
+
+.detail__qty-num {
+  width: 6.5em;
+  padding: 6px 8px;
+  font: 500 var(--step-0) var(--font-mono);
+  color: var(--regolith);
+  background: var(--surface-raised);
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+}
+
+.detail__qty-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.detail__qty-preset {
+  padding: 4px 10px;
+  font: 500 var(--step--1) var(--font-body);
+  color: var(--regolith);
+  background: var(--surface-raised);
+  border: 1px solid var(--panel-line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.detail__qty-preset:hover {
+  border-color: var(--hivis);
+}
