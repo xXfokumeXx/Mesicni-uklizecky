@@ -6,13 +6,13 @@ import { net } from '../net.js';
 import { remoteRagdoll, advanceRemote, correctRemote, ragdollPoints } from '../ragdoll.js';
 import { game } from '../state.js';
 import { instantiate } from '../assets/models.js';
-import { rankName } from '../ranks.js';
+import { rankName, rankBadge } from '../ranks.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
 const TAG_RANGE = 140;
-const FAR_LOD = 40;          // od 40 m zjednodušený astronaut (1 snímek bez kloubů)
-const FAR_HIDE = 120;        // od 120 m se astronaut nekreslí (jmenovka zůstává do TAG_RANGE)
+// Úroveň detailu astronauta (O-21, 3.1): do 25 m plná, do 60 m mixer 30×/s, do 120 m pevná póza bez stínu, dál nic.
+const LOD_HALF = 25, LOD_FROZEN = 60, FAR_HIDE = 120, IK_RANGE = 40;
 
 const _x = new THREE.Vector3(), _z = new THREE.Vector3(), _m = new THREE.Matrix4(), _up = new THREE.Vector3();
 const _v = new THREE.Vector3();
@@ -41,14 +41,18 @@ export function createRemotes(scene, camera, actors, layer) {
       v = { astro, tag, lookKey: '', wasAir: false, name: '', rank: null };
       views.set(r.peer, v);
     }
-    const key = `${r.look.color}|${r.look.top}|${r.look.face}`;
+    const key = `${r.look.skin}|${r.look.color}|${r.look.top}|${r.look.face}`;
     if (key !== v.lookKey) { v.lookKey = key; v.astro.setLook(r.look); }
     if (v.name !== r.name || v.rank !== r.rank) {           // jmenovka: hodnost (malým písmem) nad jménem
       v.name = r.name;
       v.rank = r.rank;
       const rk = rankName(r.rank);
       v.tag.replaceChildren();
-      if (rk) v.tag.append(Object.assign(document.createElement('small'), { className: 'nametag__rank', textContent: rk }));
+      if (rk) {                                              // odznak hodnosti před názvem (3.1)
+        const small = Object.assign(document.createElement('small'), { className: 'nametag__rank' });
+        small.append(Object.assign(document.createElement('img'), { className: 'rank-badge', src: rankBadge(r.rank), alt: '' }), document.createTextNode(rk));
+        v.tag.append(small);
+      }
       v.tag.append(document.createTextNode(r.name));
       v.tag.style.setProperty('--tag', '#' + SUIT_COLORS[r.look.color].hex.toString(16).padStart(6, '0'));
     }
@@ -80,7 +84,7 @@ export function createRemotes(scene, camera, actors, layer) {
       if (v.rag) {
         a.applyRagdoll(ragdollPoints(v.rag));
       } else {
-        if (a.ragdolling) a.endRagdoll();
+        if (a.ragdolling) a.endRagdoll();                    // vstávání klipem (směr z presence f)
         const seat = r.d >= 0 ? actors.seatTransform(r.d, a.root)
           : r.rd && actors.passengerTransform(r.rd[0], r.rd[1], a.root) ? 'seat' : false;
         if (seat === 'seat') seated = true;
@@ -98,10 +102,18 @@ export function createRemotes(scene, camera, actors, layer) {
         v.lodT = 0.25;
         const dist = a.root.position.distanceTo(camera.position);
         const posed = seated || pushing || !!v.rag;
-        const level = dist >= FAR_HIDE ? 2 : dist >= FAR_LOD && !posed ? 1 : 0;
-        if (level !== a.detail) a.setDetail(level);
+        let level = dist >= FAR_HIDE ? 3 : dist >= LOD_FROZEN ? 2 : dist >= LOD_HALF ? 1 : 0;
+        if (posed && level === 2) level = 1;               // sezení, vozík a ragdoll potřebují pózu
+        if (level !== a.detail) {
+          a.setDetail(level);
+          a.mesh?.traverse?.(o => { if (o.isMesh) o.castShadow = level < 2; });
+        }
+        v.ikOk = dist < IK_RANGE;
       }
-      a.root.visible = !hidden && a.detail !== 2;
+      // sedí ve vozidle, které je za hranicí kreslení → ani on (jinak by visel ve vzduchu bez letounu, 11. 11.)
+      const inHidden = seated && !actors.vehicleShown(r.d >= 0 ? r.d : r.rd[0]);
+      a.root.visible = !hidden && a.detail !== 3 && !inHidden;
+      a.setHands?.(v.ikOk && (seated || pushing) && r.d >= 0 ? actors.handsFor(r.d) : null);
       const air = !!r.m[4];
       a.update(dt, time, {
         moving: !seated && r.m[0] > 2 && !air, speed: r.m[0] / 10, swept: !!r.m[3] && r.d < 0,
@@ -109,6 +121,7 @@ export function createRemotes(scene, camera, actors, layer) {
         landed: v.wasAir && !air, seated, pushing,
       });
       v.wasAir = air;
+      a.setTool?.(r.tool);                                     // nástroj v ruce podle presence tl (3.1, AST-06)
       a.setToolSize(seated ? 0 : r.tw / 200);
       a.setJetpack(r.jp);
 

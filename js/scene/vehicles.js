@@ -3,6 +3,8 @@
 // Vrací { root, brushes[], wheels[], seat: Vector3 | null, pusher: boolean, radius, passengers?: Vector3[],
 //   headlight?: Vector3 (střed světlometů, odtud svítí reflektor – scene/lights.js) }.
 
+import { mergeJoints } from './mergeParts.js';
+
 const THREE = window.THREE;
 let M = null;
 
@@ -190,6 +192,9 @@ const BUILDERS = { push: pushSweeper, rideon: rideOn, lunar: lunarSweeper, mega:
 
 export function buildVehicle(type) {
   const view = BUILDERS[type]();
+  // 11. 11.: neprůhledné díly karoserie → 1 vykreslení, každé kolo a kartáč → 1 (točí se zvlášť); sklo a světla zůstávají
+  // (Lunar 51 → 14, Rideon 35 → 9 vykreslení, stejný vzhled – barvy ve vrcholech, mergeParts.js)
+  mergeJoints([view.root, ...view.wheels, ...view.brushes]);
   view.root.userData.dbg = 'vehicle';            // skupina pro ladicí výpis F3 (debug.js)
   return view;
 }

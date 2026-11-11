@@ -9,6 +9,9 @@ import { instantiate, isReady, preloadModels, groupParts, merge } from '../asset
 import { createEnergyView } from './energyView.js';
 import { createSwapperCrane } from './swapperCrane.js';
 import { createResearchHolo } from './researchHolo.js';
+import { attachDronport, createDronesView, DRONPORT_MODELS } from './dronesView.js';
+import { attachLaac, LAAC_MODELS, partMatrix } from './laacView.js';
+import { ghostParts } from '../laac.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
@@ -78,7 +81,7 @@ export function createStructures(scene, { prepare, onDust }) {
   // skládá jen při změně (porovnávají se čísla), ne každý snímek pro každou stavbu.
   const keyCache = new WeakMap();
   const viewKey = b => {
-    const slots = b.type === 'charger' ? b.data?.slots || 1 : 0, tv = terrainVersion();
+    const slots = b.type === 'charger' ? b.data?.slots || 1 : b.type === 'swapper' ? 100 + (b.data?.dp?.n | 0) : b.type === 'laac' ? 200 + (b.data?.pads || []).reduce((m, x) => m | (1 << x), 0) : 0, tv = terrainVersion();   // LAAC: plošiny   // výměník: dronport (3.1)
     const c = keyCache.get(b);
     if (c && c.p0 === b.p[0] && c.p1 === b.p[1] && c.p2 === b.p[2] && c.yaw === b.yaw && c.slots === slots && c.tv === tv) return c.key;
     const key = `${b.p.join(',')}|${b.yaw}|${slots || ''}|${tv}`;
@@ -89,7 +92,7 @@ export function createStructures(scene, { prepare, onDust }) {
 
   function makeView(b) {
     const def = STRUCTURES[b.type];
-    const need = [def.model, def.ground, def.plugs && 'power-plug', ...(b.type === 'swapper' ? ['swapper-bridge', 'swapper-hook', 'swap-battery-full', 'swap-battery-empty'] : [])].filter(Boolean);
+    const need = [def.model, def.ground, def.plugs && 'power-plug', ...(b.type === 'swapper' ? ['swapper-bridge', 'swapper-hook', 'swap-battery-full', 'swap-battery-empty', ...(b.data?.dp?.n > 0 ? DRONPORT_MODELS : [])] : []), ...(b.type === 'laac' ? LAAC_MODELS : [])].filter(Boolean);
     if (!need.every(isReady)) {
       for (const m of need) if (!isReady(m) && !loading.has(m)) { loading.add(m); preloadModels([m]).then(() => loading.delete(m)); }
       return null;
@@ -103,6 +106,8 @@ export function createStructures(scene, { prepare, onDust }) {
       // opakovaná stavba (O-03): model kreslí společné InstancedMesh podle polohy root / bob (viz updatePools)
       pool(def.model);
       if (def.ground) pool(def.ground);
+    } else if (b.type === 'laac') {
+      // LAAC (3.1): věž v měřítku hexu a plošiny přidá attachLaac až po posazení (níže)
     } else {
       const inst = instantiate(def.model);
       (bob || root).add(inst.root);
@@ -119,9 +124,11 @@ export function createStructures(scene, { prepare, onDust }) {
     const top = place(root, b);
     const legs = buildLegs(b, top);
     if (legs) root.add(legs);
+    const dport = b.type === 'swapper' ? attachDronport(root, b, top) : null;   // dronport u výměníku (3.1, D-14)
+    const laacView = b.type === 'laac' ? attachLaac(root, b) : null;           // věž a plošiny LAAC (3.1, D-16)
     prepare(root);
     scene.add(root);
-    return { root, b, bob, crane, phase: Math.random() * 6, key: viewKey(b), born: first ? -1 : performance.now(), dying: 0, shadowOn: true };
+    return { root, b, bob, crane: crane || laacView, dport, phase: Math.random() * 6, key: viewKey(b), born: first ? -1 : performance.now(), dying: 0, shadowOn: true };
   }
 
   // ---------- instancované stavby (O-03) ----------
@@ -198,10 +205,11 @@ export function createStructures(scene, { prepare, onDust }) {
   }
 
   const energy = createEnergyView(scene, views);   // kabely, kontrolky, nabíjecí kabely (energyView.js)
+  const dronesV = createDronesView(scene, views, prepare);   // drony dronportů (3.1)
 
   // ---------- hologram a zvýraznění ----------
   const ghostMat = new THREE.MeshBasicMaterial({ color: 0x7fd38a, transparent: true, opacity: 0.38, depthWrite: false });
-  let ghost = null, ghostType = null;
+  let ghost = null, ghostType = null, padGhost = null;
   // bez testu hloubky: obal je vidět celý, i kde by ho jinak zakryl model stavby (4. 11.: cíl bourání byl skoro neviditelný)
   const redMat = new THREE.MeshBasicMaterial({ color: 0xff3b2a, transparent: true, opacity: 0.45, depthWrite: false, depthTest: false });
   let redGhost = null, redFor = null;
@@ -254,8 +262,20 @@ export function createStructures(scene, { prepare, onDust }) {
     }
     if (ghost) ghost.visible = !!showGhost;
     outline.visible = !!showGhost;
+    // LAAC (3.1): věž v měřítku hexu + hologram první plošiny na sousedním hexu
+    const lay = showGhost && build.type === 'laac' ? build.layout : null;
+    if (lay && !padGhost && isReady('laac-pad')) {
+      padGhost = instantiate('laac-pad').root;
+      padGhost.traverse(o => { if (o.isMesh) { o.material = ghostMat; o.castShadow = false; o.receiveShadow = false; o.renderOrder = 4; } });
+      if (padGhost.children.find(c => c.userData.effects)) padGhost.remove(padGhost.children.find(c => c.userData.effects));
+      scene.add(padGhost);
+    }
+    else if (lay && !padGhost) preloadModels(['laac-pad']);
+    if (padGhost) padGhost.visible = !!(lay && ghost);
+    if (lay && padGhost) partMatrix(ghostParts(lay)[1], _m).decompose(padGhost.position, padGhost.quaternion, padGhost.scale);
     if (showGhost && ghost) {
       place(ghost, { type: build.type, p: build.p, yaw: build.yaw });
+      ghost.scale.setScalar(lay ? lay.scale : 1);
       const col = build.valid ? 0x7fd38a : 0xe0654c;
       ghostMat.color.setHex(build.valid ? 0x5fb8d9 : 0xe0654c);
       outline.material.color.setHex(col);
@@ -321,10 +341,12 @@ export function createStructures(scene, { prepare, onDust }) {
         v.root.scale.setScalar(Math.max(0.001, ease(t)));
         if (t >= 1) { v.born = -1; v.root.scale.setScalar(1); }
       }
-      v.root.visible = v.root.position.distanceTo(focus) < viewRange + 40;
+      // LAAC: vrchol 38m věže je vidět zpoza obzoru až ~230 m → kreslí se dál (~20 vykreslení, 11. 11.)
+      v.root.visible = v.root.position.distanceTo(focus) < viewRange + (v.b.type === 'laac' ? 150 : 40);
       if (v.crane && v.root.visible) {                                         // animace jen do 60 m (A-06) / hologram do 120 m
         const d = v.root.position.distanceTo(focus);
         if (v.b.type === 'research') v.crane.update(now, d < 120);
+        else if (v.b.type === 'laac') v.crane.update(v.b, d < 150);
         else v.crane.update(v.b, d < 60);
       }
     }
@@ -342,6 +364,7 @@ export function createStructures(scene, { prepare, onDust }) {
     updatePools();
     updateBuildVisuals();
     energy.update(dt);
+    dronesV.update(dt, focus);
   }
 
   // Stavba pod kurzorem (bourání): paprsek proti modelům – funguje i nad obzorem malého Měsíce. id nebo null.

@@ -25,7 +25,7 @@ export function createAvatarShots() {
   const box = new THREE.Box3(), size = new THREE.Vector3(), center = new THREE.Vector3();
 
   function shot(look, { wave = false } = {}) {
-    const k = `${look.color}|${look.top}|${look.face}|${wave ? 1 : 0}`;
+    const k = `${look.skin}|${look.color}|${look.top}|${look.face}|${wave ? 1 : 0}`;
     if (cache.has(k)) return cache.get(k);
     const a = instantiate('astronaut', look);
     a.setToolSize?.(0);                                    // v lobby bez nástroje v ruce (skryje ho až update)

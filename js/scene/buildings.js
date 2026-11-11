@@ -175,6 +175,14 @@ export function buildSilo(ghostMaterial = null) {
     box(1.0, 0.9, 1.4, mat(m.dark), 0, 0.7, 1.75),               // násypka
   );
   for (const [x, z] of [[-1.3, -1.3], [1.3, -1.3], [-1.3, 1.3], [1.3, 1.3]]) root.add(box(0.18, 1.0, 0.18, mat(m.dark), x, 0.5, z));
+  // výsypka (3.1, D-15): šikmé rameno ze zadní strany sila (−z) a svislá výsypka nad zónou 5 × 5 m (spodní okraj 5,5 m)
+  const arm = box(0.7, 0.5, 6.4, mat(m.wall), 0, 6.45, -4.2);
+  arm.rotation.x = -0.09;
+  const chute = box(1.1, 1.0, 1.1, mat(m.dark), 0, 6.05, -7.5);
+  const lip = box(1.2, 0.12, 1.2, mat(m.hivis), 0, 5.6, -7.5);
+  const brace = box(0.18, 0.18, 2.6, mat(m.dark), 0, 5.4, -2.3);
+  brace.rotation.x = 0.55;
+  root.add(arm, chute, lip, brace);
   if (!ghostMaterial) {
     const zoneGeo = new THREE.RingGeometry(4.35, 4.5, 48);
     zoneGeo.rotateX(-Math.PI / 2);

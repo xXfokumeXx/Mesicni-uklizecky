@@ -1,7 +1,8 @@
 // Šatna: živý náhled astronauta (vlastní malý renderer, běží jen když je šatna otevřená)
 // a náhledové obrázky rekvizit na helmě.
 import { instantiate } from '../assets/models.js';
-import { DEFAULT_LOOK } from '../catalog.js';
+import { DEFAULT_LOOK, skinById } from '../catalog.js';
+import { createHeadModel } from './astronaut.js';
 
 const THREE = window.THREE;
 
@@ -53,6 +54,7 @@ export function createWardrobe(thumb) {
     mount(container, look) {
       if (!renderer) setup();
       astro.setLook(look);
+      astro.waveOnce?.();                                  // 3.1: po změně vzhledu zamává (AST-10)
       container.append(canvas);
       if (!mounted) { mounted = true; raf = requestAnimationFrame(loop); }
     },
@@ -62,15 +64,24 @@ export function createWardrobe(thumb) {
       cancelAnimationFrame(raf);
       canvas.remove();
     },
-    // Náhled hlavy s rekvizitou (pro karty v šatně).
+    // Náhled hlavy s rekvizitou (pro karty v šatně) – hlava modelu astronauta (3.1); bez modelu prázdný obrázek.
     headThumb(propId) {
       return thumb(`prop-${propId}`, () => {
-        const a = instantiate('astronaut', { ...DEFAULT_LOOK, top: propId.match(/^(none|noface|moustache|glasses|whiskers)$/) ? 'none' : propId, face: /^(moustache|glasses|whiskers)$/.test(propId) ? propId : 'noface' });
-        const head = a.head;
-        head.parent.remove(head);
-        head.position.set(0, 0, 0);
-        head.rotation.y = 0.35;
-        return head;
+        const look = { ...DEFAULT_LOOK, top: propId.match(/^(none|noface|moustache|glasses|whiskers)$/) ? 'none' : propId, face: /^(moustache|glasses|whiskers)$/.test(propId) ? propId : 'noface' };
+        const model = createHeadModel(look);
+        if (model) model.rotation.y = 0.35;
+        return model || new THREE.Group();
+      });
+    },
+    // Náhled hotového oblečení (karta v šatně, 3.1 AST-04): celá postava bez rekvizit, barva oblečení.
+    skinThumb(skinId) {
+      return thumb(`skin-${skinId}`, () => {
+        const a = instantiate('astronaut', { skin: skinId, color: skinById(skinId).color, top: 'none', face: 'noface' });
+        a.setToolSize?.(0);
+        a.update?.(1 / 60, 0, { moving: false, speed: 0, swept: false, airborne: false, alt: 0, vel: 0, landed: false, seated: false, pushing: false });
+        a.blob.visible = false;
+        a.root.rotation.y = 0.5;
+        return a.root;
       });
     },
   };

@@ -1,10 +1,17 @@
 // Všechno, co se ve scéně hýbe nebo patří k základně: astronaut, vozidla, budovy,
 // stanice s roboty, UFO drony, hologram při umisťování stanice, kruh nástroje a obrys hexu.
 import { MOON, BUYBACK } from '../config.js';
-import { DRONE, batteryCap } from '../catalog.js';
+import { DRONE, batteryCap, vehicleById } from '../catalog.js';
 import { game } from '../state.js';
 import { activeEquipment } from '../equipment.js';
-import { activeBody, vehicleBody, pusherOffset, ragdollState, riding, toolPoint, walkFacing } from '../player.js';
+import { activeBody, vehicleBody, pusherOffset, ragdollState, riding, toolPoint, walkFacing, playerFx } from '../player.js';
+import { net } from '../net.js';
+import { dumpZoneAt } from '../logistics.js';
+import { createDepotDump } from './depotDump.js';
+import { createRopeView, sagCurve } from './ropeView.js';
+import { ropePoints, armPose, carrying } from '../carry.js';
+import { remoteCarries } from '../net.js';
+import { roofOf } from './swapperCrane.js';
 import { placing } from '../interact.js';
 import { carriedStation } from '../hotbar.js';
 import { hexArea } from '../robots.js';
@@ -13,6 +20,7 @@ import { grid, dirToCell } from '../planet/hexgrid.js';
 import { norm, cross, anyTangent, madd, angleBetween } from '../planet/vec.js';
 import { heightAt } from '../planet/height.js';
 import { instantiate } from '../assets/models.js';
+import { SEATS } from '../assets/registry.js';
 import { createBeltsView } from './beltsView.js';
 import { createHoloGlobe } from './hologram.js';
 import { createRocketSite } from './rocket.js';
@@ -38,6 +46,7 @@ function orient(obj, up, forward) {
 }
 
 // Bod na povrchu nad směrem d (pole [x,y,z]).
+const _look = new THREE.Vector3();
 function surface(d, out, lift = 0) {
   return out.set(d[0], d[1], d[2]).multiplyScalar(R + heightAt(d) + lift);
 }
@@ -122,7 +131,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       const m = o.material;
       if (m && (m.transparent || m.isMeshBasicMaterial)) return;
       o.castShadow = true;
-      o.receiveShadow = true;
+      o.receiveShadow = !o.userData.noReceive;          // astronaut 3.1 (SkinnedMesh) by stínil sám sebe
     });
     return root;
   }
@@ -242,6 +251,8 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
 
   // ---------- vozidla ----------
   const vehicleViews = [];
+  const toolGround = new THREE.Vector3(), toolNormal = new THREE.Vector3();   // hlava nástroje na terénu (11. 11.)
+  const ropeView = createRopeView(scene);                 // lano Muly (3.1)
 
   // Ikonka baterie nad vozidlem, ve kterém nesedím (do 45 m): 0–5 dílků, barva podle nabití, blesk při nabíjení.
   const battTex = new Map();
@@ -316,22 +327,47 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       const p = remote ? remote.p : b.p, r = remote ? remote.r : b.r;
       view.root.position.set(p[0] * r, p[1] * r, p[2] * r);
       const dist = view.root.position.distanceTo(astro.root.position);
-      view.root.visible = dist < viewRange + 20;
+      // letoun ve vzduchu je vidět z dálky (nad kopci, na obloze) – jinak by v ~100 m zmizel (11. 11.)
+      const aloft = view.kind === 'air' && dist >= viewRange + 20 && r - R - heightAt(p) > 2;
+      view.root.visible = dist < (aloft ? viewRange + 160 : viewRange + 20);
       view.remoteDriven = !!remote;
       updateBatteryIcon(view, v, i, dist);
       if (!view.root.visible) return;
       // naklonění podle svahu (ve vzduchu drží poslední sklon)
-      if (remote || b.grounded) terrainNormal(p, Math.max(0.8, view.radius * 0.7), view.normal);
+      if (view.kind === 'air') view.normal.set(...p);                         // letoun drží vodorovně (3.1)
+      else if (v.carriedUp) view.normal.set(...v.carriedUp);                  // nese ho můj letoun (lano / ruka)
+      else if (remote?.up) view.normal.set(...remote.up);                     // nese ho letoun jiného hráče
+      else if (remote || b.grounded) terrainNormal(p, Math.max(0.8, view.radius * 0.7), view.normal);
       else if (view.normal.lengthSq() === 0) view.normal.set(...p);
       orient(view.root, view.normal, _f.set(...(remote ? remote.f : v.f)));
       // kola a kartáče
       const speed = remote ? remote.speed : Math.hypot(...b.v);
+      if (view.air) {                                                         // letoun: trysky, skener, hladina, číslo plošiny
+        const alt = r - R - heightAt(p);
+        const base = vehicleById(v.type);
+        const rc = remote ? remoteCarries().find(c => c.a === i) : null;
+        view.air(dt, { flying: alt > 0.25, climb: remote ? 0 : (b.vr || 0), speed, scanning: !!base?.scan && alt > 0.25, fill: base?.hopper ? (v.load || 0) / base.hopper : 0, number: v.spot || 1,
+          arm: rc ? (rc.mode === 'arm' ? rc.armK : 0) : armPose(v), hatch: !remote && game.s.driving === i && playerFx.silo?.state === 'load', winch: !remote && carrying()?.a === v && carrying()?.phase === 'attach' });
+      }
       const driving = game.s.driving === i || !!remote;
       view.spin += speed * dt / view.wheelR;
       for (const w of view.wheels) w.rotation.x = view.spin;
       const sweeping = driving && (remote ? speed > 0.2 : b.grounded);
       for (const br of view.brushes) br.rotation.y += (sweeping ? 9 : 0) * dt * (br.position.x < 0 ? 1 : -1);
     });
+    {                                                                       // lana (moje simulace + prověšená lana ostatních)
+      const ropes = [];
+      const mine = ropePoints();
+      if (mine) ropes.push({ pts: mine, taut: true });
+      for (const c of remoteCarries()) {
+        if (c.mode !== 'rope') continue;
+        const vv = list[c.i];
+        const top = c.p.map((x, k) => x * c.r + c.up[k] * roofOf(vv?.type || 'rideon'));
+        const d = Math.hypot(top[0] - c.hook[0], top[1] - c.hook[1], top[2] - c.hook[2]);
+        ropes.push({ pts: sagCurve(c.hook, top, Math.max(0, 12 - d) * 0.5), taut: d > 11.5 });
+      }
+      ropeView.update(ropes);
+    }
   }
 
   // ---------- stanice a roboti ----------
@@ -407,6 +443,19 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
 
   // ---------- pásy, náklad a zásuvky (3.0, logistics.js) ----------
   const belts = createBeltsView(scene);
+  const dumps = createDepotDump(scene);                   // výsypky dep (3.1, D-15)
+  const dumping = new Set();
+  function updateDumps(dt, time) {
+    dumping.clear();
+    if (playerFx.dump?.state === 'dump') dumping.add(playerFx.dump.id);
+    for (const r of net.remotes.values()) {               // vozidla ostatních hráčů stojící pod výsypkou
+      if (!(r.d >= 0) || Math.abs(r.vs || 0) > 0.5) continue;
+      const pos = vehicleViews[r.d]?.root.position;
+      const b = pos ? dumpZoneAt(_a.copy(pos).normalize().toArray()) : null;
+      if (b) dumping.add(b.id);
+    }
+    dumps.update(dt, time, opts.camera?.position || astro.root.position, dumping);
+  }
 
   function updatePlacement() {
     ghost.root.visible = placing.active;
@@ -423,7 +472,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   }
 
   // ---------- snímek ----------
-  let lastTool = null;
+  let lastTool = null, lastLoad = 0;
 
   function update(dt, time, fx, viewRange) {
     const s = game.s;
@@ -431,6 +480,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     syncStations(dt, viewRange);
     syncDrones(dt, time, viewRange);
     belts.update(time, viewRange, astro.root.position);
+    updateDumps(dt, time);
     updatePlacement();
     structures.update(dt, viewRange, focusPoint());
     holo.root.visible = views.depot.root.position.distanceTo(astro.root.position) < 90;
@@ -470,19 +520,28 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
       astro.root.position.set(b.p[0] * b.r, b.p[1] * b.r, b.p[2] * b.r);
       _up.set(...s.p);
       const target = fx.moving && fx.face ? _a.set(...fx.face) : _a.set(...walkFacing());   // stojí: kam naposled šel (i myší)
-      face.lerp(target, 1 - Math.exp(-dt * (fx.airborne ? 2 : 10)));
+      if (!astro.gettingUp) face.lerp(target, 1 - Math.exp(-dt * (fx.airborne ? 2 : 10)));   // při vstávání se neotáčí
       face.addScaledVector(_up, -face.dot(_up));
       if (face.lengthSq() < 1e-6) face.set(...s.f);
       face.normalize();
       orient(astro.root, _up, face);
     }
 
-    if (!rag && astro.ragdolling) astro.endRagdoll();
+    if (!rag && astro.ragdolling) { astro.endRagdoll(); face.set(...walkFacing()); }   // vstávání: čelem, jak určil player.js
     const sits = seated || !!ride;
+    astro.setHands?.(!ride && (seated || pushing) ? handsFor(s.driving) : null);
+    // vysypání zásobníku (Výkup, depo): náplň nástroje spadla z plné na nulu pěšky
+    const loadNow = !driving && eq.item ? eq.item.load || 0 : 0;
+    if (lastLoad > 0.5 && loadNow < 0.05 && !driving && !rag) astro.dump?.();
+    lastLoad = loadNow;
+    // hlava nástroje leží na terénu (11. 11.): bod na zemi pod hlavou a normála svahu tam (svět)
+    const tg = !driving && !rag ? toolPoint() : null;
+    if (tg) { surface(tg, toolGround, 0.03); terrainNormal(tg, 0.6, toolNormal); }
     astro.update(dt, time, {
       moving: fx.moving && !sits, speed: fx.speed, swept: fx.swept && !driving,
       airborne: fx.airborne && !driving, alt: driving ? 0 : fx.alt, vel: fx.vr,
       landed: fx.landedAnim && !driving, seated: sits, pushing,
+      toolGround: tg ? toolGround : null, toolNormal: tg ? toolNormal : null,
     });
     fx.landedAnim = false;
     astro.blob.visible = !shadowsOn && !sits && !rag;
@@ -490,7 +549,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
 
     const tp = toolPoint();                          // poloha nástroje v tomto snímku (zametání samo je 10× za s)
     lastTool = tp;
-    if (!driving) astro.setToolSize(ride ? 0 : eq.stats.width / 2);
+    if (!driving) { astro.setTool?.(eq.base?.id); astro.setToolSize(ride ? 0 : eq.stats.width / 2); }
     astro.setHammer(hammerActive() && !ride && !rag);
     if (build.hits !== lastHits) { lastHits = build.hits; astro.hammerSwing(); }
     updateRing(tp, eq.stats.width / 2);
@@ -500,6 +559,15 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   function focusPoint() {
     const i = game.s.driving >= 0 ? game.s.driving : riding()?.i ?? -1;
     return i >= 0 ? vehicleViews[i]?.root.position || astro.root.position : astro.root.position;
+  }
+
+  // Body pro ruce na volantu / madle vozidla i ve světě [L, P] (AST-08, registr SEATS), nebo null.
+  function handsFor(i) {
+    const view = vehicleViews[i];
+    const seat = SEATS[game.s.vehicles[i]?.type];
+    if (!view || !seat) return null;
+    view.root.updateMatrixWorld();
+    return seat.hands.map(h => view.root.localToWorld(new THREE.Vector3(h[0], h[1], h[2])));
   }
 
   // Sedadlo vozidla i ve světě (pro astronauty jiných hráčů, kteří řídí).
@@ -535,7 +603,11 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
   return {
     update,
     // ukazatel kliknutí (D-09): target = cíl myší, vehicle = { radius, nose } při jízdě
-    updateMarker: (dt, target, vehicle, miss, clicks) => marker.update(dt, target, vehicle, miss, clicks),
+    updateMarker: (dt, target, vehicle, miss, clicks) => {
+      astro.setLookAt?.(target && !vehicle ? surface(target, _look) : null);   // hlava se dívá k cíli kliknutí (AST-07)
+      return marker.update(dt, target, vehicle, miss, clicks);
+    },
+    handsFor,
     preloadStructures: () => structures.preload(),
     pickStructure: (x, y, camera, canvas) => structures.pick(x, y, camera, canvas),
     pickCable: (x, y, camera, canvas) => structures.pickCable(x, y, camera, canvas),
@@ -544,6 +616,7 @@ export function createActors(scene, shadowsOn, look, opts = {}) {
     passengerTransform,
     vehicleRadius: i => vehicleViews[i]?.radius ?? 1,
     vehicleWorld: i => vehicleViews[i]?.root.position,
+    vehicleShown: i => !!vehicleViews[i]?.root.visible,     // řidič / cestující skrytého vozidla se nekreslí (remotes.js)
     ragdollPose: astro.ragdollPose,
     setLook: astro.setLook,
     // kam míří kamera: na vozidlo, nebo na astronauta

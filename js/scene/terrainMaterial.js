@@ -43,6 +43,9 @@ const fragmentShader = /* glsl */`
   #include <packing>
   #define SPOTS ${SPOTS}
   uniform sampler2D dustMap;
+  uniform sampler2D sunWinMap;      // okna osvětlení v atlasu (3.1, O-28): RG = východ, západ; 9 = ještě není
+  uniform float useSunMap;
+  uniform float sunAngle;
   uniform sampler2D sandMap;
   uniform float sandScale;
   uniform float sandStrength;
@@ -119,8 +122,19 @@ const fragmentShader = /* glsl */`
     float grain = sand.r - 0.5, ripple = sand.g - 0.5;
     albedo *= 1.0 + sandStrength * (grain * 0.2 + ripple * 0.26 * (0.3 + 0.7 * dirt));
 
+    // okno osvětlení: z textury v každém pixelu (ostrá hrana ~0,66 m, O-28), jinak hrubé z vrcholů
+    float sunVis = vSunVis;
+    if (useSunMap > 0.5) {
+      vec2 w = texture2D(sunWinMap, vUv).rg;
+      if (w.x < 8.0 && w.y < 8.0) {
+        float noon = atan(vPosW.x, vPosW.z);
+        float rel = mod(sunAngle - noon + 3.14159265, 6.28318531) - 3.14159265;
+        const float soft = 0.004;   // okraj ~0,2°
+        sunVis = smoothstep(w.x - soft, w.x + soft, rel) * (1.0 - smoothstep(w.y - soft, w.y + soft, rel));
+      }
+    }
     float sunNL = max(dot(n, sunDir), 0.0);
-    float sun = sunNL > 0.0 && vSunVis > 0.0 ? sunNL * vSunVis * objectShadow() : 0.0;
+    float sun = sunNL > 0.0 && sunVis > 0.0 ? sunNL * sunVis * objectShadow() : 0.0;
     vec3 light = ambient + earthColor * max(dot(n, earthDir), 0.0) + sunColor * sun;
 
     vec3 toLamp = lampPos - vPosW;
@@ -147,6 +161,8 @@ const fragmentShader = /* glsl */`
 export function createTerrainMaterial(dustTexture, dirtScale, renderer = null) {
   const uniforms = {
     dustMap: { value: dustTexture },
+    sunWinMap: { value: null },                  // mapa oken osvětlení (scene/sunMap.js, 3.1)
+    useSunMap: { value: 0 },
     sandMap: { value: sandTexture(renderer) },
     sandScale: { value: 1 / 8 },                 // dlaždice písku 8 m
     sandStrength: { value: 1 },

@@ -11,6 +11,8 @@ import { game } from '../state.js';
 import { DEPOT, samplePath } from '../logistics.js';
 import { ROCKET_SITE } from '../rocket.js';
 import { researchCenter, researchProgress } from '../research.js';
+import { allMissions } from '../dronport.js';
+import { scan } from '../flight.js';
 import { createTerrainMaterial } from './terrainMaterial.js';
 
 const THREE = window.THREE;
@@ -51,6 +53,14 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
   // UFO drony (azurové, létají)
   const droneMat = new THREE.MeshBasicMaterial({ color: 0x6ff0e0 });
   const dronePins = [];
+  // drony s bateriemi za letu (3.1, D-14): malá bílá šipka ve směru letu
+  const arrowGeo = new THREE.ConeGeometry(0.9, 2.4, 3).rotateX(Math.PI / 2).scale(1, 0.35, 1);
+  const arrowMat = new THREE.MeshBasicMaterial({ color: 0xe8f6ff });
+  const arrows = [];
+  // skener Kolibříku (3.1): žluté značky 5 nejšpinavějších hexů
+  const scanMat = new THREE.MeshBasicMaterial({ color: 0xffd23f });
+  const scanPins = [];
+  const _ax = new THREE.Vector3(), _ay = new THREE.Vector3(), _az = new THREE.Vector3(), _am = new THREE.Matrix4();
   // výzkumné centrum (D-10): modrá značka a oblouk s průběhem výzkumu
   const researchPin = mk(0x6fa8ff);
   const arcMat = new THREE.MeshBasicMaterial({ color: 0x6fa8ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
@@ -310,6 +320,21 @@ export function createMoonMap(scene, camera, canvas, dustTexture, opts = {}) {
     dronePins.forEach((pin, i) => {
       pin.visible = i < drones.length;
       if (pin.visible) placePin(pin, drones[i].p, size * 0.75, size * 2.2);
+    });
+    while (scanPins.length < scan.cells.length) { const pin = new THREE.Mesh(pinGeo, scanMat); group.add(pin); scanPins.push(pin); }
+    scanPins.forEach((pin, i) => {
+      pin.visible = i < scan.cells.length;
+      if (pin.visible) placePin(pin, cellDir(scan.cells[i]), size * (1.1 + 0.25 * Math.sin(performance.now() / 250 + i)), size * 1.2);
+    });
+    const flying = allMissions().filter(x => !['load', 'unload'].includes(x.m.ph));
+    while (arrows.length < flying.length) { const a = new THREE.Mesh(arrowGeo, arrowMat); group.add(a); arrows.push(a); }
+    arrows.forEach((a, i) => {
+      const x = flying[i];
+      a.visible = !!x;
+      if (!x) return;
+      placePin(a, x.m.p, size * 0.9, size * 2.4);
+      _ay.set(...x.m.p); _az.set(...x.m.f); _ax.crossVectors(_ay, _az);
+      a.quaternion.setFromRotationMatrix(_am.makeBasis(_ax, _ay, _az));
     });
     while (otherPins.length < others.length) {
       const pin = new THREE.Mesh(pinGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }));

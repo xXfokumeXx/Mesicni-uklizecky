@@ -15,7 +15,7 @@ const cableGeo = new THREE.CylinderGeometry(0.035, 0.035, 1, 6).translate(0, -0.
 
 // Výška střechy vozidla (m nad podlahou) – z obálky modelu, jednou na typ
 const roofCache = new Map();
-function roofOf(type) {
+export function roofOf(type) {
   if (!roofCache.has(type)) {
     let h = 1.6;
     try {

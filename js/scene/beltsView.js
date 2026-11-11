@@ -76,19 +76,20 @@ export function createBeltsView(scene) {
   });
   let frameMesh = null, deckMesh = null, sig = '';
 
-  function rebuild() {
-    for (const m of [frameMesh, deckMesh]) if (m) { scene.remove(m); m.geometry.dispose(); }
-    frameMesh = deckMesh = null;
+  // Geometrie pásů ze vzorků (rám, boční lišty, nožky + deska s „along“). list = [{ S, legStep }], tint(along) → barva
+  // přebije barvy dílů (hologram při stavění, D-20); dc = barvy desky (jen s tint). Vrací pole pro BufferGeometry.
+  function beltArrays(list, tint = null) {
     const fp = [], fn = [], fc = [], fi = [];
-    const dp = [], dn = [], da = [], di = [];
+    const dp = [], dn = [], da = [], di = [], dc = [];
     const c = new THREE.Color();
     const P = new THREE.Vector3(), Q = new THREE.Vector3(), up = new THREE.Vector3(), t = new THREE.Vector3(), side = new THREE.Vector3();
     // kvádr w × h × d natočený podle os xv (vpravo), yv (nahoru), zv (podél), střed center → přidá do rámu.
     // O-11 / O-12: vrcholy ze šablony jednotkové krychle přímo do polí (dřív nový BoxGeometry + matice na každý kvádr –
     // přestavba 770 m pásů trvala ~150 ms v jednom snímku).
+    let tintHex = null;
     const box = (center, xv, yv, zv, w, h, d, color) => {
       const base = fp.length / 3;
-      c.setHex(color);
+      c.setHex(tintHex ?? color);
       for (let i = 0; i < BOX_N; i++) {
         const x = BOX_P[i * 3] * w, y = BOX_P[i * 3 + 1] * h, z = BOX_P[i * 3 + 2] * d;
         fp.push(center.x + xv.x * x + yv.x * y + zv.x * z, center.y + xv.y * x + yv.y * y + zv.y * z, center.z + xv.z * x + yv.z * y + zv.z * z);
@@ -98,9 +99,8 @@ export function createBeltsView(scene) {
       }
       for (let i = 0; i < BOX_I.length; i++) fi.push(base + BOX_I[i]);
     };
-    for (const bl of game.s.belts || []) {
-      const S = beltSamples(bl);
-      let along = 0;
+    for (const { S, legStep } of list) {
+      let along = 0, nextLeg = 0;
       for (let i = 0; i < S.length - 1; i++) {
         const a = S[i], b = S[i + 1];
         const ha = R + a.h + BELT.deck, hb = R + b.h + BELT.deck;
@@ -108,6 +108,7 @@ export function createBeltsView(scene) {
         Q.set(b.p[0] * hb, b.p[1] * hb, b.p[2] * hb);
         const L = P.distanceTo(Q);
         if (L < 1e-4) continue;
+        tintHex = tint ? tint(along) : null;
         t.subVectors(Q, P).normalize();
         up.copy(P).normalize();
         side.crossVectors(t, up).normalize();
@@ -117,6 +118,7 @@ export function createBeltsView(scene) {
         for (const [V, al] of [[P, along], [Q, along + L]]) for (const sgn of [-1, 1]) {
           const v = V.clone().addScaledVector(side, sgn * HALF_W).addScaledVector(n, 0.05);
           dp.push(v.x, v.y, v.z); dn.push(n.x, n.y, n.z); da.push(al);
+          if (tint) { c.setHex(tintHex); dc.push(c.r, c.g, c.b); }
         }
         di.push(base, base + 2, base + 1, base + 1, base + 2, base + 3, base, base + 1, base + 2, base + 1, base + 3, base + 2);
         // rám a boční lišty
@@ -124,8 +126,10 @@ export function createBeltsView(scene) {
         box(mid.clone().addScaledVector(n, -0.06), side, n, t, HALF_W * 2 + 0.1, 0.12, L + 0.02, 0x4b4f59);
         box(mid.clone().addScaledVector(side, -HALF_W - 0.04).addScaledVector(n, 0.07), side, n, t, 0.07, 0.16, L + 0.02, 0xf2b33d);
         box(mid.clone().addScaledVector(side, HALF_W + 0.04).addScaledVector(n, 0.07), side, n, t, 0.07, 0.16, L + 0.02, 0xf2b33d);
-        // nožky každé ~3 m (na vršku mostu ne – stály by v kříženém pásu)
-        if (i % 3 === 0 && !((a.lift || 0) > 0.6)) {
+        // nožky (lomený pás ze 3.0 každý 3. vzorek, zakřivený po 2 m – D-20); na vršku mostu ne (stály by v kříženém pásu)
+        const leg = legStep ? along >= nextLeg : i % 3 === 0;
+        if (leg && legStep) nextLeg = along + legStep;
+        if (leg && !((a.lift || 0) > 0.6)) {
           for (const sgn of [-1, 1]) {
             const top = P.clone().addScaledVector(side, sgn * (HALF_W - 0.08)).addScaledVector(n, -0.1);
             const g = R + heightAt(a.p) - 0.2, hTop = top.length();
@@ -136,6 +140,13 @@ export function createBeltsView(scene) {
         along += L;
       }
     }
+    return { fp, fn, fc, fi, dp, dn, da, di, dc, box: (...args) => { tintHex = null; box(...args); } };
+  }
+
+  function rebuild() {
+    for (const m of [frameMesh, deckMesh]) if (m) { scene.remove(m); m.geometry.dispose(); }
+    frameMesh = deckMesh = null;
+    const { fp, fn, fc, fi, dp, dn, da, di } = beltArrays((game.s.belts || []).map(bl => ({ S: beltSamples(bl), legStep: bl.shape === 'krivka' ? 2 : 0 })));
     if (fp.length) {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(fp, 3));
@@ -296,34 +307,48 @@ export function createBeltsView(scene) {
     for (const im of [collars, arrows]) { im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; }
   }
 
-  // ---------- náhled pásu při stavění ----------
-  const PREV_MAX = 700;
-  const prevGeo = new THREE.BufferGeometry();
-  prevGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PREV_MAX * 2 * 3), 3));
-  const preview = new THREE.LineSegments(prevGeo, new THREE.LineBasicMaterial({ color: 0x5fb8d9, transparent: true, opacity: 0.95 }));
+  // ---------- hologram pásu při stavění (D-20): celý model pásu průsvitně modře jako budovy (D-08) ----------
+  // Modrá = trasa v pořádku, zelená = konec je přichycený k zásuvce, červeně jen kus, který vadí (build.beltBad ± 2 m;
+  // když vadí celá trasa, celý). Uzly mají značku na zemi: kulatou (kosočtverec), u zlomu s Alt čtvercovou.
+  const holoMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.42, depthWrite: false });
+  const preview = new THREE.Mesh(new THREE.BufferGeometry(), holoMat);
   preview.frustumCulled = false;
   preview.visible = false;
+  preview.renderOrder = 4;
   scene.add(preview);
   let prevSig = '';
+  const HOLO = { blue: 0x5fb8d9, green: 0x7fd38a, red: 0xe0654c, node: 0xcfefff };
   function updatePreview() {
     const pts = build.mode === 'belt' ? build.beltPts : null;
     if (!pts || pts.length < 2) { preview.visible = false; return; }
-    preview.material.color.setHex(build.valid ? (build.beltTo ? 0x7fd38a : 0x5fb8d9) : 0xe0654c);
-    const key = pts.map(p => p.map(v => v.toFixed(6)).join(',')).join('|') + '/' + (build.beltBridges || []).join(',');
+    const ok = build.valid, bad = build.beltBad;
+    const base = ok && build.beltTo ? HOLO.green : HOLO.blue;
+    const key = pts.length + ':' + pts[pts.length - 1].map(v => v.toFixed(6)).join(',') + '/' + pts[Math.floor(pts.length / 2)].map(v => v.toFixed(6)).join(',')
+      + '/' + (build.beltBridges || []).join(',') + '/' + ok + '/' + bad + '/' + base + '/' + (build.beltNodes || []).length + (build.beltNodes || []).map(n => n.corner ? 1 : 0).join('');
     preview.visible = true;
     if (key === prevSig) return;
     prevSig = key;
     const S = liftSamples(samplePath(pts, 1), build.beltBridges);   // náhled ukáže i mosty přes jiné pásy
-    const P = prevGeo.attributes.position;
-    let k = 0;
-    for (let i = 0; i < S.length - 1 && k < PREV_MAX; i++, k++) {
-      const a = S[i], b = S[i + 1];
-      const ha = R + a.h + BELT.deck + 0.1, hb = R + b.h + BELT.deck + 0.1;
-      P.setXYZ(k * 2, a.p[0] * ha, a.p[1] * ha, a.p[2] * ha);
-      P.setXYZ(k * 2 + 1, b.p[0] * hb, b.p[1] * hb, b.p[2] * hb);
+    const tint = along => (!ok && (bad == null || Math.abs(along - bad) < 2) ? HOLO.red : base);
+    const A = beltArrays([{ S, legStep: 2 }], tint);
+    // značky uzlů: plochý čtverec (zlom) / kosočtverec (oblouk) na zemi
+    for (const nd of build.beltNodes || []) {
+      const h = R + heightAt(nd.p) + 0.12;
+      _p.set(nd.p[0], nd.p[1], nd.p[2]);
+      const up = _p.clone().normalize(), pos = up.clone().multiplyScalar(h);
+      const t = new THREE.Vector3(1, 0, 0).addScaledVector(up, -up.x).normalize();
+      if (t.lengthSq() < 1e-6) t.set(0, 0, 1);
+      const sd = new THREE.Vector3().crossVectors(up, t);
+      const xv = nd.corner ? t : t.clone().add(sd).normalize(), zv = nd.corner ? sd : sd.clone().sub(t).normalize();
+      A.box(pos, xv, up, zv, 0.55, 0.06, 0.55, HOLO.node);
     }
-    prevGeo.setDrawRange(0, k * 2);
-    P.needsUpdate = true;
+    const g = new THREE.BufferGeometry();
+    const n0 = A.fp.length / 3;
+    g.setAttribute('position', new THREE.Float32BufferAttribute([...A.fp, ...A.dp], 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute([...A.fc, ...A.dc], 3));
+    g.setIndex([...A.fi, ...A.di.map(i => i + n0)]);
+    preview.geometry.dispose();
+    preview.geometry = g;
   }
 
   // ---------- velký číselník depa (D-05): „3 420 / 5 000 kg“, svítí i v noci, barva podle naplnění ----------
@@ -453,16 +478,19 @@ export function createBeltsView(scene) {
   function updateCut() {
     const seg = build.mode === 'demolish' ? build.belt : null;
     const bl = seg ? (game.s.belts || []).find(b => b.id === seg.id) : null;
-    if (!bl || seg.k >= bl.pts.length - 1) { cut.visible = false; cutSig = ''; return; }
+    if (!bl || (seg.s1 == null && seg.k >= bl.pts.length - 1)) { cut.visible = false; cutSig = ''; return; }
     cut.visible = true;
     cutMat.opacity = 0.4 + 0.3 * (build.hold || 0) + 0.1 * Math.sin(performance.now() / 90);
     const key = `${bl.id}/${seg.k}/${bl.pts.length}`;
     if (key === cutSig) return;
     cutSig = key;
     // vzdálenost začátku a konce úseku podél pásu, z toho vzorky pásu (i s rampou k Výkupu)
-    let s0 = 0;
-    for (let i = 0; i < seg.k; i++) s0 += angleOf(bl.pts[i], bl.pts[i + 1]) * R;
-    const s1 = s0 + angleOf(bl.pts[seg.k], bl.pts[seg.k + 1]) * R;
+    let s0 = 0, s1 = 0;
+    if (seg.s1 != null) { s0 = seg.s0; s1 = seg.s1; }                    // zakřivený pás: úsek mezi uzly
+    else {
+      for (let i = 0; i < seg.k; i++) s0 += angleOf(bl.pts[i], bl.pts[i + 1]) * R;
+      s1 = s0 + angleOf(bl.pts[seg.k], bl.pts[seg.k + 1]) * R;
+    }
     const S = beltSamples(bl), P = cutGeo.attributes.position;
     let along = 0, n = 0;
     for (let i = 0; i < S.length - 1 && n < CUT_MAX; i++) {

@@ -14,6 +14,7 @@ import { W, H, atlasUv, hexes, dirty } from '../planet/dustmap.js';
 import { game } from '../state.js';
 import { FLAT_WINDOW, chunkWindowsRow } from '../planet/sunwindow.js';
 import { createTerrainMaterial } from './terrainMaterial.js';
+import { createSunMap } from './sunMap.js';
 
 const THREE = window.THREE;
 const R = MOON.radius;
@@ -92,6 +93,9 @@ export function createTerrain(scene, renderer, viewDistance) {
   texture.needsUpdate = true;
 
   const { material, uniforms } = createTerrainMaterial(texture, 255 / DUST.max, renderer);
+  // ostré stíny kopců z textury oken osvětlení (3.1, O-28); bez WebGL2 zůstanou okna z vrcholů
+  const sunMap = createSunMap(renderer);
+  if (sunMap) { uniforms.sunWinMap.value = sunMap.texture; uniforms.useSunMap.value = 1; }
   // Obrysy hexů jsou vidět jen do 3 hexů od astronauta, dál plynule mizí (shader podle vzdálenosti).
   const LINE_NEAR = HEX_SPACING * 3.3, LINE_FAR = HEX_SPACING * 4.1;
   const lineUniforms = {
@@ -391,6 +395,7 @@ export function createTerrain(scene, renderer, viewDistance) {
   // focus = kde stojí astronaut (Vector3) – kolem něj se ukazují obrysy hexů
   function setFocus(focus) {
     lineUniforms.focus.value.copy(focus);
+    sunMap?.update(focus);                           // dlaždice mapy oken nejblíž hráči napřed (O-28)
   }
 
   // Mapa celého Měsíce: kusy terénu se schovají (kreslí se zjednodušený glóbus).
@@ -505,7 +510,7 @@ export function createTerrain(scene, renderer, viewDistance) {
   }
 
   return {
-    updateDust, updateVisibility, setViewDistance, setLighting, setFocus, setHidden, linkUniforms,
+    updateDust, updateVisibility, setViewDistance, setLighting, setFocus, setHidden, linkUniforms, sunMap,
     texture, hexSpacing: HEX_SPACING,
   };
 }

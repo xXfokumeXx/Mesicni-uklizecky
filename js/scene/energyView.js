@@ -86,7 +86,7 @@ export function createEnergyView(scene, views) {
       // regál (D-04): nabitá = modrá, nabíjí se = oranžová pulzující (šířka = nabití), bez energie = červená; volná pozice = zhasnuto
       const rack = b.data.rack || [];
       def.rack.forEach(([x, y], k) => {
-        if (k >= rack.length) { out.push({ x, y, z: -5.52, sx: 0.5, sy: 0.12, sz: 0.04, col: C.off, glow: 1 }); return; }
+        if (k >= rack.length || rack[k] < 0) { out.push({ x, y, z: -5.52, sx: 0.5, sy: 0.12, sz: 0.04, col: C.off, glow: 1 }); return; }   // < 0 = baterii odnesl dron
         const q = rack[k];
         const charging = L?.wired && (L.f ?? 0) > 0.01 && q < 0.999;
         const col = q >= 0.999 ? C.blue : charging ? C.orange : C.red;
