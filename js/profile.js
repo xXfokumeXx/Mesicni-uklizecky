@@ -1,6 +1,6 @@
 // Profil hráče (jméno, vzhled astronauta a úspěchy) – patří prohlížeči, ne uložené hře.
 // Platí pro všechny sloty i pro multiplayer.
-import { DEFAULT_LOOK, SUIT_COLORS, propById } from './catalog.js';
+import { DEFAULT_LOOK, SUIT_COLORS, SKINS, propById } from './catalog.js';
 
 const KEY = 'ms2_profile';
 
@@ -20,6 +20,8 @@ export function sanitizeName(s) {
 
 export function validLook(l) {
   const look = { ...DEFAULT_LOOK };
+  if (l && typeof l === 'object') { look.top = 'none'; look.face = 'noface'; }   // uložený vzhled bez rekvizity = bez rekvizity (výchozí číro a fousky jen pro nového hráče)
+  look.skin = SKINS.some(k => k.id === l?.skin) ? l.skin : 'vychozi';            // hotové oblečení (3.1, AST-04)
   if (l && Number.isInteger(l.color) && l.color >= 0 && l.color < SUIT_COLORS.length) look.color = l.color;
   if (l && propById(l.top)?.slot === 'top') look.top = l.top;
   if (l && propById(l.face)?.slot === 'face') look.face = l.face;

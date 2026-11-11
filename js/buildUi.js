@@ -35,7 +35,7 @@ function renderBar() {
     const n = Object.values(STRUCTURES).filter(d => d.cat === c.id).length;
     return `<button class="buildbar__cat${c.id === cat ? ' buildbar__cat--active' : ''}" type="button" data-cat="${c.id}"${n ? '' : ' data-empty'}>${esc(c.name)}</button>`;
   }).join('');
-  const cards = types.length ? types.map(([type, d]) => {
+  const card = ([type, d]) => {
     const price = buildPrice(type);
     const lock = lockReason(d);
     const ready = d.ready && !lock;
@@ -49,6 +49,15 @@ function renderBar() {
         <span class="buildbar__price">${price ? '$' + (d.perMeter ? `${price}/m` : fmt(price)) : 'zdarma'}</span>
         <span class="buildbar__state">${state}</span>
       </button>`;
+  };
+  // Energie (11. 11.): zdroje na jednom řádku, baterie (a kotva vedení) na dalším; jinde jedna skupina
+  const groups = cat === 'energy'
+    ? [['Zdroje energie', t => STRUCTURES[t[0]].energy?.role === 'source'], ['Baterie a vedení', t => STRUCTURES[t[0]].energy?.role !== 'source']]
+    : [[null, () => true]];
+  const cards = types.length ? groups.map(([label, fits]) => {
+    const list = types.filter(fits);
+    if (!list.length) return '';
+    return (label ? `<span class="buildbar__row">${esc(label)}</span>` : '') + list.map(card).join('');
   }).join('') : '<p class="buildbar__empty">V této kategorii zatím nic není – přibude v dalších fázích 3.0.</p>';
   $('buildbar').innerHTML = `<div class="buildbar__cats" role="tablist">${tabs}</div><div class="buildbar__cards">${cards}</div>`;
 }

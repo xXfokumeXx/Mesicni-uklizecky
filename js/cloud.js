@@ -19,6 +19,7 @@ import { PLANET } from './config.js';
 import { net } from './net.js';
 import { packDust, unpackDust, toBase64, fromBase64 } from './storage.js';
 import { hexes } from './planet/dustmap.js';
+import { VERSION, cmpVersion } from './version.js';
 
 export const PART = 400000;                     // velikost kousku snímku mapy (znaků base64)
 const w = code => `w/${code}`;
@@ -121,35 +122,88 @@ export async function cloudMeta(code) {
 // Uloží stav světa (rychlé, každých ~20 s) a s full = true i mapu prachu (pomalejší, ~1× za minutu).
 // sv = číslo snímku mapy, extra = { seqs, rc } pro hráče, kteří se právě připojují.
 // Pojistka: když je svět v cloudu novější a na jiné planetě než to, co hraju, nesmím ho přepsat.
+//
+// F-10 (10. 11.): každý zápis zvýší revizi světa s.rev a zapíše ji do meta/rv (+ meta/wu = kdo zapsal).
+// Podle revize (ne podle hodin různých počítačů) se při otevření vybírá novější stav. Před zápisem se
+// přečte meta a zápis se odmítne, když by snížil revizi (zapsal mezitím jiný hostitel), a mapa se nezapíše,
+// když by počet dočištěných hexů klesl o víc než 5 % proti uložené mapě (dp = planeta té mapy).
+// Zápisy jdou za sebou (fronta), výsledek posledního je v cloudStatus (net.js podle něj hlásí chybu a zkouší znovu).
 let blocked = false;
 export const blockCloud = on => { blocked = !!on; };
 export const cloudBlocked = () => blocked;
+export const cloudStatus = { ok: true, reason: '', at: 0, fails: 0 };
+const SESSION = Math.random().toString(36).slice(2, 10);       // tahle karta (rozliší vlastní zápisy od cizích)
+const WRITE_TIMEOUT = 30000;
+let chain = Promise.resolve();
 
-export async function saveCloud(code, { full = false, sv = 0, extra = {} } = {}) {
+const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`timeout:${what}`)), ms))]);
+
+export function saveCloud(code, opts = {}) {
+  if (opts.quick) return writeCloud(code, { ...opts, full: false });   // zavírání karty: odeslat hned, ne až po frontě
+  const run = chain.then(() => writeCloud(code, opts));
+  chain = run.catch(() => {});
+  return run;
+}
+
+async function writeCloud(code, { full = false, sv = 0, extra = {}, quick = false } = {}) {
   if (!ok() || !code || !game.s || blocked) return false;
   const s = game.s;
+  const fail = (reason, e) => {
+    cloudStatus.ok = false; cloudStatus.reason = reason; cloudStatus.at = Date.now(); cloudStatus.fails++;
+    console.warn(`[svět] zápis do cloudu se nepovedl (${reason})`, e || '');
+    return false;
+  };
   try {
-    if (full) {
-      const packed = await packDust();
-      const b64 = toBase64(packed.bytes);
-      const parts = Math.max(1, Math.ceil(b64.length / PART));
-      const updates = {};
-      for (let i = 0; i < parts; i++) updates[`parts/p${i}`] = { sv, d: b64.slice(i * PART, (i + 1) * PART) };
-      updates.head = { sv, parts, gz: packed.gz, seqs: extra.seqs || {}, rc: extra.rc ?? 0, at: Date.now() };
-      updates['meta/d'] = hexes.doneCount;                     // kolik hexů je v téhle mapě hotových
-      await net.fb.ref(w(code)).update(updates);
+    let mapOk = full;
+    if (!quick) {                                               // quick = zavírání karty: hned odeslat, bez čtení
+      const meta = (await withTimeout(net.fb.ref(`${w(code)}/meta`).get(), WRITE_TIMEOUT, 'meta')).val();
+      if (meta && Number(meta.rv) > (Number(s.rev) || 0) && meta.ws !== SESSION) {
+        blocked = true;                                         // novější svět zapsal někdo jiný – nepřepisovat
+        console.warn(`[svět] zápis odmítnut: v cloudu je revize ${meta.rv}, hraju ${s.rev} (zapsal ${meta.wu || '?'})`);
+        return fail('conflict');
+      }
+      if (meta && cmpVersion(meta.ver, VERSION) > 0) {          // L-60: svět uložila novější verze hry – starší ho nepřepíše
+        blocked = true;
+        console.warn(`[svět] zápis odmítnut: svět je uložený novější verzí ${meta.ver}`);
+        return fail('newer');
+      }
+      if (full && meta && meta.dp === PLANET.id && Number(meta.d) > 20 && hexes.doneCount < Number(meta.d) * 0.95) {
+        mapOk = false;                                          // mapa by se „zasypala“ – stav ano, mapa ne
+        console.warn(`[svět] mapa prachu se nezapíše: v cloudu ${meta.d} hotových hexů, tady jen ${hexes.doneCount} (pokles o víc než 5 %)`);
+        cloudStatus.reason = 'map-guard';
+      }
     }
+    const rv = (Number(s.rev) || 0) + 1;
+    s.rev = rv;
+    s.crv = rv;
     s.last = Date.now();
-    await net.fb.ref(w(code)).update({
+    const updates = {
       state: JSON.stringify(s),
       'meta/t': String(s.title || 'Svět').slice(0, 40),
       'meta/pn': PLANET.id,
       'meta/at': s.last,
-    });
+      'meta/rv': rv,
+      'meta/wu': net.uid || '',
+      'meta/ws': SESSION,
+      'meta/ver': VERSION,                                       // L-60: kterou verzí hry uloženo
+    };
+    if (mapOk) {
+      const packed = await packDust();
+      const b64 = toBase64(packed.bytes);
+      const parts = Math.max(1, Math.ceil(b64.length / PART));
+      for (let i = 0; i < parts; i++) updates[`parts/p${i}`] = { sv, d: b64.slice(i * PART, (i + 1) * PART) };
+      updates.head = { sv, parts, gz: packed.gz, seqs: extra.seqs || {}, rc: extra.rc ?? 0, at: Date.now(), rv };
+      updates['meta/d'] = hexes.doneCount;                     // kolik hexů je v téhle mapě hotových
+      updates['meta/dp'] = PLANET.id;                          // …a na které planetě
+    }
+    const send = net.fb.ref(w(code)).update(updates);          // jeden zápis = stav i mapa najednou (atomicky)
+    if (quick) { send.catch(e => fail('error', e)); return true; }
+    await withTimeout(send, WRITE_TIMEOUT, 'write');
+    cloudStatus.ok = true; cloudStatus.at = Date.now(); cloudStatus.fails = 0;
+    if (cloudStatus.reason !== 'map-guard') cloudStatus.reason = '';
     return true;
   } catch (e) {
-    console.warn('Uložení světa do cloudu', e);
-    return false;
+    return fail(String(e?.message || '').startsWith('timeout') ? 'offline' : String(e?.code || e?.message || '').includes('PERMISSION') ? 'denied' : 'error', e);
   }
 }
 
@@ -157,7 +211,7 @@ export async function saveCloud(code, { full = false, sv = 0, extra = {} } = {})
 export async function resetCloudMap(code) {
   if (!ok() || !code) return false;
   try {
-    await net.fb.ref(w(code)).update({ head: null, parts: null });
+    await net.fb.ref(w(code)).update({ head: null, parts: null, 'meta/d': null, 'meta/dp': null });
     return saveCloud(code);
   } catch { return false; }
 }
@@ -170,7 +224,9 @@ export async function cloudHasMap(code) {
 
 // Načte svět z cloudu do čerstvě vygenerované planety (game.dust). Vrací true / false.
 // map = false → jen stav světa (mapa prachu zůstane, jak je – třeba ze slotu hostitele).
-export async function loadCloud(code, { map = true } = {}) {
+// merge = true → mapa z cloudu se sloučí do už načtené mapy (v každém bodě méně prachu z obou, F-10).
+// state = false → jen mapa (stav světa zůstane).
+export async function loadCloud(code, { map = true, merge = false, state = true } = {}) {
   if (!ok()) return false;
   try {
     const [stateSnap, headSnap] = await Promise.all([net.fb.ref(`${w(code)}/state`).get(), net.fb.ref(`${w(code)}/head`).get()]);
@@ -187,11 +243,13 @@ export async function loadCloud(code, { map = true } = {}) {
         if (!part || part.sv !== head.sv) throw new Error('part');
         b64 += part.d;
       }
-      if (!(await unpackDust({ gz: !!head.gz, bytes: fromBase64(b64) }))) return false;
+      if (!(await unpackDust({ gz: !!head.gz, bytes: fromBase64(b64) }, merge))) return false;
     }
+    if (!state) return true;
     game.s = s;
     migrateState(s);
     s.netCode = code;
+    s.crv = s.rev;                                                // tohle je teď stav cloudu
     return true;
   } catch (e) {
     console.warn('Načtení světa z cloudu', e);

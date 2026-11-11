@@ -1,15 +1,17 @@
 // Hlavní menu (hra sám / s ostatními), seznam uložených her ve slotech, lobby multiplayeru
 // a menu pauzy ve hře. Samotné spuštění hry dělá main.js (onLaunch).
-import { SUIT_COLORS, HELMET_PROPS, propById } from './catalog.js';
+import { SUIT_COLORS, HELMET_PROPS, SKINS, propById, skinById } from './catalog.js';
 import { createAvatarShots } from './scene/avatarShots.js';
 import { createWardrobe } from './scene/wardrobe.js';
 import { profile, saveProfile, sanitizeName } from './profile.js';
 import { SLOTS, listSaves, deleteSave, lastSlot, hasV1Save, exportSlot, importSlot } from './storage.js';
 import { SAVE_VERSION } from './state.js';
-import { net, initLobby, lobbyPeers, openWorlds, findWorld, setLobbyStatus, roomOnline } from './net.js';
+import { net, initLobby, lobbyPeers, openWorlds, findWorld, setLobbyStatus, roomOnline, versionMismatchText } from './net.js';
+import { VERSION, cmpVersion } from './version.js';
+import { createMenuMoon } from './scene/menuMoon.js';
 import { checkAccess, enterPassword, cloudMeta } from './cloud.js';
 import { fmt } from './format.js';
-import { myRank, rankName, nextRank } from './ranks.js';
+import { myRank, rankName, nextRank, rankHtml, RANKS, myKg } from './ranks.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -45,7 +47,10 @@ export function showLoading(text) {
 
 export function hideMenu() {
   $('menu').hidden = true;
+  menuMoon?.dispose();                              // O-25: hra nemá mít v paměti druhý WebGL kontext
+  menuMoon = null;
 }
+let menuMoon = null;
 
 export function setMoonStatus(text, ready) {
   const el = $('menu-moon');
@@ -57,7 +62,8 @@ export function setMoonStatus(text, ready) {
 
 // Název oblečení: barva skafandru + rekvizita na helmě / hledí (např. „Bílá NASA · Čertovské rohy“)
 function outfitName(look) {
-  const parts = [SUIT_COLORS[look.color]?.name || 'Skafandr'];
+  const skin = skinById(look.skin);
+  const parts = [skin.id !== 'vychozi' ? skin.name : null, skin.id === 'vychozi' || look.color !== skin.color ? SUIT_COLORS[look.color]?.name || 'Skafandr' : null];
   if (look.top && look.top !== 'none') parts.push(propById(look.top)?.name);
   if (look.face && look.face !== 'noface') parts.push(propById(look.face)?.name);
   return parts.filter(Boolean).join(' · ');
@@ -70,8 +76,14 @@ function renderProfile() {
   $('menu-avatar').src = avatar(profile.look, true).url;
   $('menu-outfit').textContent = outfitName(profile.look);
   const nx = nextRank();
-  $('menu-rank').textContent = rankName(myRank());
+  $('menu-rank').innerHTML = rankHtml(myRank());                   // odznak + název (3.1)
   $('menu-rank').title = nx ? `Další hodnost „${nx.name}“ za ${fmt(Math.ceil(nx.left))} kg prachu` : 'Nejvyšší hodnost';
+  // další hodnost pod současnou: odznak, název, kolik prachu chybí a průběh (11. 11.)
+  const i = myRank(), cur = RANKS[i];
+  const k = nx ? Math.max(0, Math.min(1, (myKg() - cur.kg) / (nx.kg - cur.kg))) : 1;
+  $('menu-rank-next').innerHTML = nx
+    ? `<span class="menu__rank-next-label">Další:</span> ${rankHtml(i + 1)} <span class="menu__rank-next-left">za ${Math.ceil(nx.left).toLocaleString('cs-CZ')} kg prachu</span><span class="menu__rank-bar"><span style="width:${(k * 100).toFixed(1)}%"></span></span>`
+    : '<span class="menu__rank-next-label">Nejvyšší hodnost – víc už nejde</span>';
 }
 
 // ---------- šatna v menu (stejná jako v Dílně: barva skafandru a rekvizity) ----------
@@ -97,8 +109,19 @@ function renderWardrobe() {
         <span class="item-card__name">${esc(p.name)}</span>
       </button>`;
   }).join('');
+  const skins = SKINS.map(k => {
+    const on = (look.skin || 'vychozi') === k.id;
+    return `
+      <button class="item-card item-card--compact${on ? ' item-card--selected' : ''}" type="button" data-skin="${k.id}" aria-pressed="${on}">
+        <span class="item-card__chip item-card__chip--${on ? 'active' : 'store'}">${on ? 'NASAZENO' : 'OBLEČENÍ'}</span>
+        <img class="item-card__img" src="${wardrobe ? wardrobe.skinThumb(k.id) : ''}" alt="">
+        <span class="item-card__name">${esc(k.name)}</span>
+      </button>`;
+  }).join('');
   $('menu-wardrobe-pick').innerHTML = `
     <div class="wardrobe">
+      <h3 class="wardrobe__heading">Oblečení · ${esc(skinById(look.skin).name)}</h3>
+      <div class="facility__grid">${skins}</div>
       <h3 class="wardrobe__heading">Barva skafandru · ${esc(SUIT_COLORS[look.color].name)}</h3>
       <div class="wardrobe__swatches" role="group" aria-label="Barva skafandru">${swatches}</div>
       <h3 class="wardrobe__heading">Na helmu</h3>
@@ -117,9 +140,10 @@ function setLook(patch) {
 }
 function bindWardrobe() {
   $('menu-wardrobe-pick').addEventListener('click', e => {
-    const t = e.target.closest('[data-color],[data-prop]');
+    const t = e.target.closest('[data-color],[data-prop],[data-skin]');
     if (!t) return;
-    if (t.dataset.color !== undefined) setLook({ color: Number(t.dataset.color) });
+    if (t.dataset.skin) setLook({ skin: t.dataset.skin, color: skinById(t.dataset.skin).color });   // oblečení i se svou barvou
+    else if (t.dataset.color !== undefined) setLook({ color: Number(t.dataset.color) });
     else { const p = propById(t.dataset.prop); if (p) setLook({ [p.slot]: p.id }); }
   });
   $('wardrobe-back').addEventListener('click', () => show(wardrobeBack));
@@ -155,13 +179,13 @@ async function renderSlots() {
         </li>`;
     }
     const pct = sv.total ? Math.floor(sv.done / sv.total * 1000) / 10 : 0;
-    const newer = sv.v > SAVE_VERSION;
+    const newer = sv.v > SAVE_VERSION || cmpVersion(sv.ver, VERSION) > 0;    // L-60: uloženo novější verzí hry
     return `
       <li class="slot${id === last ? ' slot--last' : ''}">
         <div class="slot__info">
           <span class="slot__title">${esc(sv.title || `Slot ${i + 1}`)}${id === last ? ' <span class="slot__badge">naposledy</span>' : ''}${newer ? ' <span class="slot__badge">novější verze</span>' : ''}</span>
           <span class="slot__meta">${pct.toLocaleString('cs-CZ')} % hexů · $${fmt(sv.money || 0)} · ${fmtPlay(sv.playMs)}</span>
-          <span class="slot__meta">${newer ? `Uloženo ve verzi ${sv.v} – tahle verze hry ji neotevře.` : `Uloženo ${fmtDate(sv.savedAt)}`}</span>
+          <span class="slot__meta">${newer ? `Uloženo ve verzi ${esc(sv.ver || sv.v)} – obnov stránku (Ctrl+F5).` : `Uloženo ${fmtDate(sv.savedAt)}${sv.ver ? ` · v${esc(sv.ver)}` : ''}`}</span>
         </div>
         <div class="slot__actions">
           <button class="button button--primary" type="button" data-load="${id}"${newer ? ' disabled' : ''}>${slotMode === 'host' ? 'Hostovat' : 'Načíst'}</button>
@@ -278,7 +302,7 @@ function renderLobby() {
     : online ? (people.length > 6 ? 'Připojeno · na plošině vidíš 6 hráčů' : 'Připojeno · vidíš všechny, kdo mají hru právě otevřenou.') : 'Připojuji…';
   const stage = onStage.map(id => {
     const p = id && byPeer.get(id);
-    return p ? { me: !!p.me, name: p.name, rank: rankName(p.rank), look: p.look, outfit: outfitName(p.look), status: statusOf(p, worldsAll), guest: !!p.guest } : null;
+    return p ? { me: !!p.me, name: p.name, rank: rankName(p.rank), ri: p.rank, look: p.look, outfit: outfitName(p.look), status: statusOf(p, worldsAll), guest: !!p.guest } : null;
   });
   const sig = JSON.stringify([online, statusText, people.length, stage, worlds, people.map(p => [p.name, p.rank, p.world, p.scr])]);
   if (sig === lobbySig) return;                    // nic se nezměnilo → DOM nepřekreslovat (obrázky by blikaly)
@@ -297,7 +321,7 @@ function renderLobby() {
     return `
       <img class="lobby-player" src="${img.url}" alt="${esc(p.name)}" style="left:${pctX(x)};top:${pctY(y - ih)};height:${pctY(ih)}">
       <div class="lobby-plate${p.me ? ' lobby-plate--me' : ''}" style="left:${pctX(x)};top:${pctY(y - h - (k >= 3 ? 18 : people.length > 1 ? 40 : 16))}">
-        ${p.rank ? `<em>${esc(p.rank)}</em>` : ''}
+        ${p.rank ? `<em>${rankHtml(p.ri)}</em>` : ''}
         <b>${esc(p.name)}${p.me ? ' <span class="lobby-tag">TY</span>' : ''}</b>
         <span>${esc(p.outfit)}</span>
         <i>${esc(p.status)}</i>
@@ -309,10 +333,11 @@ function renderLobby() {
   $('lobby-more').textContent = `Zobrazit dalších ${Math.max(0, more)}`;
   if (more <= 0) $('lobby-people-box').hidden = true;
   $('lobby-people').innerHTML = people.map(p => `
-    <li><span>${esc(p.name)}${p.me ? ' <span class="lobby-tag">TY</span>' : ''}</span><small>${esc([rankName(p.rank), statusOf(p, worldsAll)].filter(Boolean).join(' · '))}</small></li>`).join('');
+    <li><span>${esc(p.name)}${p.me ? ' <span class="lobby-tag">TY</span>' : ''}</span><small>${rankHtml(p.rank)}${rankName(p.rank) ? ' · ' : ''}${esc(statusOf(p, worldsAll))}</small></li>`).join('');
   $('lobby-worlds').innerHTML = worlds.length ? worlds.map((w, i) => {
-    const meta = [w.hostName, `${w.players} ${plural(w.players)}`, w.done !== null ? `${w.done.toLocaleString('cs-CZ')} % hexů` : null].filter(Boolean).join(' · ');
-    const btn = w.me ? '<button class="lobby-btn lobby-btn--ghost" type="button" disabled>Tvůj svět</button>'
+    const meta = [w.hostName, `${w.players} ${plural(w.players)}`, w.done !== null ? `${w.done.toLocaleString('cs-CZ')} % hexů` : null, `v${w.ver}`].filter(Boolean).join(' · ');
+    const btn = !w.compatible ? `<button class="lobby-btn lobby-btn--ghost" type="button" disabled title="Do světa jiné verze hry se připojit nejde">${esc(versionMismatchText(w))}</button>`
+      : w.me ? '<button class="lobby-btn lobby-btn--ghost" type="button" disabled>Tvůj svět</button>'
       : w.locked ? `<button class="lobby-btn lobby-btn--ghost" type="button" data-join="${i}">Zadat heslo</button>`
         : `<button class="lobby-btn lobby-btn--primary" type="button" data-join="${i}">Připojit</button>`;
     return `<li class="lobby-world"><b>${esc(w.title)}</b>${btn}<small>${esc(meta)}</small></li>`;
@@ -325,7 +350,7 @@ function bindLobby() {
     const t = e.target.closest('[data-join]');
     if (!t) return;
     const w = openWorlds()[Number(t.dataset.join)];
-    if (w) enterWorld(w.code, () => hooks.onLaunch({ mode: 'client', world: w }));
+    if (w?.compatible) enterWorld(w.code, () => hooks.onLaunch({ mode: 'client', world: w }));
   });
   $('lobby-pass-form').addEventListener('submit', async e => {
     e.preventDefault();
@@ -388,7 +413,9 @@ async function joinByCode(raw) {
   while (!w && Date.now() - t0 < 30000) {          // po odletu / převzetí hostitel chvíli startuje
     err.hidden = false;
     err.textContent = meta ? `Hledám hostitele světa ${code}…` : `Hledám svět ${code}…`;
-    if (meta && Date.now() - t0 > 4000) {             // svět je v cloudu → nabídnout otevření (čekání běží dál)
+    if (meta && cmpVersion(meta.ver, VERSION) > 0) {  // L-60: svět uložila novější verze hry
+      err.textContent = `Svět ${code} je uložený ve verzi ${meta.ver} – obnov stránku (Ctrl+F5).`;
+    } else if (meta && Date.now() - t0 > 4000) {      // svět je v cloudu → nabídnout otevření (čekání běží dál)
       cloudOffer = { code, meta };
       $('lobby-cloud').hidden = false;
       err.textContent = `Svět ${code} („${meta.t || 'Svět'}“) teď nikdo nehostuje. Můžeš ho otevřít ty – nebo počkej na hostitele.`;
@@ -402,6 +429,11 @@ async function joinByCode(raw) {
     return;
   }
   if (w.me) return;
+  if (!w.compatible) {                              // L-60: jiný protokol → připojit nejde
+    err.hidden = false;
+    err.textContent = `Svět ${code}: ${versionMismatchText(w)}.`;
+    return;
+  }
   err.hidden = true;
   $('lobby-cloud').hidden = true;
   enterWorld(w.code, () => hooks.onLaunch({ mode: 'client', world: w }));
@@ -415,6 +447,10 @@ export function initMenu(h) {
     shots = createAvatarShots();
     wardrobe = createWardrobe(shots.thumbs);
   } catch (e) { console.warn('[menu] náhled astronauta nejde vykreslit', e); }
+  try {                                              // D-19: otáčející se Měsíc (bez WebGL zůstane obrázek)
+    menuMoon = createMenuMoon(document.querySelector('.menu__sky'), document.querySelector('.menu__moon-img'));
+    if (menuMoon) console.info(`[menu] Měsíc: ${menuMoon.triangles} trojúhelníků, geometrie ${menuMoon.buildMs.toFixed(1)} ms`);
+  } catch (e) { console.warn('[menu] Měsíc nejde vykreslit', e); }
   renderProfile();
   bindWardrobe();
   $('menu-name').addEventListener('change', () => {

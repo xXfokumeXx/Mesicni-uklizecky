@@ -1,5 +1,5 @@
 // Ragdoll astronauta po srážce s vozidlem.
-// Tělo = 15 bodů (klouby) spojených tyčemi pevné délky (Verletova integrace).
+// Tělo = 16 bodů (klouby + batoh, 3.1) spojených tyčemi pevné délky (Verletova integrace).
 // Gravitace míří do středu Měsíce (1,62 m/s²), body se odrážejí od terénu a kloužou s třením.
 // Když se tělo uklidní, astronaut vstane a hráč ho zase ovládá.
 import { MOON, MOON_GRAVITY } from './config.js';
@@ -12,8 +12,11 @@ export const RG = {
   pelvis: 0, chest: 1, head: 2,
   shL: 3, elL: 4, haL: 5, shR: 6, elR: 7, haR: 8,
   hipL: 9, knL: 10, ftL: 11, hipR: 12, knR: 13, ftR: 14,
+  pack: 15,                                   // batoh s jetpackem (3.1, AST-09)
 };
-export const RG_COUNT = 15;
+export const RG_COUNT = 16;
+// Poloměr kolize se zemí pro každý bod (AST-09): hlava 0,29 = helma se nezaboří, batoh 0,22.
+export const RG_RADIUS = [0.20, 0.26, 0.29, 0.10, 0.08, 0.08, 0.10, 0.08, 0.08, 0.12, 0.10, 0.10, 0.12, 0.10, 0.10, 0.22];
 
 // Tyče: [a, b] (délka se vezme z výchozí pózy) a „opěry“, které drží trup pohromadě.
 const STICKS = [
@@ -21,12 +24,13 @@ const STICKS = [
   [0, 2], [3, 2], [6, 2],
   [3, 4], [4, 5], [6, 7], [7, 8],
   [9, 10], [10, 11], [12, 13], [13, 14],
+  [15, 1], [15, 3], [15, 6], [15, 0],         // batoh: na zádech leží šikmo, ne „skrz“ jetpack
 ];
 // Minimální vzdálenosti (kolena a lokty se nepřehnou úplně)
 const MIN_DIST = [[9, 11, 0.45], [12, 14, 0.45], [3, 5, 0.22], [6, 8, 0.22], [2, 0, 0.6]];
 
 const SUBSTEPS = 3, ITER = 5;
-const BOUNCE = 0.35, FRICTION = 0.55, RADIUS = 0.1;
+const BOUNCE = 0.35, FRICTION = 0.55;
 
 // Vytvoří ragdoll z bodů výchozí pózy (pole [x,y,z] ve světě) a počáteční rychlosti.
 // vel = [vx,vy,vz] (m/s), spin = úhlová rychlost [wx,wy,wz] (rad/s) kolem těžiště.
@@ -77,8 +81,9 @@ function collide(rd, i, landed) {
   const x = p[o], y = p[o + 1], z = p[o + 2];
   const l = Math.hypot(x, y, z);
   const ux = x / l, uy = y / l, uz = z / l;
-  const ground = R + heightAt([ux, uy, uz]) + RADIUS;
+  const ground = R + heightAt([ux, uy, uz]) + (RG_RADIUS[i] ?? 0.1);
   if (l >= ground) return landed;
+  if (i === RG.pelvis || i === RG.chest || i === RG.pack) rd.touch = rd.time;   // trup leží na zemi
   // rychlost (krok) rozložená na kolmou a tečnou složku
   const vx = x - q[o], vy = y - q[o + 1], vz = z - q[o + 2];
   const vn = vx * ux + vy * uy + vz * uz;
@@ -101,14 +106,16 @@ export function stepRagdoll(rd, dt) {
   let maxV = 0;
   for (let s = 0; s < SUBSTEPS; s++) {
     const ratio = h / rd.lastDt;
+    // 3.1: když trup leží na zemi (na batohu je rameno výš), paže by se v nízké gravitaci houpala bez konce → tlumit
+    const damp = rd.time - (rd.touch ?? -9) < 0.5 ? 0.992 : 0.999;
     for (let i = 0; i < rd.n; i++) {
       const o = i * 3;
       const x = p[o], y = p[o + 1], z = p[o + 2];
       const l = Math.hypot(x, y, z);
       const g = MOON_GRAVITY * h * h / l;
-      const nx = x + (x - q[o]) * ratio * 0.999 - x * g;
-      const ny = y + (y - q[o + 1]) * ratio * 0.999 - y * g;
-      const nz = z + (z - q[o + 2]) * ratio * 0.999 - z * g;
+      const nx = x + (x - q[o]) * ratio * damp - x * g;
+      const ny = y + (y - q[o + 1]) * ratio * damp - y * g;
+      const nz = z + (z - q[o + 2]) * ratio * damp - z * g;
       q[o] = x; q[o + 1] = y; q[o + 2] = z;
       p[o] = nx; p[o + 1] = ny; p[o + 2] = nz;
     }

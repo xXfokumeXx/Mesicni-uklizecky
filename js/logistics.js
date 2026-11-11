@@ -12,13 +12,16 @@
 // (stavby splitter / merger) mají zásuvky 'any' – zboží převezmou od připojených pásů (nodeGoods).
 import { MOON } from './config.js';
 import { game, newUid, dustPrice, UPGRADES } from './state.js';
-import { STRUCTURES, structureById, localToDir, dirToLocal, axes, footOf, setBeltCheck, REFUND } from './structures.js';
+import { STRUCTURES, structureById, localToDir, dirToLocal, axes, footOf, partsOf, setBeltCheck, REFUND } from './structures.js';
 import { BUILDINGS, baseDir, building, toBase } from './base.js';
+import { BASE } from './config.js';
+import { stationMk } from './catalog.js';
 import { heightAt, terrainVersion } from './planet/height.js';
 import { cellDir } from './planet/hexgrid.js';
-import { norm, madd, angleBetween, tangentTo } from './planet/vec.js';
+import { norm, madd, angleBetween, tangentTo, anyTangent } from './planet/vec.js';
 import { live } from './energy.js';
 import { MARKET } from './catalog.js';
+import { curvePoints, straightSegments, CURVE } from './beltCurve.js';
 
 const R = MOON.radius;
 export const BAG = 5;                                    // kg prachu v pytli (4. 11.: dřív 25 kg)
@@ -121,8 +124,25 @@ export function socketsOf(b) {
     return { ref: [b.id, s.id], dir: s.dir, goods, p, face: tangentTo(p, [q[0] - p[0], q[1] - p[1], q[2] - p[2]]), name: def.name };
   });
 }
+// ---------- stanice robotů (11. 11.) ----------
+// Robot vykládá do zásobníku stanice (MK1 80 kg, MK2 200 kg); prodá se jen to, co pás ze stanice doveze do Výkupu
+// (nebo do depa / slinovny). Výstupní zásuvka je na okraji hexu stanice směrem k základně. Odkaz stanice = 'st:<hex>'.
+export const STATION_SOCKET = 3.8;                         // m od středu hexu
+export const stationRef = st => `st:${st.hex}`;
+export const stationOf = id => (game.s.stations || []).find(st => `st:${st.hex}` === id) || null;
+export const stationRoom = st => Math.max(0, stationMk(st).store - (st.store || 0));
+export const stationHasBelt = st => !!beltAt([stationRef(st), 'out']);
+function stationSockets(st) {
+  const c = cellDir(st.hex);
+  let face = angleBetween(c, BASE.dir) > 1e-4 ? tangentTo(c, BASE.dir) : anyTangent(c);
+  if (!Number.isFinite(face[0])) face = anyTangent(c);
+  const p = norm(madd(c, face, STATION_SOCKET / R));
+  return [{ ref: [stationRef(st), 'out'], dir: 'out', goods: 'dust', p, face, name: stationMk(st).name }];
+}
+
 export function allSockets() {
   const out = socketsOf('buyback');
+  for (const st of game.s.stations || []) out.push(...stationSockets(st));
   for (const b of game.s.buildings || []) if (STRUCTURES[b.type]?.sockets) out.push(...socketsOf(b));
   out.push(...beltEndSockets());
   return out;
@@ -130,6 +150,7 @@ export function allSockets() {
 export function socketByRef(ref) {
   if (!ref) return null;
   if (ref[0]?.startsWith('belt:')) return beltEndSockets().find(s => s.ref[0] === ref[0] && s.ref[1] === ref[1]) || null;
+  if (ref[0]?.startsWith('st:')) { const st = stationOf(ref[0]); return st ? stationSockets(st).find(s => s.ref[1] === ref[1]) || null : null; }
   const owner = ref[0] === 'buyback' ? 'buyback' : structureById(ref[0]);
   return owner ? socketsOf(owner).find(s => s.ref[1] === ref[1]) || null : null;
 }
@@ -179,50 +200,55 @@ export function samplePath(pts, step = 1) {
 
 // Je bod p v zabrané ploše stavby b (s rezervou m)?
 function inFoot(b, p, m = 0.3) {
-  const f = footOf(b);
-  if (!f || angleBetween(b.p, p) * R > 40) return false;
-  const [x, z] = dirToLocal(b.p, b.yaw, p);
-  return x > f[0] - m && x < f[1] + m && z > f[2] - m && z < f[3] + m;
+  if (angleBetween(b.p, p) * R > 60) return false;
+  return partsOf(b).some(part => {                                     // LAAC: věž i plošiny (3.1)
+    const f = part.foot;
+    const [x, z] = dirToLocal(part.p, part.yaw, p);
+    return x > f[0] - m && x < f[1] + m && z > f[2] - m && z < f[3] + m;
+  });
 }
 
 // Kontrola trasy (L-22): pts = [zásuvka, ...ohyby, konec]; skip = id stavby začátku a konce (u zásuvek se smí dotknout).
 // Vrací { ok, reason, len, price }.
+// at = kde trasa vadí (m od začátku, D-20: červeně jen ten kus), null = celá.
 export function checkPath(pts, skip = [], ignoreBelt = null) {
   const len = pathLength(pts);
   const price = Math.ceil(len) * BELT.price;
-  if (len > BELT.maxLen) return { ok: false, reason: `Pás je moc dlouhý (${Math.round(len)} m, nejvýš ${BELT.maxLen} m)`, len, price };
+  if (len > BELT.maxLen) return { ok: false, reason: `Pás je moc dlouhý (${Math.round(len)} m, nejvýš ${BELT.maxLen} m)`, len, price, at: null };
   const S = samplePath(pts, 1);
+  const dist = [0];
+  for (let i = 1; i < S.length; i++) dist.push(dist[i - 1] + angleBetween(S[i - 1].p, S[i].p) * R);
   for (let i = 1; i < S.length; i++) {
     const run = angleBetween(S[i - 1].p, S[i].p) * R;
-    if (run > 0.05 && Math.abs(S[i].h - S[i - 1].h) / run > BELT.maxSlope) return { ok: false, reason: 'Příliš strmý svah (nejvýš 25°)', len, price };
+    if (run > 0.05 && Math.abs(S[i].h - S[i - 1].h) / run > BELT.maxSlope) return { ok: false, reason: 'Příliš strmý svah (nejvýš 25°)', len, price, at: dist[i] };
   }
   const ends = [S[0].p, S[S.length - 1].p];
   const nearEnd = p => ends.some(e => angleBetween(e, p) * R < 2.5);
-  for (const smp of S) {
+  for (let si = 0; si < S.length; si++) {
+    const smp = S[si];
     for (const b of game.s.buildings || []) {
       if (skip.includes(b.id) && nearEnd(smp.p)) continue;
       if (STRUCTURES[b.type]?.hover) continue;                       // pod kotvou vedení se projde
-      if (inFoot(b, smp.p, 0.2)) return { ok: false, reason: `Pás vede přes stavbu (${STRUCTURES[b.type].name})`, len, price };
+      if (inFoot(b, smp.p, 0.2)) return { ok: false, reason: `Pás vede přes stavbu (${STRUCTURES[b.type].name})`, len, price, at: dist[si] };
     }
     for (const B of BUILDINGS) {
       if (angleBetween(B.dir, smp.p) * R > B.r + 1) continue;
       if (B.id === 'depot' && skip.includes('buyback') && nearEnd(smp.p)) continue;   // Výkup má v base.js id 'depot'
       const [x, z] = dirToLocal(B.dir, B.yaw, smp.p);                                // betonová deska nevadí, jen budova
-      if (B.solid.some(r => x > r[0] - 0.5 && x < r[1] + 0.5 && z > r[2] - 0.5 && z < r[3] + 0.5)) return { ok: false, reason: `Pás vede přes budovu (${B.name})`, len, price };
+      if (B.solid.some(r => x > r[0] - 0.5 && x < r[1] + 0.5 && z > r[2] - 0.5 && z < r[3] + 0.5)) return { ok: false, reason: `Pás vede přes budovu (${B.name})`, len, price, at: dist[si] };
     }
   }
   // jiné pásy (4. 11.): napříč se křížit smí – nový pás přes starší přejede mostem (bridges = vzdálenosti křížení od začátku).
   // Souběžně vedle sebe (blíž než 1,1 m na delším úseku) ani přes most / nájezd jiného pásu to nejde.
-  const dist = [0];
-  for (let i = 1; i < S.length; i++) dist.push(dist[i - 1] + angleBetween(S[i - 1].p, S[i].p) * R);
   const bridges = [];
   for (const bl of game.s.belts || []) {
     if (bl.id === ignoreBelt) continue;
     const other = beltSamples(bl);
-    let run = null;
+    let run = null, runAt = null;
     const close = () => {
       if (!run) return null;
       const r = run; run = null;
+      runAt = (dist[r.a] + dist[r.b]) / 2;
       if (r.n > BRIDGE.maxRun) return 'Pás by vedl těsně podél jiného pásu – křížit jde jen napříč';
       if (r.lifted) return 'Pás nejde křížit na mostě ani nájezdu jiného pásu';
       const c = (dist[r.a] + dist[r.b]) / 2;
@@ -240,11 +266,11 @@ export function checkPath(pts, skip = [], ignoreBelt = null) {
         if ((hit.lift || 0) > 0.02 || hit.ramp) run.lifted = true;
       } else {
         const err = close();
-        if (err) return { ok: false, reason: err, len, price };
+        if (err) return { ok: false, reason: err, len, price, at: runAt };
       }
     }
     const err = close();
-    if (err) return { ok: false, reason: err, len, price };
+    if (err) return { ok: false, reason: err, len, price, at: runAt };
   }
   bridges.sort((a, b) => a - b);
   return { ok: true, reason: '', len, price, bridges };
@@ -286,6 +312,8 @@ export function beltSamples(bl) {
       }
     }
     liftSamples(s, bl.br);                                  // mosty přes starší pásy (křížení)
+    s.d = new Float64Array(s.length);                       // ujetá vzdálenost ke každému vzorku (položky jedou stálou rychlostí)
+    for (let i = 1; i < s.length; i++) s.d[i] = s.d[i - 1] + angleBetween(s[i - 1].p, s[i].p) * R;
     s.tv = terrainVersion();
     sampleCache.set(bl, s);
   }
@@ -305,6 +333,41 @@ setBeltCheck((p, yaw, foot) => {
   return '';
 });
 
+// ---------- zakřivené pásy (L-70, D-20, 3.1) ----------
+// Nový pás si ukládá jen UZLY (bl.nodes: zásuvka, vývod 2 m, ohyby…, vývod, zásuvka) a zlomy s Alt (bl.zl = indexy uzlů),
+// bl.shape = 'krivka', bl.cs / bl.ce = začátek / konec je u zásuvky s vývodem (rovný úsek). Body bl.pts (po 0,5 m) a
+// bl.nodeAt se z uzlů vždy spočítají (deriveCurve) – NEUKLÁDAJÍ se (nevyčíslitelné vlastnosti), přes síť jdou uzly.
+// Staré pásy ze 3.0 (bez shape) zůstávají lomené beze změny.
+export const SHARP_REASON = 'Příliš ostrý ohyb – přidej další bod nebo použij Alt';
+export const curveLead = s => norm(madd(s.p, s.face, CURVE.lead / R));
+// Uzly trasy ze zásuvky from přes ohyby (bends) do zásuvky to (null → konec v posledním bodě, třeba u kurzoru).
+export function curveNodes(from, bends, to) {
+  const n = [from.p, curveLead(from), ...bends];
+  if (to) n.push(curveLead(to), to.p);
+  return n;
+}
+// Křivka přes uzly: { pts, nodeAt, sharp }. corners = indexy uzlů se zlomem.
+export function curveOf(nodes, corners = [], hasStart = true, hasEnd = true) {
+  return curvePoints(nodes, straightSegments(nodes.length, corners, hasStart, hasEnd));
+}
+function hidden(obj, key, value) { Object.defineProperty(obj, key, { value, writable: true, configurable: true, enumerable: false }); }
+// Spočítá z uzlů body zakřiveného pásu (po načtení, u klienta, po stavbě a bourání úseku).
+export function deriveCurve(bl) {
+  const c = curveOf(bl.nodes, bl.zl || [], bl.cs !== 0, bl.ce !== 0);
+  hidden(bl, 'pts', c.pts);
+  hidden(bl, 'nodeAt', c.nodeAt);
+  bl.len = pathLength(c.pts);
+  sampleCache.delete(bl);
+  return bl;
+}
+const isCurve = bl => bl?.shape === 'krivka' && Array.isArray(bl.nodes);
+// Vzdálenost uzlu k od začátku pásu (m)
+function nodeDist(bl, k) {
+  let d = 0;
+  for (let i = 1; i <= bl.nodeAt[k]; i++) d += angleBetween(bl.pts[i - 1], bl.pts[i]) * R;
+  return d;
+}
+
 // Celá trasa pásu ze zásuvky do zásuvky: [zásuvka, vývod, ...ohyby, vývod, zásuvka]
 export function fullPath(from, bends, to) {
   const pts = [from.p, socketLead(from), ...bends];
@@ -312,8 +375,9 @@ export function fullPath(from, bends, to) {
   return pts;
 }
 
-// Stavba pásu (hostitel / hráč sám): fromRef, toRef, bends (jednotkové směry). Vrací id, nebo false.
-export function addBelt(fromRef, toRef, bends) {
+// Stavba pásu (hostitel / hráč sám): fromRef, toRef, bends (jednotkové směry), corners = indexy ohybů se zlomem (Alt).
+// Od 3.1 vždy zakřivený (L-70). Vrací id, nebo false.
+export function addBelt(fromRef, toRef, bends, corners = []) {
   const from = socketByRef(fromRef), to = socketByRef(toRef);
   if (!from || !to || from.dir !== 'out' || to.dir !== 'in' || !from.goods) return false;
   if (!socketFree(fromRef) || !socketFree(toRef)) return false;
@@ -324,12 +388,17 @@ export function addBelt(fromRef, toRef, bends) {
     retype = true;
   }
   if (fromRef[0] === toRef[0]) return false;
-  const pts = fullPath(from, bends || [], to);
-  const chk = checkPath(pts, [fromRef[0], toRef[0]]);
+  const nodes = curveNodes(from, bends || [], to);
+  const zl = (corners || []).map(i => (i | 0) + 2).filter(i => i >= 2 && i < nodes.length - 2);   // index ohybu → index uzlu
+  const curve = curveOf(nodes, zl);
+  if (curve.sharp.length) return false;
+  const chk = checkPath(curve.pts, [fromRef[0], toRef[0]]);
   if (!chk.ok || game.s.money < chk.price) return false;
   game.s.money -= chk.price;
   const id = newUid();
-  const bl = { id, from: fromRef.slice(), to: toRef.slice(), pts, len: chk.len, goods: from.goods, items: [], wait: 0, paid: chk.price };
+  const bl = { id, from: fromRef.slice(), to: toRef.slice(), shape: 'krivka', nodes, cs: 1, ce: 1, len: chk.len, goods: from.goods, items: [], wait: 0, paid: chk.price };
+  if (zl.length) bl.zl = zl;
+  deriveCurve(bl);
   if (chk.bridges?.length) bl.br = chk.bridges;
   game.s.belts.push(bl);
   // navázání na volné konce pásů: předchozí pás předává do nového, nový do následujícího
@@ -360,6 +429,7 @@ export function removeBelt(id) {
 export function cutBelt(id, k) {
   const s = game.s, bl = (s.belts || []).find(b => b.id === id);
   k |= 0;
+  if (isCurve(bl)) return cutCurve(bl, k);
   if (!bl || k < 0 || k >= bl.pts.length - 1) return false;
   const total = bl.len || pathLength(bl.pts);
   const A = bl.pts.slice(0, k + 1), B = bl.pts.slice(k + 1);
@@ -389,7 +459,46 @@ export function cutBelt(id, k) {
   }
   return true;
 }
-// Úsek pásu u bodu p (do 1,5 m): { id, k } – k = index úseku mezi body lomené čáry
+// Zakřivený pás: zbourá úsek mezi uzly k a k + 1 (zbytky se z uzlů znovu spočítají). 60 % ceny úseku zpět.
+function cutCurve(bl, k) {
+  const s = game.s;
+  if (k < 0 || k >= bl.nodes.length - 1) return false;
+  const total = bl.len, d0 = nodeDist(bl, k), d1 = nodeDist(bl, k + 1);
+  const NA = bl.nodes.slice(0, k + 1), NB = bl.nodes.slice(k + 1);
+  const keepA = NA.length >= 2 && d0 >= 1, keepB = NB.length >= 2 && total - d1 >= 1;
+  if (!keepA && !keepB) return removeBelt(bl.id);
+  const paid = bl.paid || 0, share = L => Math.round(paid * L / Math.max(total, 1e-6));
+  s.money += Math.round(share(total - (keepA ? d0 : 0) - (keepB ? total - d1 : 0)) * REFUND);
+  const zl = bl.zl || [];
+  let bId = null;
+  if (keepB) {
+    bId = newUid();
+    const nb = { id: bId, from: null, to: bl.to, shape: 'krivka', nodes: NB, cs: 0, ce: bl.ce, len: 0, goods: bl.goods, items: [], wait: 0, paid: share(total - d1) };
+    const zB = zl.filter(c => c > k + 1).map(c => c - (k + 1));
+    if (zB.length) nb.zl = zB;
+    deriveCurve(nb);
+    nb.items = bl.items.filter(o => o >= d1).map(o => Math.min(nb.len, o - d1));
+    const brB = (bl.br || []).map(c => Math.round((c - d1) * 10) / 10).filter(c => c > -BRIDGE.flat - BRIDGE.ramp);
+    if (brB.length) nb.br = brB;
+    s.belts.push(nb);
+  }
+  relink(bl.id, bId, 'end');
+  if (keepA) {
+    bl.nodes = NA; bl.to = null; bl.ce = 0; bl.paid = share(d0);
+    const zA = zl.filter(c => c < k);
+    if (zA.length) bl.zl = zA; else delete bl.zl;
+    deriveCurve(bl);
+    bl.items = bl.items.filter(o => o <= bl.len);
+    if (bl.br) { bl.br = bl.br.filter(c => c < bl.len + BRIDGE.flat + BRIDGE.ramp); if (!bl.br.length) delete bl.br; }
+  } else {
+    s.belts.splice(s.belts.indexOf(bl), 1);
+    relink(bl.id, null, 'start');
+  }
+  return true;
+}
+
+// Úsek pásu u bodu p (do 1,5 m): { id, k } – k = index úseku mezi body lomené čáry; u zakřiveného pásu úsek mezi
+// uzly + s0 / s1 (m od začátku – zvýraznění a vrácená cena při bourání).
 export function beltSegmentAt(p) {
   let best = null, bd = 1.5 / R;
   for (const bl of game.s.belts || []) {
@@ -402,6 +511,12 @@ export function beltSegmentAt(p) {
       if (d < bd) { bd = d; best = { id: bl.id, k }; }
     }
   }
+  const bl = best && (game.s.belts || []).find(b => b.id === best.id);
+  if (isCurve(bl) && bl.nodeAt) {
+    let n = 0;
+    while (n + 1 < bl.nodeAt.length - 1 && bl.nodeAt[n + 1] <= best.k) n++;
+    return { id: bl.id, k: n, s0: nodeDist(bl, n), s1: nodeDist(bl, n + 1) };
+  }
   return best;
 }
 // Pásy napojené na stavbu (při zboření stavby se zbourají s ní)
@@ -413,10 +528,20 @@ export function removeBeltsOf(id) {
 }
 
 // Bod na pásu bez alokací (O-11, zobrazení položek každý snímek): zapíše do out = { p: [x,y,z], h }
+// Index vzorku a podíl t pro vzdálenost od začátku (binární hledání v S.d – zakřivené pásy mají vzorky různě daleko).
+function sampleAt(S, bl, offset) {
+  const d = S.d;
+  if (!d) { const k = Math.max(0, Math.min(S.length - 1, offset / Math.max(0.001, bl.len) * (S.length - 1))); return [Math.floor(k), k - Math.floor(k)]; }
+  const x = Math.max(0, Math.min(d[d.length - 1], offset * (d[d.length - 1] / Math.max(0.001, bl.len))));
+  let lo = 0, hi = d.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (d[m] <= x) lo = m; else hi = m; }
+  const seg = d[hi] - d[lo];
+  return [lo, seg > 1e-9 ? (x - d[lo]) / seg : 0];
+}
 export function beltPointInto(bl, offset, out) {
   const S = beltSamples(bl);
-  const k = Math.max(0, Math.min(S.length - 1, offset / Math.max(0.001, bl.len) * (S.length - 1)));
-  const i = Math.floor(k), t = k - i, a = S[i], b = S[Math.min(S.length - 1, i + 1)];
+  const [i, t] = sampleAt(S, bl, offset);
+  const a = S[i], b = S[Math.min(S.length - 1, i + 1)];
   const x = a.p[0] + (b.p[0] - a.p[0]) * t, y = a.p[1] + (b.p[1] - a.p[1]) * t, z = a.p[2] + (b.p[2] - a.p[2]) * t, l = Math.hypot(x, y, z) || 1;
   out.p[0] = x / l; out.p[1] = y / l; out.p[2] = z / l;
   out.h = a.h + (b.h - a.h) * t;
@@ -425,8 +550,8 @@ export function beltPointInto(bl, offset, out) {
 // Bod na pásu podle offsetu (m): { p, h } – pro zobrazení položek
 export function beltPointAt(bl, offset) {
   const S = beltSamples(bl);
-  const k = Math.max(0, Math.min(S.length - 1, offset / Math.max(0.001, bl.len) * (S.length - 1)));
-  const i = Math.floor(k), t = k - i, a = S[i], b = S[Math.min(S.length - 1, i + 1)];
+  const [i, t] = sampleAt(S, bl, offset);
+  const a = S[i], b = S[Math.min(S.length - 1, i + 1)];
   return { p: norm([a.p[0] + (b.p[0] - a.p[0]) * t, a.p[1] + (b.p[1] - a.p[1]) * t, a.p[2] + (b.p[2] - a.p[2]) * t]), h: a.h + (b.h - a.h) * t };
 }
 
@@ -448,6 +573,30 @@ export function depositToDepot(id, kg) {
   return add;
 }
 // Depo s výstupním pásem (dron tam smí vyložit – prach odjede)
+// ---------- výsypka depa (L-63, D-15, 3.1): vozidlo, které pod ní stojí, do ní vysype zásobník (hráč 10. 11.:
+// prach se do depa nasypává, ne nakládá z něj). Rameno prach z vozidla nasaje rychlostí podle výzkumu. ----------
+// Zóna 5 × 5 m za depem (místní −z: vpředu je násypka pro vysypávání, po stranách zásuvky pásů), mimo kruh vysypávání.
+export const DUMP = { z: -7.5, half: 2.5, chuteY: 5.5, still: 0.5, maxSpeed: 0.5, rates: [100, 200, 400] };
+const researched = id => !!game.s?.research?.done?.includes(id);
+export const dumpRate = () => (researched('dump2') ? DUMP.rates[2] : researched('dump1') ? DUMP.rates[1] : DUMP.rates[0]);   // výzkum Rychlý výsyp (L-68)
+// Depo, pod jehož výsypkou je bod p (jednotkový směr), nebo null.
+export function dumpZoneAt(p) {
+  for (const b of depots()) {
+    if (angleBetween(p, b.p) * R > 12) continue;
+    const [x, z] = dirToLocal(b.p, b.yaw, p);
+    if (Math.abs(x) <= DUMP.half && Math.abs(z - DUMP.z) <= DUMP.half) return b;
+  }
+  return null;
+}
+// Odebere ze skladu depa nejvýš kg (pro Kondora – fáze 8). Vrací, kolik opravdu odebral.
+export function takeFromDepot(id, kg) {
+  const b = structureById(id);
+  if (b?.type !== 'depot' || !(kg > 0)) return 0;
+  const t = Math.min(kg, b.data.store || 0);
+  b.data.store = (b.data.store || 0) - t;
+  return t;
+}
+
 export const depotWithBelt = b => b?.type === 'depot' && !!beltAt([b.id, 'out']);
 
 // ---------- simulace (hostitel / hráč sám) ----------
@@ -500,6 +649,11 @@ const NODE_BUF = 2;
 // Může zdroj vypustit položku? (a rovnou ji odebere)
 function emit(ref) {
   if (!ref || ref[0].startsWith('belt:')) return false;    // pás krmený jiným pásem (nebo volný začátek) nic nevypouští
+  if (ref[0].startsWith('st:')) {                          // stanice robota: pytel ze zásobníku (11. 11.)
+    const st = stationOf(ref[0]);
+    if (st && (st.store || 0) >= BAG) { st.store -= BAG; return true; }
+    return false;
+  }
   const b = structureById(ref[0]);
   if (isNode(b)) {
     const d = b.data;
@@ -603,21 +757,33 @@ export function logisticsOffline(seconds) {
 
 const enc = p => [Math.round(p[0] * 1e6), Math.round(p[1] * 1e6), Math.round(p[2] * 1e6)];
 // [id, z, zZás, do, doZás, cihly?, cena, mosty („12.5,40.1“ nebo ''), body ×3 (1e6)…]
-export const encodeBelts = () => (game.s.belts || []).map(b => [b.id, b.from?.[0] || '', b.from?.[1] || '', b.to?.[0] || '', b.to?.[1] || '', b.goods === 'brick' ? 1 : 0, Math.round(b.paid || 0), (b.br || []).join(','), ...b.pts.flatMap(enc)]);
+// [id, z, zZás, do, doZás, cihly?, cena, mosty, tvar, body ×3…] – tvar '' = lomený (body = pts), 'k<s><e>:<zlomy>' = zakřivený
+// (body = uzly, s / e = začátek / konec se zásuvkou 0/1). Od 3.1 (NET_PROTOCOL 5).
+const shapeCode = b => (isCurve(b) ? `k${b.cs !== 0 ? 1 : 0}${b.ce !== 0 ? 1 : 0}:${(b.zl || []).join(',')}` : '');
+export const encodeBelts = () => (game.s.belts || []).map(b => [b.id, b.from?.[0] || '', b.from?.[1] || '', b.to?.[0] || '', b.to?.[1] || '', b.goods === 'brick' ? 1 : 0, Math.round(b.paid || 0), (b.br || []).join(','), shapeCode(b), ...(isCurve(b) ? b.nodes : b.pts).flatMap(enc)]);
 const refOf = (a, b) => (a ? [String(a), String(b)] : null);
 const brOf = v => String(v || '').split(',').filter(x => x !== '').map(Number).filter(Number.isFinite);
 export function applyBelts(list) {
   const old = new Map((game.s.belts || []).map(b => [b.id, b]));
-  game.s.belts = (Array.isArray(list) ? list : []).filter(e => Array.isArray(e) && e.length >= 14).map(e => {
+  game.s.belts = (Array.isArray(list) ? list : []).filter(e => Array.isArray(e) && e.length >= 15).map(e => {
     const prev = old.get(String(e[0]));
     const pts = [];
-    for (let i = 8; i + 2 < e.length; i += 3) pts.push(norm([e[i] / 1e6, e[i + 1] / 1e6, e[i + 2] / 1e6]));
+    for (let i = 9; i + 2 < e.length; i += 3) pts.push(norm([e[i] / 1e6, e[i + 1] / 1e6, e[i + 2] / 1e6]));
     const from = refOf(e[1], e[2]), to = refOf(e[3], e[4]), goods = e[5] ? 'brick' : 'dust', br = brOf(e[7]);
-    if (prev && prev.pts.length === pts.length && (prev.br || []).join(',') === br.join(',') && pts.every((q, i) => angleBetween(q, prev.pts[i]) * R < 0.01)) {
+    const shape = String(e[8] || '');
+    const curved = shape.startsWith('k');
+    const zl = curved ? brOf(shape.split(':')[1]).map(x => x | 0) : [];
+    const cs = curved && shape[1] === '0' ? 0 : 1, ce = curved && shape[2] === '0' ? 0 : 1;
+    const prevPts = prev ? (isCurve(prev) ? prev.nodes : prev.pts) : null;
+    if (prev && isCurve(prev) === curved && prevPts.length === pts.length && (prev.br || []).join(',') === br.join(',') && (prev.zl || []).join(',') === zl.join(',')
+      && prev.cs === (curved ? cs : prev.cs) && prev.ce === (curved ? ce : prev.ce) && pts.every((q, i) => angleBetween(q, prevPts[i]) * R < 0.01)) {
       Object.assign(prev, { from, to, goods, paid: e[6] | 0 });      // trasa beze změny – nech položky a vzorky
       return prev;
     }
-    const bl = { id: String(e[0]), from, to, goods, paid: e[6] | 0, pts, len: pathLength(pts), items: [], wait: 0 };
+    const bl = curved
+      ? { id: String(e[0]), from, to, goods, paid: e[6] | 0, shape: 'krivka', nodes: pts, cs, ce, len: 0, items: [], wait: 0 }
+      : { id: String(e[0]), from, to, goods, paid: e[6] | 0, pts, len: pathLength(pts), items: [], wait: 0 };
+    if (curved) { if (zl.length) bl.zl = zl; deriveCurve(bl); }
     if (br.length) bl.br = br;
     return bl;
   });
@@ -668,8 +834,11 @@ export function logisticsClientTick(dt) {
 }
 
 // ---------- převod pásů do starého Výkupu (vstupy ±7,5 m) na ramena nového modelu ----------
+// 3.1: zakřivené pásy si body spočítají z uzlů (neukládají se)
+UPGRADES.push(s => { for (const bl of s.belts || []) if (isCurve(bl)) deriveCurve(bl); });
 UPGRADES.push(s => {
   for (const bl of s.belts || []) {
+    if (isCurve(bl)) continue;
     const old = bl.to?.[0] === 'buyback' ? OLD_BUYBACK[bl.to[1]] : null;
     const end = bl.pts?.[bl.pts.length - 1];
     if (!old || !end || angleBetween(end, baseDir(old[0], old[1])) * R > 0.5) continue;   // už je na novém rameni

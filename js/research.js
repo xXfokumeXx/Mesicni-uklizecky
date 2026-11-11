@@ -21,12 +21,18 @@ export const TECH = [
   { id: 'solarT4', branch: 'energy', name: 'Slunečnice', price: 18000, time: 150, req: ['solarT3'], desc: 'Dvouosý hexagonální květ panelů.', unlocks: 'solár Slunečnice (16 ⚡/s)' },
   { id: 'solarT5', branch: 'energy', name: 'Koruna', price: 40000, bricks: 50, time: 240, req: ['solarT4'], desc: 'Zrcadla soustředí Slunce do věže s jádrem.', unlocks: 'solár Koruna (25 ⚡/s)' },
   { id: 'batterySwap', branch: 'energy', name: 'Výměna baterií', price: 20000, time: 150, req: ['batteryT3'], desc: 'Jeřáb vymění vybitou baterii vozidla za nabitou za 2 s.', unlocks: 'stavba Výměník baterií' },
+  { id: 'droneDelivery', branch: 'energy', name: 'Dronová donáška', price: 15000, time: 120, req: ['batterySwap'], desc: 'Dron z dronportu výměníku přiveze nabitou baterii k vozidlu do 450 m a vymění ji (klávesa B ve vozidle).', unlocks: 'dronport a drony ve výměníku (záložka Dronport)' },
   { id: 'batteryT4', branch: 'energy', name: 'Baterie Trojčata', price: 30000, time: 180, req: ['batteryT3'], desc: 'Tři tlakové články s pevným elektrolytem.', unlocks: 'baterie Trojčata (8 750 ⚡)' },
   { id: 'batteryT5', branch: 'energy', name: 'Plazmové jádro', price: 50000, bricks: 100, time: 240, req: ['batteryT4'], desc: 'Plazma držená v gyroskopu – největší úložiště energie.', unlocks: 'baterie Jádro (21 000 ⚡)' },
   { id: 'vacuumMk2', branch: 'automation', name: 'Vysavač MK2', price: 25000, bricks: 50, time: 180, desc: 'Nejrychlejší robot, uklízí o prstenec hexů dál.', unlocks: 'stanice MK2 a vylepšení MK1 na MK2 (5 m/s, okruh 3 hexy = 37 hexů, 120 kg)' },
   { id: 'beltSpeed1', branch: 'automation', name: 'Rychlejší pásy I', price: 5000, time: 60, desc: 'Silnější motory pásových dopravníků.', unlocks: 'všechny pásy o 25 % rychlejší' },
   { id: 'beltSpeed2', branch: 'automation', name: 'Rychlejší pásy II', price: 15000, time: 120, req: ['beltSpeed1'], desc: 'Pásy s převodovkou a lehčím pryžovým pásem.', unlocks: 'všechny pásy o dalších 25 % rychlejší' },
+  { id: 'dump1', branch: 'automation', name: 'Rychlý výsyp I', price: 6000, time: 60, desc: 'Silnější sání výsypky dep – vozidlo pod ní vysype zásobník rychleji.', unlocks: 'výsypka všech dep 200 kg/s' },
+  { id: 'dump2', branch: 'automation', name: 'Rychlý výsyp II', price: 14000, time: 120, req: ['dump1'], desc: 'Šnekový podavač ve výsypce dep.', unlocks: 'výsypka všech dep 400 kg/s' },
   { id: 'droneUfo', branch: 'automation', name: 'Dron UFO', price: 25000, time: 120, desc: 'Létající uklízeč, který sám hledá nedočištěné hexy na celé planetě.', unlocks: 'nákup dronů ve Výzkumném centru' },
+  { id: 'aviation', branch: 'vehicles', name: 'Letecká technika', price: 30000, bricks: 100, time: 180, req: ['batteryT3', 'droneUfo'], desc: 'Řídicí věž LAAC s přistávacími plošinami a první letouny na trysky: Prachovka zametá ze vzduchu, Kolibřík létá rychle a skenuje prach.', unlocks: 'stavba LAAC, letouny Prachovka a Kolibřík' },
+  { id: 'heavyLift', branch: 'vehicles', name: 'Těžký vzdušný tah', price: 25000, time: 150, req: ['aviation'], desc: 'Silné trysky a naviják s 12m lanem: letoun unese jakékoli vozidlo.', unlocks: 'letoun Mula (LAAC)' },
+  { id: 'roboticArm', branch: 'vehicles', name: 'Robotické rameno', price: 35000, bricks: 150, time: 180, req: ['aviation'], desc: 'Dvoudílná ruka s kleštinou pod břichem a nákladový prostor na prach.', unlocks: 'letoun Kondor (LAAC)' },
   { id: 'cruise', branch: 'vehicles', name: 'Autocruise', price: 5000, time: 60, desc: 'Vozidlo jede samo vpřed nastavenou rychlostí a zastaví před překážkou.', unlocks: 'vylepšení vozidel Autocruise (Dílna → Vozidla, klávesa C)' },
   { id: 'edgeFollow', branch: 'vehicles', name: 'Sledování hrany prachu', price: 18000, time: 150, req: ['cruise'], desc: 'Asistent drží vozidlo podél hrany prachu, kterou už máš – jako asistent jízdy v pruhu.', unlocks: 'vylepšení vozidel Sledování hrany prachu (Dílna → Vozidla, C 2×)' },
 ];
@@ -34,8 +40,8 @@ export const techById = id => TECH.find(t => t.id === id) || null;
 // Model pro náhled v okně a hologram nad centrem (D-10)
 export const TECH_MODEL = {
   solarRoof: 'vehicle-lunar', batteryT3: 'battery-t3', fastCharge3: 'charger', solarT3: 'solar-t3', solarT4: 'solar-t4', solarT5: 'solar-t5',
-  batterySwap: 'swapper', batteryT4: 'battery-t4', batteryT5: 'battery-t5', vacuumMk2: 'robot', droneUfo: 'drone',
-  cruise: 'vehicle-rideon', edgeFollow: 'vehicle-mega', beltSpeed1: 'belt-piece', beltSpeed2: 'belt-piece',
+  batterySwap: 'swapper', droneDelivery: 'drone-battery', batteryT4: 'battery-t4', batteryT5: 'battery-t5', vacuumMk2: 'robot', droneUfo: 'drone',
+  cruise: 'vehicle-rideon', aviation: 'laac', heavyLift: 'vehicle-mula', roboticArm: 'vehicle-kondor', edgeFollow: 'vehicle-mega', beltSpeed1: 'belt-piece', beltSpeed2: 'belt-piece', dump1: 'silo', dump2: 'silo',
 };
 
 const R = () => game.s.research || (game.s.research = { done: [], current: null, queue: [] });

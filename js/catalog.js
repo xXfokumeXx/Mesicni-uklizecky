@@ -1,5 +1,5 @@
 // Katalog: nástroje, vozidla, jejich vylepšení, stavby a stanice robotů.
-// width = šířka zametaného pásu (m), hopper = zásobník na prach (kg), power = prachu z bodu za tick.
+// width = šířka zametaného pásu (m), hopper = zásobník na prach (kg), power = prachu z bodu za tick (pevná, od 3.1 bez vylepšení – L-71).
 
 export const TOOLS = [
   { id: 'toothbrush', name: 'Zubní kartáček', width: 0.3, hopper: 4,  power: 20, price: 0,
@@ -14,10 +14,11 @@ export const TOOLS = [
     desc: 'Dvoumetrový záběr pro ty, kdo už nechtějí jezdit.' },
 ];
 
+// L-71 (3.1): vylepšení Síla (power) zrušeno – koupené úrovně vrací equipment.js powerRefund (5 úrovní, podíl 0,45).
+export const POWER_LEVELS_31 = 5;
 export const TOOL_UPGRADES = {
   width:  { name: 'Šířka',     max: 5, step: 0.12, unit: 'm',  desc: '+12 % šířky pásu za úroveň' },
   hopper: { name: 'Zásobník',  max: 5, step: 0.3,  unit: 'kg', desc: '+30 % kapacity za úroveň' },
-  power:  { name: 'Síla',      max: 5, step: 10,   unit: '',   desc: '+10 prachu z bodu za tick' },
 };
 
 // kind: 'push' = jdeš za ním, 'drive' = sedíš za volantem, 'transport' = jen rychlý přesun.
@@ -33,7 +34,21 @@ export const VEHICLES = [
   { id: 'crew',  name: 'Přepravník posádky',    kind: 'transport', width: 0,    hopper: 0,    speed: 12, power: 0,   price: 4000,
     desc: 'Nezametá, ale odveze řidiče a až 5 cestujících rychle na druhou stranu Měsíce.', front: 0, camera: 16, seats: 5,
     body: [1.2, 5, 3] },
+  // ---------- letouny (3.1, L-65, D-17): kind 'air', domov = plošina LAAC, pilotují se jako vozidla (player.js fly) ----------
+  // sweepSpeed = nejvyšší rychlost při zametání, sell = podíl ceny při prodeji (60 %), scan = dosah skeneru (m)
+  { id: 'prachovka', name: 'Prachovka', kind: 'air', width: 4.0, hopper: 600, speed: 12, sweepSpeed: 6, power: 80, price: 45000, research: 'aviation',
+    desc: 'Zametá ze vzduchu: sací lišta 4 m pod trupem v 1,5 m nad zemí, zásobník 600 kg. Vysype se ve Výkupu nebo do depa jako vozidlo.', front: 0, camera: 20, sell: 0.6 },
+  { id: 'kolibrik', name: 'Kolibřík', kind: 'air', width: 0, hopper: 0, speed: 30, power: 0, price: 30000, research: 'aviation',
+    desc: 'Rychlý dvoumístný letoun na přesuny a průzkum. Skener prachu ukáže na mapě (M) 5 nejšpinavějších hexů do 300 m.', front: 0, camera: 20, seats: 1, scan: 300, sell: 0.6 },
+  // fáze 8 (L-67): carry = převoz vozidel (rope = lano 12 m, arm = robotická ruka), loadSpeed = rychlost s nákladem
+  { id: 'mula', name: 'Mula', kind: 'air', width: 0, hopper: 0, speed: 14, loadSpeed: 9, power: 0, price: 70000, research: 'heavyLift', carry: 'rope', rope: 12,
+    desc: 'Těžký nosič s navijákem: na 12m laně unese jakékoli vozidlo, i Mega rover. Náklad se pomalu houpe – kyv tlumíš protipohybem.', front: 0, camera: 24, sell: 0.6 },
+  { id: 'kondor', name: 'Kondor', kind: 'air', width: 0, hopper: 2000, speed: 20, loadSpeed: 14, power: 0, price: 90000, research: 'roboticArm', carry: 'arm', armFits: ['push', 'rideon', 'lunar'],
+    desc: 'Nákladní letoun: robotická ruka unese ruční vozík, Zametač se sedačkou i Měsíční vůz, nákladový prostor 2 000 kg prachu se plní ze sila depa shora.', front: 0, camera: 22, sell: 0.6 },
 ];
+export const AIR_TYPES = VEHICLES.filter(v => v.kind === 'air').map(v => v.id);
+export const GROUND_TYPES = VEHICLES.filter(v => v.kind !== 'air').map(v => v.id);
+export const isAirType = type => AIR_TYPES.includes(type);
 
 // Fyzika vozidla (physics.js createBody): [maxVr, grip, airG] – jak prudce vyletí z hřebene,
 // jak drží na zemi a kolikrát gravitace planety táhne vozidlo dolů ve vzduchu.
@@ -84,14 +99,24 @@ export const VEHICLE_BATTERY = {
   lunar: { cap: 1800, drive: 2.8, sweep: 1.2 },
   mega: { cap: 4800, drive: 7.0, sweep: 3.6 },
   crew: { cap: 2400, drive: 4.0, sweep: 0 },
+  // letouny (L-65): hover = spotřeba ve vznášení, drive = při plné rychlosti
+  prachovka: { cap: 2200, hover: 3, drive: 5, sweep: 2 },
+  kolibrik: { cap: 1200, hover: 2, drive: 6, sweep: 0 },
+  mula: { cap: 4000, hover: 6, drive: 10, sweep: 0, load: 6 },          // load = + s vozidlem na laně
+  kondor: { cap: 5000, hover: 7, drive: 12, sweep: 0, load: 5 },         // load = + s vozidlem nebo nákladem
 };
 export const EMERGENCY_SPEED = 0.15;           // vybitá baterie: nouzový režim 15 % rychlosti, nezametá (L-02)
 // Kapacita baterie vozidla v ⚡ (0 = bez baterie) včetně vylepšení „Větší baterie“ (+25 % za úroveň).
-export const batteryCap = v => (VEHICLE_BATTERY[v?.type]?.cap || 0) * (1 + 0.25 * (v?.lv?.battery | 0));
+export const batteryCap = v => (VEHICLE_BATTERY[v?.type]?.cap || 0) * (1 + 0.25 * ((v?.lv?.battery | 0) + (v?.lv?.abatt | 0)));   // abatt = Baterie letounu
 
 export const VEHICLE_UPGRADES = {
-  width: { name: 'Šířka sání',    max: 5, step: 0.1,  unit: 'm',   desc: '+10 % šířky sání za úroveň' },
-  speed: { name: 'Rychlost vozu', max: 5, step: 0.12, unit: 'm/s', desc: '+12 % rychlosti za úroveň' },
+  width: { name: 'Šířka sání',    max: 5, step: 0.1,  unit: 'm',   desc: '+10 % šířky sání za úroveň', only: ['push', 'rideon', 'lunar', 'mega'] },
+  speed: { name: 'Rychlost vozu', max: 5, step: 0.12, unit: 'm/s', desc: '+12 % rychlosti za úroveň', only: ['push', 'rideon', 'lunar', 'mega', 'crew'] },
+  // letouny (3.1, L-65): 3 úrovně, cena podle upgradeCost
+  motor: { name: 'Motory', max: 3, step: 0.15, unit: 'm/s', desc: '+15 % rychlosti za úroveň', only: ['prachovka', 'kolibrik', 'mula', 'kondor'] },
+  abatt: { name: 'Baterie', max: 3, step: 0.25, unit: '⚡', desc: '+25 % kapacity baterie za úroveň', only: ['prachovka', 'kolibrik', 'mula', 'kondor'] },
+  special: { name: 'Speciální', max: 3, step: 0.2, unit: '', desc: 'Prachovka: sací lišta +20 % · Kolibřík: dosah skeneru +150 m · Mula: naviják (kolečko 8–20 m) · Kondor: náklad +50 %', only: ['prachovka', 'kolibrik', 'mula', 'kondor'],
+    names: { prachovka: 'Sací lišta', kolibrik: 'Dosah skeneru', mula: 'Naviják', kondor: 'Nákladový prostor' } },
   hopper: { name: 'Kapacita zásobníku', max: 5, step: 0.25, unit: 'kg', desc: '+25 % kapacity zásobníku za úroveň', only: ['push', 'rideon', 'lunar', 'mega'] },
   boost: { name: 'Boost (Shift)', max: 3, step: 0.5,  unit: '×',   desc: 'Shift = skokově 200 % rychlosti, každá další úroveň +50 %', only: ['crew'] },
   // L-03: úrovně 1–2 hned, 3–4 až po výzkumu „Baterie T3“ (research.from = od které úrovně je potřeba výzkum)
@@ -116,13 +141,13 @@ export const MARKET = {
   name: 'Burzovní cena prachu',
   desc: 'Smlouva s pozemskou burzou: Výkup platí za každý kilogram prachu víc. Platí pro celý svět – pro hráče, roboty, drony i pásy.',
   max: 5, step: 0.06,
-  price: 30000, priceMult: 2,   // 30 000 → 60 000 → 120 000 → 240 000 → 480 000
+  price: 20000, priceMult: 2,   // 20 000 → 40 000 → 80 000 → 160 000 → 320 000
 };
 export const HEXUP = {
   name: 'Prémie za dočištěný hex',
   desc: 'Kontrakt s úklidovou agenturou: za každý dočištěný hexový sektor přijde vyšší prémie. Platí i pro hexy, které dočistí roboti a drony.',
   max: 5, step: 0.5,
-  price: 30000, priceMult: 2,
+  price: 20000, priceMult: 2,   // 20 000 → 40 000 → 80 000 → 160 000 → 320 000 (do 3.0.4: od 30 000)
 };
 const exchCost = (u, lv) => (lv >= u.max ? null : Math.round(u.price * u.priceMult ** lv));
 export const marketCost = lv => exchCost(MARKET, lv);
@@ -139,8 +164,9 @@ export const STATION = {
 // extra = příplatek k ceně stanice; vylepšení na místě stojí rozdíl příplatků. kgPerSec ~ rychlost (offline).
 export const STATION_MK = [
   null,
-  { name: 'Vysavač MK1', speed: 3.5, hopper: 60, rings: 2, kgPerSec: 0.1, extra: 0 },
-  { name: 'Vysavač MK2', speed: 5, hopper: 120, rings: 3, kgPerSec: 0.14, extra: 9000, research: 'vacuumMk2' },
+  // store = zásobník stanice (kg, 11. 11.): robot do něj vykládá, prach odveze jen pás ze stanice (prodej ve Výkupu)
+  { name: 'Vysavač MK1', speed: 3.5, hopper: 60, rings: 2, kgPerSec: 0.1, extra: 0, store: 80 },
+  { name: 'Vysavač MK2', speed: 5, hopper: 120, rings: 3, kgPerSec: 0.14, extra: 9000, research: 'vacuumMk2', store: 200 },
 ];
 export const stationMk = st => STATION_MK[Math.max(1, Math.min(2, st?.mk | 0))];
 
@@ -212,5 +238,19 @@ export const HELMET_PROPS = [
   { id: 'whiskers', slot: 'face', name: 'Kočičí vousky',       desc: 'Ke kočičím uším jako dělané.' },
 ];
 
-export const DEFAULT_LOOK = { color: 0, top: 'none', face: 'noface' };
+// Hotová oblečení (AST-04, 3.1): sada barev pro materiály astronauta (barvy z postav předávky postavy/postava-*.glb,
+// sRGB). Co v pal chybí, zůstane jako na modelu. color = barva ze SUIT_COLORS, ke které oblečení patří (barva hráče
+// v chatu, jmenovce a na mapě) – jiná barva ze šatny oblek dobarví (scene/astronaut.js applyPalette).
+export const SKINS = [
+  { id: 'vychozi', name: 'Výchozí', color: 0, pal: null },
+  { id: 'rez', name: 'Rezavý', color: 14, pal: { lem: 0x4a2c1c, oblek: 0xa4552a, 'oblek-stin': 0x7c3413, doplnek: 0xd9c096, svetlo: 0xffc04a, stit: 0xd9a441, jetpack: 0x9a6c3e, 'jetpack-kov': 0x6f4a29 } },
+  { id: 'reflex', name: 'Reflexní', color: 5, pal: { lem: 0x2b2725, oblek: 0xec7a1c, 'oblek-stin': 0xb85c12, doplnek: 0xf7e27a, svetlo: 0xffc04a, stit: 0x2a3346, jetpack: 0x3b3431, 'jetpack-kov': 0x2b2725 } },
+  { id: 'mech', name: 'Mechanik', color: 1, pal: { lem: 0x3a4238, oblek: 0x8f9a8a, 'oblek-stin': 0x5c6a5a, doplnek: 0xd9a441, svetlo: 0xff8a5c, stit: 0xff8a5c, jetpack: 0x5c6a5a, 'jetpack-kov': 0x8f8c88 } },
+  { id: 'krystal', name: 'Krystal', color: 10, pal: { lem: 0x23465a, oblek: 0xeaf6f6, 'oblek-stin': 0xb9d3d6, doplnek: 0x6fd8f2, svetlo: 0xa8efff, stit: 0x3fb7d9, jetpack: 0xeaf6f6, 'jetpack-kov': 0x23465a } },
+  { id: 'nocni', name: 'Noční', color: 3, pal: { lem: 0x141a28, oblek: 0x26324c, 'oblek-stin': 0x3a4763, doplnek: 0x6fd8f2, svetlo: 0x6fd8f2, stit: 0x6fd8f2, jetpack: 0x26324c, 'jetpack-kov': 0x141a28 } },
+];
+export const skinById = id => SKINS.find(k => k.id === id) || SKINS[0];
+
+// Výchozí vzhled nového hráče = jako model (číro, fousky, čumák – rozhodnutí 5 v README 3.1). Stávající hráči si nechají svůj.
+export const DEFAULT_LOOK = { skin: 'vychozi', color: 0, top: 'mohawk', face: 'whiskers' };
 export const propById = id => HELMET_PROPS.find(p => p.id === id);

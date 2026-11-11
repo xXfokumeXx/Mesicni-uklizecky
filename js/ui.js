@@ -1,11 +1,18 @@
 // HUD: peníze a zásobník, výzva k akci (E), vzdálenost k základně (3D šipku kreslí scene/compass.js),
 // plovoucí „+$“ a oznámení (toast). Počty hexů, robotů a dronů jsou ve Výkupu (záložka Statistiky).
-import { BASE } from './config.js';
+import { BASE, MOON } from './config.js';
 import { game, currentHexPct, baseDistance } from './state.js';
 import { activeEquipment } from './equipment.js';
 import { playerFx, boostCharge } from './player.js';
 import { fmt } from './format.js';
 import { SUIT_COLORS, VEHICLE_BATTERY, batteryCap } from './catalog.js';
+import { droneStatus, arrowTo, dronportsInWorld, DRONE } from './dronport.js';
+import { rankHtml } from './ranks.js';
+import { isAirType } from './catalog.js';
+import { airHome } from './laac.js';
+import { airAltitude, airMode } from './player.js';
+import { angleBetween as angB } from './planet/vec.js';
+import { hasResearch } from './structures.js';
 import { roofCover } from './solarRoof.js';
 import { nearestCharger, energyTotals } from './energy.js';
 import { autopilotStatus } from './autopilot.js';
@@ -72,6 +79,18 @@ export function updateUi() {
     icon.classList.toggle('batt--charging', battSeen.up && k < 1);
     $('row-battery').classList.toggle('stats__row--blink', k <= 0.05);
   }
+  // dron s baterií (3.1, L-62): stav letu a směr k dronu, tlačítko objednat / zrušit
+  const droneRow = !!bcap && hasResearch(DRONE.research) && dronportsInWorld();
+  $('row-drone').hidden = !droneRow;
+  if (droneRow) {
+    const st = droneStatus(s.driving), v = eq.item;
+    const text = st ? (st.dir ? `${st.text} ${arrowTo(v.p, v.f, st.dir)}` : st.text) : 'objednat baterii';
+    if ($('stat-drone').textContent !== text) $('stat-drone').textContent = text;
+    const btn = $('btn-drone');
+    const label = !st ? 'Objednat baterii' : st.m.carry === 'full' && !st.m.cancel && !['swap', 'ret', 'down', 'unload'].includes(st.m.ph) ? 'Zrušit' : '';
+    btn.hidden = !label;
+    if (label && btn.textContent !== label) btn.textContent = label;
+  }
   // energie celé soustavy (panel vpravo): In = výroba, Out = spotřeba, obnova 1× za 2 s
   const now2 = performance.now();
   if (now2 - powerAt > 2000) {
@@ -94,9 +113,16 @@ export function updateUi() {
   const auto = s.driving >= 0 ? autopilotStatus() : null;
   $('row-auto').hidden = !auto;
   if (auto) $('stat-auto').textContent = auto;
-  const charger = bcap && eq.item.charge / bcap < 0.2 ? nearestCharger(s.p) : null;
+  // letoun (3.1): výška a režim, pod 20 % šipka k plošině LAAC
+  const plane = s.driving >= 0 && isAirType(eq.item?.type);
+  $('row-alt').hidden = !plane;
+  if (plane) {
+    const mode = airMode();
+    $('stat-alt').textContent = mode === 'ground' ? 'na zemi · W / mezerník = vzlet' : mode === 'land' ? `přistává · ${Math.round(airAltitude())} m` : `${Math.round(airAltitude())} m · cíl ${Math.round(eq.item.air?.alt || 0)} m`;
+  }
+  const charger = bcap && eq.item.charge / bcap < 0.2 ? (plane ? airCharger(eq.item, s.p) : nearestCharger(s.p)) : null;
   $('base-nav').hidden = charger ? false : dist < BASE.clean;
-  $('base-nav').querySelector('.base-nav__label').textContent = charger ? 'Nabíječka' : 'Základna';
+  $('base-nav').querySelector('.base-nav__label').textContent = charger ? (plane ? 'LAAC' : 'Nabíječka') : 'Základna';
   $('stat-base').textContent = Math.round(charger ? charger.dist : dist) + ' m';
 }
 
@@ -108,7 +134,12 @@ export function navTarget() {
   const s = game.s;
   if (s.driving < 0) return null;
   const v = s.vehicles[s.driving], cap = batteryCap(v);
-  return cap && v.charge / cap < 0.2 ? nearestCharger(s.p)?.dir || null : null;
+  return cap && v.charge / cap < 0.2 ? (isAirType(v.type) ? airCharger(v, s.p) : nearestCharger(s.p))?.dir || null : null;
+}
+// Letoun: domovská plošina LAAC (nabíjí se tam)
+function airCharger(v, p) {
+  const h = airHome(v);
+  return h ? { dir: h.dir, dist: angB(p, h.dir) * MOON.radius } : null;
 }
 
 // Výzva k akci nad ovládáním (klávesa E / klepnutí).
@@ -187,7 +218,7 @@ export function updatePlayers(list, code) {
       + `<span title="Nasbíraný prach">${fmtKg(st.kg)}</span>`
       + `<span class="players__earn" title="Vydělal(a)">+$${fmtStat(st.e)}</span>`
       + `<span class="players__spent" title="Utratil(a)">−$${fmtStat(st.sp)}</span></span>`;
-    return `<li class="players__item"><span class="players__head"><span class="players__dot" style="--suit:${c}"></span>${name}${p.me ? ' <span class="players__tag">ty</span>' : ''}${p.host ? ' <span class="players__tag players__tag--host">hostitel</span>' : ''}</span>${stats}</li>`;
+    return `<li class="players__item"><span class="players__head"><span class="players__dot" style="--suit:${c}"></span>${rankHtml(p.rank, false)}${name}${p.me ? ' <span class="players__tag">ty</span>' : ''}${p.host ? ' <span class="players__tag players__tag--host">hostitel</span>' : ''}</span>${stats}</li>`;
   }).join('');
   if (el.dataset.html !== html) { el.dataset.html = html; $('players-list').innerHTML = html; }
 }

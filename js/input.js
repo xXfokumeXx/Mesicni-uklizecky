@@ -48,9 +48,9 @@ export const input = {
 
 // onAction = klávesa E (jednorázově), onCancel = Esc, onJump = nový stisk mezerníku (jetpack),
 // onAlt = R (jiný cíl pásu), onSlot(k) = klávesa 1–3 (políčko hotbaru), onDrop = X (s kladivem = bourání; nástroj se ničí jen × v políčku hotbaru)
-// onMove = G (přesunout depo), onLights = L (světla zapnout / vypnout)
+// onMove = G (přesunout depo), onLights = L (světla zapnout / vypnout), onBattery = B (baterie dronem, 3.1)
 // tilt(dy) = tažení pravým tlačítkem nahoru / dolů (náklon kamery)
-export function bindInput(canvas, { pickDir, rotate, tilt, zoom, onAction, onCancel, onJump, onAlt, onSlot, onDrop, onMove, onLights, onHammer, onBuildMenu, onAuto }) {
+export function bindInput(canvas, { pickDir, rotate, tilt, zoom, onAction, onCancel, onJump, onAlt, onSlot, onDrop, onMove, onLights, onHammer, onBuildMenu, onAuto, onBattery }) {
   input.pick = (x, y) => pickDir(x, y);
   addEventListener('keydown', e => {
     if (!input.enabled) return;
@@ -65,14 +65,15 @@ export function bindInput(canvas, { pickDir, rotate, tilt, zoom, onAction, onCan
     if (key === 'g' && !e.repeat) { onMove?.(); return; }
     if (key === 'l' && !e.repeat) { onLights?.(); return; }
     if (key === 'c' && !e.repeat) { onAuto?.(); return; }
+    if (key === 'b' && !e.repeat) { onBattery?.(); return; }
     // klávesy 1–9 podle polohy (česká klávesnice má nahoře +ěščř…)
     if (/^(Digit|Numpad)[1-9]$/.test(e.code) && !e.repeat) { onSlot?.(Number(e.code.slice(-1)) - 1); return; }
     input.keys[key] = true;
-    if (e.key.startsWith('Arrow') || e.key === ' ') e.preventDefault();
+    if (e.key.startsWith('Arrow') || e.key === ' ' || key === 'alt') e.preventDefault();   // Alt = zlom pásu (prohlížeč by jinak skočil do menu)
   });
   addEventListener('keyup', e => {
     input.keys[e.key.toLowerCase()] = false;
-    if (e.key === ' ' && input.enabled) e.preventDefault();
+    if ((e.key === ' ' || e.key === 'Alt') && input.enabled) e.preventDefault();
   });
   addEventListener('blur', () => input.release());
 

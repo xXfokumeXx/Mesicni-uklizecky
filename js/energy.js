@@ -13,6 +13,8 @@ import { sunElevationDeg, sunAngle } from './planet/sun.js';
 import { sunWindow } from './planet/sunwindow.js';
 import { researching, researchProgress, RESEARCH_POWER } from './research.js';
 import { roofRest } from './solarRoof.js';
+import { laacParts } from './laac.js';
+import { isAirType } from './catalog.js';
 import { sinterWants, SINTER, DEPOT, beltAt } from './logistics.js';
 
 const R = MOON.radius;
@@ -202,8 +204,9 @@ export function swapperEta(b) {
   const L = live.get(b.id), rack = b.data.rack || [];
   if (rack.some(x => x >= 0.999)) return 0;
   const f = L?.wired ? (L.f ?? 0) : 0;
-  if (f <= 0.01) return null;
-  const best = Math.max(...rack);
+  const inRack = rack.filter(x => x >= 0);                              // −1 = baterii odnesl dron (3.1)
+  if (f <= 0.01 || !inRack.length) return null;
+  const best = Math.max(...inRack);
   return (1 - best) * SWAP.cap / (SWAP.rate * f);
 }
 
@@ -261,7 +264,7 @@ export function energyTick(dt = TICK, busy = () => false) {
     } else if (b.type === 'swapper') {
       // výměník (L-09): vozidlo stojí uprostřed → jeřáb vymění baterii za nabitou z regálu; regál se nabíjí 15 ⚡/s na baterii
       const d = b.data, n = Math.min(4, Math.max(2, d.slots || 2));
-      d.rack = Array.from({ length: n }, (_, k) => Math.max(0, Math.min(1, Number(d.rack?.[k] ?? 0))));
+      d.rack = Array.from({ length: n }, (_, k) => { const x = Number(d.rack?.[k] ?? 0); return x < 0 ? -1 : Math.min(1, x || 0); });   // −1 = odnesl dron
       if (d.swap) {
         const v = s.vehicles[d.swap.i];
         if (!v || v.uid !== d.swap.uid || busy(d.swap.i)) d.swap = null;               // odjel dřív → nic se nevyměnilo
@@ -284,10 +287,13 @@ export function energyTick(dt = TICK, busy = () => false) {
           else L.waiting = true;                                                          // v regálu není nabitá baterie
         }
       }
-      const need = d.rack.map((x, k) => (k === d.swap?.k || x >= 1 ? 0 : Math.min(SWAP.rate, (1 - x) * SWAP.cap / dt)));
-      const want = need.reduce((a, x) => a + x, 0);
+      const need = d.rack.map((x, k) => (k === d.swap?.k || x < 0 || x >= 1 ? 0 : Math.min(SWAP.rate, (1 - x) * SWAP.cap / dt)));
+      // dronport (3.1, L-62): nabíjející se dron bere 8 ⚡/s
+      const dp = d.dp?.n > 0 ? d.dp : null;
+      const drones = dp ? dp.dr.map((x, k) => (k < dp.n && x.st === 'charging' ? STRUCTURES.swapper.dronport.power : 0)) : null;
+      const want = need.reduce((a, x) => a + x, 0) + (drones || []).reduce((a, x) => a + x, 0);
       L.rack = d.rack; L.need = need; L.f = want ? 0 : 1;
-      if (L.wired && want > 0) { S.demand += want; S.loads.push({ b, L, want, rack: need }); }
+      if (L.wired && want > 0) { S.demand += want; S.loads.push({ b, L, want, rack: need, drones }); }
     } else if (b.type === 'sinter') {
       // slinovna (L-23): 15 ⚡/s (4. 11.), jen když má prach a místo na cihly. 4. 11.: bez prachu nebere nic a ani
       // nejede (pend – energii dostane až v další bilanci); s prachem jede jen na plný výkon (viz níže, S.sinters)
@@ -295,6 +301,18 @@ export function energyTick(dt = TICK, busy = () => false) {
       L.f = 0; L.pend = !want;
       if (L.wired && want > 0) S.sinters.push({ b, L, want });
       else b.data.on = false;
+    } else if (b.type === 'laac') {
+      // LAAC (3.1, L-64): plošiny nabíjí letouny 25 ⚡/s přívodem z věže; sloty = plošiny v pořadí b.data.pads (jako nabíječka)
+      const rate = STRUCTURES.laac.chargeRate;
+      L.slots = laacParts(b).filter(x => x.kind === 'pad').map(pp => {
+        const i = s.vehicles.findIndex((v, j) => isAirType(v.type) && !busy(j) && angleBetween(v.p, pp.p) * R < 2 * pp.scale + 0.5);
+        const v = s.vehicles[i];
+        const need = v ? batteryCap(v) - v.charge : 0;
+        return { i, side: pp.side, state: i < 0 ? 'free' : need <= 0.01 ? 'full' : 'charging', want: need > 0.01 ? Math.min(rate, need / dt) : 0 };
+      });
+      const want = L.slots.reduce((x, sl) => x + sl.want, 0);
+      if (L.wired && want > 0) { S.demand += want; S.loads.push({ b, L, want }); }
+      else if (!L.wired) L.slots.forEach(sl => { if (sl.state === 'charging') sl.state = 'short'; });
     } else if (b.type === 'research') {
       // výzkumné centrum: 5 ⚡/s jen během výzkumu (L-30); bez kabelu f = 0 → výzkum stojí
       const want = researching() ? RESEARCH_POWER : 0;
@@ -350,7 +368,13 @@ export function energyTick(dt = TICK, busy = () => false) {
     for (const ld of S.loads) {
       ld.L.f = S.f;
       ld.L.use = ld.want * S.f;
-      if (ld.rack) ld.rack.forEach((w, k) => { ld.b.data.rack[k] = Math.min(1, ld.b.data.rack[k] + w * S.f * dt / SWAP.cap); });
+      if (ld.rack) ld.rack.forEach((w, k) => { if (w > 0) ld.b.data.rack[k] = Math.min(1, ld.b.data.rack[k] + w * S.f * dt / SWAP.cap); });
+      if (ld.drones) ld.drones.forEach((w, k) => {                    // dron: zbývající čas nabíjení ubývá podle dodané energie
+        const x = ld.b.data.dp?.dr?.[k];
+        if (!(w > 0) || x?.st !== 'charging') return;
+        x.chg = Math.max(0, (x.chg || 0) - S.f * dt);
+        if (x.chg <= 0) { x.st = 'ready'; x.chg = 0; }
+      });
       for (const sl of ld.L.slots || []) {
         if (sl.want <= 0) continue;
         const v = s.vehicles[sl.i];
@@ -511,12 +535,20 @@ export function describe(b) {
     const st = (L?.slots || []).map(x => ({ free: 'volno', charging: 'nabíjí', full: 'nabito', short: 'málo energie' }[x.state])).join(' · ');
     return `${def.name} · ${n} ${n === 1 ? 'slot' : n < 5 ? 'sloty' : 'slotů'} · ${slotRate(b)} ⚡/s${st ? ` · ${st}` : ''}${wired ? '' : ' · bez kabelu'}`;
   }
+  if (b.type === 'laac') {                                            // LAAC (3.1): plošiny nabíjí letouny
+    const sl = L?.slots || [];
+    const ch = sl.filter(x => x.state === 'charging' || x.state === 'short').length, full = sl.filter(x => x.state === 'full').length;
+    const np = (b.data.pads || []).length;
+    return `${def.name} · ${np} ${np === 1 ? 'plošina' : np < 5 ? 'plošiny' : 'plošin'} · ${STRUCTURES.laac.chargeRate} ⚡/s na plošinu${ch ? ` · nabíjí ${ch}` : ''}${full ? ` · nabito ${full}` : ''}${wired ? '' : ' · bez kabelu – plošiny nenabíjí'}`;
+  }
   if (b.type === 'swapper') {
     const rack = b.data.rack || [];
     const full = rack.filter(x => x >= 0.999).length;
     const eta = swapperEta(b);
     const tail = b.data.swap ? ' · vyměňuje…' : full ? '' : eta == null ? ' · žádná nabitá – bez energie' : ` · nabitá za ${Math.ceil(eta)} s`;
-    return `${def.name} · regál ${full} / ${rack.length} nabité${tail}${wired ? '' : ' · bez kabelu'}`;
+    const dp = b.data.dp?.n > 0 ? b.data.dp : null;
+    const drones = dp ? ` · ${dp.n === 1 ? 'dron' : 'drony'}: ${dp.dr.slice(0, dp.n).map(x => (x.st === 'ready' ? 'připraven' : x.st === 'out' ? 'letí' : `nabíjí ${Math.ceil(x.chg || 0)} s`)).join(', ')}` : '';
+    return `${def.name} · regál ${full} / ${rack.length} nabité${tail}${drones}${wired ? '' : ' · bez kabelu'}`;
   }
   if (b.type === 'research') {
     const pr = researchProgress();

@@ -8,6 +8,7 @@ import { hexes, dustDiff, applyDustDiff, mergeDustDiff } from './planet/dustmap.
 import { VEHICLES, STATION } from './catalog.js';
 import { legacyGarages, homeSpot } from './structures.js';    // (zároveň registruje převod v2 → v3, MIGRATE[2])
 import { tangentTo } from './planet/vec.js';
+import { VERSION, cmpVersion } from './version.js';
 
 export const SLOTS = ['slot1', 'slot2', 'slot3', 'slot4', 'slot5'];
 const DB_NAME = 'moonsweepers2', STORE = 'saves';
@@ -150,6 +151,7 @@ export async function importSlot(slot, text) {
   try { data = JSON.parse(text); } catch { return { ok: false, error: 'Soubor není platný JSON.' }; }
   if (data?.format !== EXPORT_FORMAT || !data.s || typeof data.s !== 'object') return { ok: false, error: 'Tohle není uložená hra Měsíčních zametaček.' };
   if (!canLoadVersion({ v: data.s.v ?? data.v })) return { ok: false, error: `Hra je z novější verze (${data.s.v ?? data.v}) – tahle verze ji neotevře.` };
+  if (cmpVersion(data.meta?.ver, VERSION) > 0) return { ok: false, error: `Hra je uložená ve verzi ${data.meta.ver} – obnov stránku (Ctrl+F5).` };
   if ((await getRecord(slot))?.s) return { ok: false, error: 'Slot není prázdný – nejdřív ho smaž, nebo vyber jiný.' };   // (getRecord vrací u prázdného slotu true)
   let dust = null;
   try { if (data.dust) dust = { gz: !!data.dust.gz, bytes: fromBase64(data.dust.b64) }; } catch { return { ok: false, error: 'Mapa prachu v souboru je poškozená.' }; }
@@ -178,8 +180,38 @@ export async function peekSave(slot) {
   if (!rec?.s) return null;
   return {
     planet: rec.s.planet === 'mars' ? 'mars' : 'moon', netCode: rec.s.netCode || null, last: rec.s.last || 0, done: rec.meta?.done ?? 0,
+    rev: Number(rec.s.rev) || 0, crv: Number(rec.s.crv) || 0,  // F-10: revize světa ve slotu a v cloudu při poslední synchronizaci
     personal: pickPersonal(rec.s),                             // moje vybavení a poloha z vlastního slotu
   };
+}
+
+// ---------- předávka mapy při převzetí hostitele (F-10) ----------
+// Hráč, který po odchodu hostitele převezme svět, načte stránku znovu a svět stáhne z cloudu. Mapa v cloudu
+// ale může být až minutu stará – jeho vlastní mapa (snímek + tahy všech) je novější. Před znovunačtením ji
+// proto uloží sem a po načtení z cloudu ji do mapy sloučí (nic zameteného se nezasype).
+const HANDOFF_ID = 'handoff';
+
+export async function stashHandoff(code) {
+  try {
+    return await putRecord({ id: HANDOFF_ID, code, planet: PLANET.id, at: Date.now(), done: hexes.doneCount, dust: await packDust() });
+  } catch { return false; }
+}
+
+// Vrátí počet hotových hexů po sloučení, nebo -1 (žádná / stará / jiný svět).
+export async function takeHandoff(code) {
+  try {
+    const rec = await idb('readonly', st => st.get(HANDOFF_ID));
+    if (!rec || rec === true) return -1;
+    await idb('readwrite', st => st.delete(HANDOFF_ID));         // jednorázová
+    if (rec.code !== code || rec.planet !== PLANET.id || Date.now() - rec.at > 10 * 60000 || !rec.dust) return -1;
+    return (await unpackDust(rec.dust, true)) ? hexes.doneCount : -1;
+  } catch { return -1; }
+}
+
+// Řádek do konzole při každém načtení světa (F-10): odkud je mapa prachu, revize a kolik hexů je hotových.
+export function logWorldLoad(source, extra = '') {
+  const s = game.s;
+  console.info(`[svět] prach z: ${source}, rev ${s?.rev ?? '?'} (cloud ${s?.crv ?? '?'}), vyčištěno ${hexes.doneCount} / ${hexes.total} hexů${s?.netCode ? `, svět ${s.netCode}` : ''}${extra ? ` · ${extra}` : ''}`);
 }
 
 // Uloží nový stav světa na jiné planetě bez mapy prachu (ta se po načtení vygeneruje čistá).
@@ -187,7 +219,7 @@ export async function saveFresh(slot, s) {
   const rec = {
     id: slot,
     v: SAVE_VERSION,
-    meta: { title: s.title, savedAt: Date.now(), money: s.money, done: 0, total: 0, playMs: s.playMs || 0, planet: s.planet },
+    meta: { title: s.title, savedAt: Date.now(), money: s.money, done: 0, total: 0, playMs: s.playMs || 0, planet: s.planet, ver: VERSION },
     s,
     dust: null,
   };
@@ -203,12 +235,14 @@ export async function saveGame(slot = game.slot, onFail) {
     game.s.playMs = (game.s.playMs || 0) + (game.started ? now - game.started : 0);
     game.started = now;
     game.s.last = now;
+    game.s.rev = (Number(game.s.rev) || 0) + 1;                  // F-10: revize roste s každým uložením
     const rec = {
       id: slot,
       v: SAVE_VERSION,
       meta: {
         title: game.s.title, savedAt: now, money: game.s.money,
         done: hexes.doneCount, total: hexes.total, playMs: game.s.playMs, planet: game.s.planet,
+        ver: VERSION,                                            // L-60: kterou verzí hry uloženo
       },
       s: game.s,
       dust: await packDust(),
@@ -235,6 +269,7 @@ export async function loadGame(slot) {
   try {
     const rec = await getRecord(slot);
     if (!rec?.s || !canLoadVersion({ v: rec.s.v ?? rec.v })) return false;      // novější verze hry se neotevře
+    if (cmpVersion(rec.meta?.ver, VERSION) > 0) return false;                     // L-60: uloženo novější verzí (3.2 …)
     if ((rec.s.planet === 'mars' ? 'mars' : 'moon') !== PLANET.id) return false;
     if (rec.dust && !(await unpackDust(rec.dust))) return false;      // bez mapy = čerstvě vygenerovaná planeta
     game.s = rec.s;

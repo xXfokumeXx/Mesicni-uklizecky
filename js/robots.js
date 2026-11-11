@@ -8,6 +8,8 @@ import { stationPrice } from './equipment.js';
 import { grid, dirToCell, cellDir, HEX_SPACING } from './planet/hexgrid.js';
 import { hexes, sweepCapsule, clearHex } from './planet/dustmap.js';
 import { rockHit, rockPush, hexHasRock, rockTexels, rockVersion } from './rocks.js';
+import { removeBeltsOf, stationRef, stationRoom, stationHasBelt } from './logistics.js';
+import { partsOf } from './structures.js';
 import { cross, madd, norm, tangentTo, angleBetween, anyTangent } from './planet/vec.js';
 
 const R = MOON.radius;
@@ -41,7 +43,7 @@ export function canPlaceStation(p, skip = -1) {
   if (angleBetween(p, BASE.dir) * R < BASE.noStations) return false;
   const hex = dirToCell(p);
   return !game.s.stations.some((st, i) => i !== skip && st.hex === hex)
-    && !(game.s.buildings || []).some(b => dirToCell(b.p) === hex);   // ani pod stavbou 3.0
+    && !(game.s.buildings || []).some(b => partsOf(b).some(pt => dirToCell(pt.p) === hex));   // ani pod stavbou 3.0 (i plošina LAAC, 11. 11.)
 }
 
 // Přesune stanici i s robotem na nové místo (zdarma). Náplň robota se vyloží a prodá.
@@ -49,7 +51,9 @@ export function moveStation(i, p) {
   const st = game.s.stations[i];
   if (!st || !canPlaceStation(p, i)) return false;
   const rb = st.robot;
-  if (rb.load > 0) game.s.money += rb.load * dustPrice();
+  // 11. 11.: náplň robota do zásobníku stanice (co se vejde), pás ze stanice se zbourá (60 % zpět)
+  if (rb.load > 0) st.store = (st.store || 0) + Math.min(rb.load, stationRoom(st));
+  game.s.money += removeBeltsOf(stationRef(st));
   st.hex = dirToCell(p);
   const home = cellDir(st.hex);
   st.robot = { p: home, t: home, hex: -1, k: -1, load: 0, mode: 'work' };
@@ -83,7 +87,7 @@ export function placeStation(p, mk = 0) {
   const hex = dirToCell(p);
   const home = cellDir(hex);
   game.s.stations.push({
-    hex, mk,
+    hex, mk, store: 0,
     robot: { p: home, t: home, hex: -1, k: -1, load: 0, mode: 'work' },
   });
   return true;
@@ -181,12 +185,16 @@ export function robotTick(st, dt) {
     game.s.money += completed.length * hexBonus();
     if (dist <= 0.05) nextTarget(st);
   } else if (dist <= 0.3) {
-    // ve stanici: vyložit a pokračovat
+    // ve stanici: vyložit do zásobníku (11. 11.: prodá se, až ho pás doveze do Výkupu); plný zásobník = robot čeká
     if (rb.load > 0) {
-      game.s.money += rb.load * dustPrice();
-      rb.load = 0;
+      const kg = Math.min(rb.load, stationRoom(st));
+      st.store = (st.store || 0) + kg;
+      rb.load -= kg;
+      if (rb.load < 0.05) rb.load = 0;
     }
-    if (rb.mode === 'unload' || (rb.mode === 'idle' && nextOpenHex(st, rb.p) >= 0)) {
+    st.full = rb.load > 0;                             // zásobník je plný a robot ještě něco veze
+    if (st.full) rb.mode = 'unload';
+    else if (rb.mode === 'unload' || (rb.mode === 'idle' && nextOpenHex(st, rb.p) >= 0)) {
       rb.mode = 'work';
       rb.k = -1;
       nextTarget(st);
@@ -200,7 +208,10 @@ export function simulateOffline(seconds) {
   const s = game.s;
   const before = s.money;
   for (const st of s.stations) {
-    let budget = stationMk(st).kgPerSec * seconds * UNITS_PER_KG;
+    // 11. 11.: bez pásu ze stanice jen do zásobníku (pak robot stojí), s pásem se prach prodá (pás stačí – 5 kg/s)
+    const belt = stationHasBelt(st);
+    const room = stationRoom(st);
+    let budget = Math.min(stationMk(st).kgPerSec * seconds, belt ? Infinity : room) * UNITS_PER_KG;
     const tried = new Set();                         // hexy s kamenem jen jednou (prach pod kamenem zůstane)
     while (budget > 0) {
       const c = nextOpenHex(st, st.robot.p, tried);
@@ -208,7 +219,8 @@ export function simulateOffline(seconds) {
       tried.add(c);
       const { got, completed } = clearHex(c, rockTexels(c));
       budget -= Math.max(got, 1);
-      s.money += got / UNITS_PER_KG * dustPrice() + (completed ? hexBonus() : 0);
+      s.money += (belt ? got / UNITS_PER_KG * dustPrice() : 0) + (completed ? hexBonus() : 0);
+      if (!belt) st.store = Math.min(stationMk(st).store, (st.store || 0) + got / UNITS_PER_KG);
     }
     const rb = st.robot;
     rb.p = cellDir(st.hex);

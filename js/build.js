@@ -9,12 +9,12 @@ import { game } from './state.js';
 import { purchase } from './econ.js';
 import {
   STRUCTURES, TYPE_IDS, canPlace, buildPrice, placeStructure, demolishInfo, demolishStructure, lockReason,
-  structureAt, structureById, yawFor, BUILD_REACH, AHEAD,
+  structureAt, structureById, yawFor, BUILD_REACH, AHEAD, moveStructure,
 } from './structures.js';
 import { ownsHammer } from './equipment.js';
 import { heldHammer, hammerSlot, previousSlot, selectSlot, putTool, hotbarSlots, HAMMER_ID } from './hotbar.js';
 import { autoConnect, cableCheck, addCable, removeCable } from './energy.js';
-import { nearestSocket, socketByRef, fullPath, checkPath, addBelt, cutBelt, beltSegmentAt, retypeCheck, BELT } from './logistics.js';
+import { nearestSocket, socketByRef, checkPath, addBelt, cutBelt, beltSegmentAt, retypeCheck, BELT, curveNodes, curveOf, SHARP_REASON } from './logistics.js';
 
 // Postaví stavbu a hned ji připojí kabelem k síti (L-06). Vrací id, nebo false. Volá i hostitel (net.js).
 export function placeAndWire(type, p, yaw) {
@@ -23,6 +23,8 @@ export function placeAndWire(type, p, yaw) {
   return id;
 }
 import { norm, madd, angleBetween, tangentTo } from './planet/vec.js';
+import { dirToCell, cellDir } from './planet/hexgrid.js';
+import { laacCheck, laacLayout, placeLaac } from './laac.js';
 
 const R = MOON.radius;
 const DEG = Math.PI / 180;
@@ -36,6 +38,10 @@ export const build = {
   beltFrom: null,              // pás: výstupní zásuvka [id, sid], ze které vede
   beltTo: null,                // pás: vstupní zásuvka pod kurzorem (přichycení)
   beltBends: [],               // pás: ohyby (jednotkové směry)
+  beltCorners: [],             // pás: indexy ohybů se zlomem (přidané s Alt – D-20)
+  beltBad: null,               // pás: kde trasa vadí (m od začátku; null = celá / nic) – červený kus hologramu
+  beltNodes: null,             // pás: uzly pro značky v hologramu [{ p, corner }]
+  alt: false,                  // drží se Alt (další ohyb = zlom)
   beltPts: null,               // pás: celá trasa pro náhled
   beltHover: null,             // pás: výstupní zásuvka pod kurzorem (před prvním klikem)
   beltBridges: [],             // pás: místa křížení (m od začátku) – nový pás tam vede mostem
@@ -43,6 +49,7 @@ export const build = {
   from: null,                  // kabel: id kotvy, ze které vede
   cable: null,                 // bourání: kabel pod kurzorem [idA, idB]
   type: null,                  // vybraná stavba
+  moveId: null,                // přesun depa (3.1): id přesouvaného depa
   p: null, yaw: 0,             // hologram
   valid: false, reason: '', price: 0,
   target: null,                // id stavby pod kurzorem (bourání)
@@ -93,7 +100,7 @@ export function closeAll() {
   build.belt = null;
   bump();
 }
-function resetBelt() { build.beltFrom = null; build.beltTo = null; build.beltBends = []; build.beltPts = null; build.beltHover = null; }
+function resetBelt() { build.beltFrom = null; build.beltTo = null; build.beltBends = []; build.beltCorners = []; build.beltPts = null; build.beltHover = null; build.beltBad = null; build.beltNodes = null; }
 
 export function toggleMenu() {
   if (!hammerActive()) return false;
@@ -116,6 +123,7 @@ export function toggleDemolish() {
 
 export function selectType(type) {
   if (!STRUCTURES[type]?.ready || lockReason(STRUCTURES[type])) return;
+  build.moveId = null;
   build.type = type;
   build.mode = STRUCTURES[type].kind === 'belt' ? 'belt' : 'build';
   build.menu = false;                                 // lišta po výběru zmizí, ať nepřekáží při stavění (V = znovu otevřít)
@@ -127,9 +135,9 @@ export function selectType(type) {
 // Esc / pravé tlačítko: zruší hologram, pak bourání, pak zavře lištu. Vrací true, když něco zrušil.
 export function cancelBuild() {
   const done = () => { build.cancelledAt = performance.now(); bump(); return true; };
-  if (build.mode === 'build') { build.mode = null; build.type = null; return done(); }
+  if (build.mode === 'build') { build.mode = null; build.type = null; build.moveId = null; return done(); }
   if (build.mode === 'belt') {                       // pás: nejdřív poslední ohyb, pak začátek, pak celý režim
-    if (build.beltBends.length) build.beltBends.pop();
+    if (build.beltBends.length) { build.beltBends.pop(); build.beltCorners = build.beltCorners.filter(i => i < build.beltBends.length); }
     else if (build.beltFrom) build.beltFrom = null;
     else { build.mode = null; build.type = null; }
     return done();
@@ -164,6 +172,7 @@ export function connectNow() {
 // Otočení hologramu o deg stupňů; snap = přichytit na násobky 15°.
 export function rotateBy(deg, snap = false) {
   if (build.mode !== 'build') return;
+  if (STRUCTURES[build.type]?.hex) { build.laacRot = ((build.laacRot | 0) + Math.sign(deg) + 6) % 6; return; }   // LAAC: další strana
   let y = build.yaw + deg * DEG;
   if (snap) y = Math.round(y / (15 * DEG)) * 15 * DEG;
   build.yaw = y;
@@ -173,12 +182,33 @@ export function rotateBy(deg, snap = false) {
 // Každý snímek: poloha hologramu / cíl bourání. cursor = místo pod kurzorem (jednotkový vektor) nebo null,
 // picked = id stavby pod kurzorem podle 3D modelu (bourání; undefined = hledat podle místa na terénu).
 let placeCache = { key: '', at: 0, chk: null };
+let beltCache = { key: '', at: 0, pts: null, chk: { ok: false, reason: '', len: 0, price: 0 } };
 export function updateBuild(dt, cursor, keys, picked, pickedCable = null) {
   if (!hammerActive()) { if (build.menu || build.mode) closeAll(); return; }
+  build.alt = !!keys.alt;
   const s = game.s;
   const near = cursor && angleBetween(s.p, cursor) * R <= BUILD_REACH ? cursor : null;
 
-  if (build.mode === 'build' && build.type) {
+  if (build.mode === 'build' && build.type && STRUCTURES[build.type].hex) {
+    // LAAC (3.1, L-64): věž se přichytí ke středu hexu pod kurzorem, R + kolečko / , . = strana první plošiny
+    const def = STRUCTURES[build.type];
+    const at = near || norm(madd(s.p, s.f, (AHEAD + 8) / R));
+    const cell = dirToCell(at);
+    const turn = (keys['.'] ? 1 : 0) - (keys[','] ? 1 : 0);
+    if (turn && performance.now() - (build.rotAt || 0) > 250) { build.rotAt = performance.now(); build.laacRot = ((build.laacRot | 0) + turn + 6) % 6; }
+    const key = `laac|${cell}|${build.laacRot | 0}`;
+    const nowMs = performance.now();
+    if (key !== placeCache.key || nowMs - placeCache.at > 300) placeCache = { key, at: nowMs, chk: laacCheck(cell, build.laacRot | 0) };
+    const chk = placeCache.chk;
+    const L = chk.layout || laacLayout(cell, build.laacRot | 0);
+    build.cell = cell;
+    build.layout = L;
+    build.p = L ? L.p : cellDir(cell);
+    build.yaw = L ? L.yaw : 0;
+    build.price = def.price;
+    build.valid = chk.ok && s.money >= build.price && !build.busy;
+    build.reason = !chk.ok ? chk.reason : s.money < build.price ? `Chybí peníze ($${fmtMoney(build.price - s.money)})` : '';
+  } else if (build.mode === 'build' && build.type) {
     const def = STRUCTURES[build.type];
     const depth = (def.pad[3] - def.pad[2]) / 2;
     const p = near || norm(madd(s.p, s.f, (AHEAD + depth) / R));
@@ -195,11 +225,11 @@ export function updateBuild(dt, cursor, keys, picked, pickedCable = null) {
       if (keys.shift) build.yaw = Math.round(build.yaw / (15 * DEG)) * 15 * DEG;
       build.lastYaw[build.type] = build.yaw;
     }
-    build.price = buildPrice(build.type);
+    build.price = build.moveId ? 0 : buildPrice(build.type);              // přesun depa je zdarma (pásy se zbourají s vrácením 60 %)
     // kontrola umístění (heightRange vzorkuje po 2 m) jen při posunu / otočení, jinak nejvýš 5× za s
     const key = `${build.type}|${p[0].toFixed(6)},${p[1].toFixed(6)},${p[2].toFixed(6)}|${build.yaw.toFixed(3)}`;
     const nowMs = performance.now();
-    if (key !== placeCache.key || nowMs - placeCache.at > 200) placeCache = { key, at: nowMs, chk: canPlace(build.type, p, build.yaw) };
+    if (key !== placeCache.key || nowMs - placeCache.at > 200) placeCache = { key, at: nowMs, chk: canPlace(build.type, p, build.yaw, build.moveId) };
     const chk = placeCache.chk;
     build.valid = chk.ok && s.money >= build.price && !build.busy;
     build.reason = !chk.ok ? chk.reason : s.money < build.price ? `Chybí peníze ($${fmtMoney(build.price - s.money)})` : '';
@@ -220,9 +250,26 @@ export function updateBuild(dt, cursor, keys, picked, pickedCable = null) {
       const to = far ? nearestSocket(far, 'in', from.goods) : null;
       const target = to && to.ref[0] !== build.beltFrom[0] ? to : null;
       build.beltTo = target?.ref || null;
-      const pts = target ? fullPath(from, build.beltBends, target) : [...fullPath(from, build.beltBends, null), ...(far ? [far] : [])];
+      // zakřivený pás (L-70): uzly → oblouk; náhled nejvýš 20× za s (O-29)
+      const nodes = target ? curveNodes(from, build.beltBends, target) : [...curveNodes(from, build.beltBends, null), ...(far ? [far] : [])];
+      const corners = build.beltCorners.map(i => i + 2);
+      const nowMs = performance.now();
+      const nkey = nodes.map(p => p.map(v => v.toFixed(6)).join(',')).join('|') + '/' + corners.join(',');
+      if (nkey !== beltCache.key && nowMs - beltCache.at > 50) {
+        const curve = nodes.length >= 2 ? curveOf(nodes, corners, true, !!target) : null;
+        let chk = curve ? checkPath(curve.pts, [build.beltFrom[0], target?.ref[0]].filter(Boolean)) : { ok: false, reason: 'Namiř kurzor na terén', len: 0, price: 0 };
+        if (curve && chk.ok && curve.sharp.length) {
+          let d = 0;
+          for (let i = 1; i <= curve.sharp[0]; i++) d += angleBetween(curve.pts[i - 1], curve.pts[i]) * R;
+          chk = { ...chk, ok: false, reason: SHARP_REASON, at: d };
+        }
+        beltCache = { key: nkey, at: nowMs, pts: curve ? curve.pts : null, chk };
+      }
+      build.beltNodes = nodes.map((p, i) => ({ p, corner: corners.includes(i) }));
+      const pts = beltCache.pts || nodes;
       build.beltPts = pts;
-      const chk = pts.length >= 2 ? checkPath(pts, [build.beltFrom[0], target?.ref[0]].filter(Boolean)) : { ok: false, reason: 'Namiř kurzor na terén', len: 0, price: 0 };
+      const chk = beltCache.chk;
+      build.beltBad = chk.ok ? null : chk.at ?? null;
       build.price = chk.price;
       build.len = chk.len;
       build.beltBridges = chk.ok ? chk.bridges || [] : [];          // mosty přes křížené pásy (náhled)
@@ -270,12 +317,41 @@ const fmtMoney = v => Math.round(v).toLocaleString('cs-CZ');
 const outcome = (r, done) => (r && typeof r.then === 'function' ? r.then(ok => (ok ? done : 'denied')) : (r ? done : null));
 
 // Postaví stavbu z hologramu (E / klik). Vrací 'built' / 'denied' / Promise / null.
+// Přesun depa kladivem (3.1, L-63): E u depa → hologram depa, klik / E ho postaví jinde i se zásobou.
+export function startDepotMove(id) {
+  const b = structureById(id);
+  if (!b || b.type !== 'depot') return;
+  build.type = 'depot';
+  build.mode = 'build';
+  build.moveId = id;
+  build.menu = false;
+  build.p = null;
+  build.lastYaw.depot = b.yaw;
+  bump();
+}
+
 export function placeNow() {
   if (build.mode !== 'build' || !build.valid || !build.p) return null;
   const type = build.type, p = build.p.slice(), yaw = build.yaw, price = build.price;
+  if (build.moveId) {
+    const id = build.moveId;
+    build.busy = true;
+    build.hits = performance.now();
+    const r = purchase('dmove3', [id, ...enc(p), Math.round(yaw * 1000)], 0, () => moveStructure(id, p, yaw));
+    const done = res => { build.busy = false; if (res === 'dmoved') { build.mode = null; build.type = null; build.moveId = null; bump(); } return res; };
+    const out = outcome(r, 'dmoved');
+    return out && typeof out.then === 'function' ? out.then(done) : done(out);
+  }
   build.lastYaw[type] = yaw;
   build.busy = true;
   build.hits = performance.now();
+  if (STRUCTURES[type].hex) {                                            // LAAC: hex + strana první plošiny (3.1)
+    const cell = build.cell, rot = build.laacRot | 0;
+    const rl = purchase('laac', [cell, rot], price, () => { const id = placeLaac(cell, rot); if (id) autoConnect(id); return id; });
+    const doneL = res => { build.busy = false; return res; };
+    const outL = outcome(rl, 'built');
+    return outL && typeof outL.then === 'function' ? outL.then(doneL) : doneL(outL);
+  }
   const r = purchase('build', [TYPE_IDS.indexOf(type), ...enc(p), Math.round(yaw * 1000)], price, () => placeAndWire(type, p, yaw));
   const done = res => { build.busy = false; return res; };
   const out = outcome(r, 'built');
@@ -302,15 +378,20 @@ export function beltClick() {
     return null;
   }
   if (!build.valid) return null;
-  if (!build.beltTo) {                                // ohyb na místě kurzoru
-    const last = build.beltPts?.[build.beltPts.length - 1];
-    if (last && build.beltBends.length < 40) { build.beltBends.push(last.slice()); bump(); }
+  if (!build.beltTo) {                                // ohyb na místě kurzoru (s Alt = ostrý zlom, D-20)
+    const last = build.beltNodes?.[build.beltNodes.length - 1]?.p;
+    if (last && build.beltBends.length < 40) {
+      if (build.alt) build.beltCorners.push(build.beltBends.length);
+      build.beltBends.push(last.slice());
+      bump();
+    }
     return null;
   }
   const from = build.beltFrom, to = build.beltTo, bends = build.beltBends.map(p => p.slice()), price = build.price;
+  const corners = build.beltCorners.slice();
   build.busy = true;
   build.hits = performance.now();
-  const r = purchase('beltadd', [from[0], from[1], to[0], to[1], ...bends.flatMap(enc)], price, () => addBelt(from, to, bends));
+  const r = purchase('beltadd', [from[0], from[1], to[0], to[1], corners.join(','), ...bends.flatMap(enc)], price, () => addBelt(from, to, bends, corners));
   const done = res => { build.busy = false; if (res === 'belted') resetBelt(); bump(); return res; };
   const out = outcome(r, 'belted');
   return out && typeof out.then === 'function' ? out.then(done) : done(out);
@@ -339,6 +420,22 @@ function demolishNow(id) {
 // Text pro výzvu (E) a HUD podle režimu, nebo null.
 export function buildPrompt() {
   if (!hammerActive()) return null;
+  if (build.mode === 'build' && build.moveId) {
+    const deg = `${Math.round(((build.yaw / DEG) % 360 + 360) % 360)}°`;
+    if (!build.valid) return { label: `Přesun depa: ${build.reason || 'tady stát nemůže'} · ${deg} · Esc zruší`, key: 'Esc', run: null };
+    return { label: `Přesunout depo sem (i se zásobou) · napojené pásy se zbourají, 60 % zpět · ${deg}`, key: 'E', run: placeNow };
+  }
+  if (!build.mode && !build.menu) {                   // kladivo v ruce u depa: E = přesunout
+    const s = game.s;
+    const d = (s.buildings || []).find(b => b.type === 'depot' && angleBetween(s.p, b.p) * R < 4.5);
+    if (d) return { label: 'Depo · E = přesunout jinam (i se zásobou)', key: 'E', run: () => { startDepotMove(d.id); return null; } };
+  }
+  if (build.mode === 'build' && build.type && STRUCTURES[build.type].hex) {   // LAAC (3.1): hex + strana plošiny
+    const def = STRUCTURES[build.type];
+    const side = 'R + kolečko = plošina na jiný sousední hex';
+    if (!build.valid) return { label: `${build.reason || 'Tady postavit nejde'} · ${side} · Esc zruší`, key: 'Esc', run: null };
+    return { label: `Postavit: ${def.name} · $${fmtMoney(build.price)}${build.links ? ' · kabel k síti' : ' · bez spojení (kotva do 12 m)'} · ${side}`, key: 'E', run: placeNow };
+  }
   if (build.mode === 'build' && build.type) {
     const def = STRUCTURES[build.type];
     const deg = `${Math.round(((build.yaw / DEG) % 360 + 360) % 360)}°`;
@@ -352,7 +449,7 @@ export function buildPrompt() {
     const info = `${Math.round(build.len || 0)} m · $${fmtMoney(build.price || 0)}`;
     if (!build.valid) return { label: `Pás: ${build.reason} · ${info} · Esc = zpět`, key: 'Esc', run: null };
     if (build.beltTo) return { label: `Dokončit pás do: ${socketByRef(build.beltTo)?.name || 'zásuvka'} · ${info} · klik / E`, key: 'E', run: beltClick };
-    return { label: `Pás ${info} · klik = ohyb, klik na vstupní zásuvku (modrá) = dokončit · Esc = zpět`, key: 'E', run: beltClick };
+    return { label: `Pás ${info} · klik = ohyb (s Alt = ostrý zlom), klik na vstupní zásuvku (modrá) = dokončit · Esc = zpět`, key: 'E', run: beltClick };
   }
   if (build.mode === 'cable') {
     if (!build.valid) return { label: `Kabel z kotvy: ${build.reason} · Esc zruší`, key: 'Esc', run: null };
@@ -364,7 +461,7 @@ export function buildPrompt() {
     if (!b && build.belt) {
       // úsek od kloubu ke kloubu: vrátí se 60 % jeho podílu na ceně pásu (logistics.js cutBelt)
       const bl = game.s.belts.find(x => x.id === build.belt.id), k = build.belt.k;
-      const seg = bl && bl.pts[k + 1] ? angleBetween(bl.pts[k], bl.pts[k + 1]) * R : 0;
+      const seg = build.belt.s1 != null ? build.belt.s1 - build.belt.s0 : bl && bl.pts[k + 1] ? angleBetween(bl.pts[k], bl.pts[k + 1]) * R : 0;
       const back = bl ? Math.round((bl.paid || 0) * seg / Math.max(bl.len || 1, 1e-6) * 0.6) : 0;
       return { label: `Zbourat úsek pásu (${Math.round(seg)} m) · vrátí se $${fmtMoney(back)} · náklad na úseku se ztratí · podrž E nebo levé tlačítko`, key: 'E', run: null };
     }

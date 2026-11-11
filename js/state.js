@@ -14,7 +14,7 @@ const DEV_START_MONEY = 10000;                    // jen na localhost (FIREBASE_
 // net.mode: 'sp' = jeden hráč, 'host' = hostitel světa, 'client' = připojený hráč
 export const game = { s: null, dust: null, slot: null, mode: 'sp', clockOffset: 0, started: 0 };
 
-export const newToolState = () => ({ load: 0, lv: { width: 0, hopper: 0, power: 0 } });
+export const newToolState = () => ({ load: 0, lv: { width: 0, hopper: 0 } });   // (Síla zrušena ve 3.1 – L-71)
 
 // Vyžaduje hotovou hexovou mřížku a čerstvě vygenerovanou mapu prachu (world.js → prepareMoon).
 export function newGame(title = 'Nová směna', dust = game.dust) {
@@ -25,7 +25,7 @@ export function newGame(title = 'Nová směna', dust = game.dust) {
     money: FIREBASE_DEV ? DEV_START_MONEY : 0,    // lokální test (localhost) začíná s penězi na první vozidlo
     p: SPAWN,                                     // pozice (jednotkový vektor)
     f: tangentTo(SPAWN, SPAWN_FACING),            // směr pohledu / jízdy (tečný vektor)
-    warp: 0,                                      // posun času (klávesa T)
+    warp: 0,                                      // posun času (dřív klávesa T, zrušena 11. 11.; staré posuny se drží)
     tools: { toothbrush: newToolState() },        // vlastněné nástroje
     tool: 'toothbrush',                           // nástroj v ruce
     boots: 0,                                     // úroveň měsíčních bot (0–3)
@@ -53,6 +53,8 @@ export function newGame(title = 'Nová směna', dust = game.dust) {
     won: false,
     playMs: 0,                                    // odehraný čas (pro seznam uložených her)
     last: Date.now(),
+    rev: 0,                                       // revize světa (F-10): roste s každým uložením – slot i cloud
+    crv: 0,                                       // revize, kterou měl svět v cloudu při posledním zápisu / načtení
   };
   game.dust = dust;
 }
@@ -124,6 +126,9 @@ export function upgradeState(s = game.s) {
   if (!Array.isArray(s.belts)) s.belts = [];
   for (const bl of s.belts) { bl.items = Array.isArray(bl.items) ? bl.items.filter(Number.isFinite) : []; bl.wait = 0; }
   s.brickMode = s.brickMode === 'store' ? 'store' : 'sell';
+  if (!Number.isInteger(s.driving) || !s.vehicles?.[s.driving]) s.driving = -1;   // řízené vozidlo už neexistuje → pěšky
+  s.rev = Math.max(0, Number(s.rev) || 0);         // F-10: revize světa (starší uložení 0)
+  s.crv = Math.max(0, Number(s.crv) || 0);
   for (const f of UPGRADES) f(s);                 // doplnění z dalších modulů (logistics.js: převod dep v2)
 }
 // Funkce (s) => void, které upgradeState zavolá na konci (moduly si je přidají samy, bez kruhových importů).

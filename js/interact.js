@@ -6,12 +6,14 @@ import { nearRocket, rocketReady, cleanPercent, launchSeconds } from './rocket.j
 import { vehicleById } from './catalog.js';
 import { game } from './state.js';
 import { BUILDINGS, nearDoor, inBuyback } from './base.js';
-import { enterVehicle, exitVehicle, isRagdoll, riding, boardVehicle, leaveRide } from './player.js';
+import { enterVehicle, exitVehicle, isRagdoll, riding, boardVehicle, leaveRide, playerFx, landAircraft, airPose } from './player.js';
+import { carryPrompt, carriedBy } from './carry.js';
+import { airHome, LAAC } from './laac.js';
 import { purchase } from './econ.js';
 import { vehicleTakenBy, isClient, reportParked, seatsTaken } from './net.js';
 import { canPlaceStation, placeStation, moveStation, stationUpgradeOffer, upgradeStation } from './robots.js';
 import { STATION_MK, stationMk } from './catalog.js';
-import { depotAt, depotRoom, DEPOT } from './logistics.js';
+import { depotAt, depotRoom, DEPOT, stationHasBelt } from './logistics.js';
 import { heldKit, putKit, clearKit } from './hotbar.js';
 import { stationPrice } from './equipment.js';
 import { cellDir } from './planet/hexgrid.js';
@@ -132,8 +134,25 @@ export function currentAction(openFacility) {
   if (s.driving >= 0) {
     const v = s.vehicles[s.driving];
     const i = s.driving;
+    // výsypka depa (L-63): stav nakládání před textem výstupu
+    const d = playerFx.dump;
+    const dump = !d ? '' : d.state === 'dump' ? `Vysypávání do depa · ${d.rate} kg/s · ` : d.state === 'wait' ? `Výsypka depa · zastav (${d.rate} kg/s) · `
+      : d.state === 'full' ? 'Depo je plné · ' : 'Zásobník je prázdný · ';
+    const hint = !d && depotAt(s.p) && (v.load || 0) > 0.05 ? 'Vozidlo vysypeš do depa výsypkou za ním (rameno se žlutou zónou) · ' : '';
+    if (vehicleById(v.type).kind === 'air' && v.air?.mode !== 'ground') {        // letoun ve vzduchu (3.1, L-66): E = přistát
+      if (v.air?.mode === 'land') return { label: 'Přistávání…', key: '…', run: null };
+      // Kondor nad silem (nakládání prachu) a převoz vozidla (Mula lano / Kondor ruka) – 3.1, L-67
+      const sl = playerFx.silo;
+      const silo = !sl ? '' : sl.state === 'load' ? `Nakládání ze sila · ${sl.rate} kg/s · ` : sl.state === 'wait' ? 'Silo · zastav a nakládej · '
+        : sl.state === 'low' ? 'Silo · vystoupej 6–14 m nad silo · ' : sl.state === 'high' ? 'Silo · klesni na 6–14 m nad silo · ' : sl.state === 'full' ? 'Nákladový prostor je plný · ' : 'Silo je prázdné · ';
+      const cp = carryPrompt(v, airPose());
+      if (cp && !cp.soft) return { label: `${silo}${cp.label}`, key: cp.run ? 'E' : '…', run: cp.run ? () => { const m = cp.run(); return m ? { blocked: m } : null; } : null };
+      const home = airHome(v);
+      const onPad = home && angleBetween(home.dir, s.p) * R <= LAAC.landReach;
+      return { label: `${dump}${silo}Přistát${onPad ? ' na plošinu' : ''} · mezerník / Shift = výš / níž${cp?.soft ? ` · ${cp.label}` : ''}`, key: 'E', run: () => { const msg = landAircraft(); return msg ? { blocked: msg } : null; } };
+    }
     return {
-      label: `${full}${vehicleById(v.type).kind === 'push' ? 'Pustit vozík' : 'Vystoupit'}`, key: 'E',
+      label: `${dump}${hint}${full}${vehicleById(v.type).kind === 'push' ? 'Pustit vozík' : vehicleById(v.type).kind === 'air' ? 'Vystoupit · W / mezerník = vzlétnout' : 'Vystoupit'}`, key: 'E',
       run: () => { exitVehicle(); if (isClient()) reportParked(i); },
     };
   }
@@ -158,6 +177,7 @@ export function currentAction(openFacility) {
       return { label: `Přisednout k řidiči ${by} (místo ${seat + 1} z ${base.seats})`, key: 'E', run: () => { boardVehicle(nearest, seat); } };
     }
     if (by) return { label: `${base.name} právě řídí ${by}`, key: 'E', run: null };
+    if (carriedBy(nearest)) return { label: `${base.name} právě nese letoun`, key: '…', run: null };   // 3.1
     const label = base.kind === 'push' ? `Chopit se: ${base.name}` : `Nastoupit: ${base.name}`;
     return { label, key: 'E', run: () => enterVehicle(nearest) };
   }
@@ -167,7 +187,9 @@ export function currentAction(openFacility) {
   if (st >= 0) {
     const up = stationUpgradeOffer(st);
     const tail = up ? (up.reason ? ` · ${up.name}: ${up.reason}` : ` · R = vylepšit na ${up.name} ($${up.price.toLocaleString('cs-CZ')})`) : '';
-    return { label: `${stationMk(s.stations[st]).name} · E = přenést jinam${tail}`, key: 'E', run: () => { startPlacing('move', st); return 'carry'; } };
+    const S = s.stations[st], mk = stationMk(S);
+    const store = ` · zásobník ${Math.round(S.store || 0)} / ${mk.store} kg${stationHasBelt(S) ? '' : ' · bez pásu – prach se neprodá (pás z oranžové zásuvky)'}`;
+    return { label: `${mk.name}${store} · E = přenést jinam${tail}`, key: 'E', run: () => { startPlacing('move', st); return 'carry'; } };
   }
 
   if (full) return { label: full.replace(/ · $/, ''), key: '!', run: null };
@@ -191,6 +213,7 @@ export function currentAction(openFacility) {
   if (su?.b.type === 'charger') return { label: 'Nabíječka · sloty a rychlonabíjení', key: 'E', run: () => openFacility('charger', su.b.id) };
   if (su?.b.type === 'swapper') return { label: 'Výměník baterií · regál', key: 'E', run: () => openFacility('swapper', su.b.id) };
   if (su?.b.type === 'sinter') return { label: 'Slinovna · stav výroby', key: 'E', run: () => openFacility('sinter', su.b.id) };
+  if (su?.b.type === 'laac') return { label: 'LAAC · letouny, hangár, plošiny a vylepšení', key: 'E', run: () => openFacility('laac', su.b.id) };   // 3.1
   if (su?.b.type === 'research') return { label: 'Výzkumné centrum · strom technologií', key: 'E', run: () => openFacility('research', su.b.id) };
   for (const b of BUILDINGS) {
     if (!nearDoor(s.p, b)) continue;

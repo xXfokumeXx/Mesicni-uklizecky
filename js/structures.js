@@ -17,6 +17,7 @@ import { cellDir, dirToCell } from './planet/hexgrid.js';
 import { hexes } from './planet/dustmap.js';
 import { siteDir } from './rocket.js';
 import { setGroundHook } from './physics.js';
+import { isAirType } from './catalog.js';
 
 const R = MOON.radius;
 
@@ -77,14 +78,15 @@ Object.assign(STRUCTURES, {
   }),
   'solar-t1': small('Solár Záplata', 'solar-t1', 960, [-2.06, 1.84, -0.84, 1.10], 2.52, { desc: 'Starý panel na dřevěné bedně. Až 3 ⚡/s na přímém Slunci.', energy: { role: 'source', out: 3 } }),
   'solar-t2': small('Solár Kozlík', 'solar-t2', 2640, [-2.19, 2.19, -1.51, 1.51], 2.61, { desc: 'Dva panely na stojanu. Až 7 ⚡/s na přímém Slunci.', energy: { role: 'source', out: 7 } }),
-  'solar-t3': small('Solár Sledovač', 'solar-t3', 7200, [-2.94, 2.94, -0.90, 0.94], 2.46, { desc: 'Natáčí se za Sluncem, vyrábí plně i při nízkém Slunci. 10 ⚡/s.', energy: { role: 'source', out: 10, tracker: true }, research: 'solarT3' }),
-  'solar-t4': small('Solár Slunečnice', 'solar-t4', 18000, [-2.67, 2.67, -1.75, 1.75], 5.32, { desc: 'Dvouosý hexagonální květ. 16 ⚡/s.', energy: { role: 'source', out: 16, tracker: true }, research: 'solarT4' }),
-  'solar-t5': small('Solár Koruna', 'solar-t5', 42000, [-2.67, 2.67, -3.08, 3.08], 6.11, { desc: 'Zrcadla soustředí Slunce do věže s jádrem. 25 ⚡/s.', energy: { role: 'source', out: 25, tracker: true }, research: 'solarT5', bricks: 100 }),
+  // L-61 (3.1): vyšší tier levnější na 1 ⚡/s (T1 $320, T2 $377 → T3 $340, T4 $297, T5 $252; poměr 115 : 100 : 85), baterie T3–T5 −39 / −50 / −50 %
+  'solar-t3': small('Solár Sledovač', 'solar-t3', 3400, [-2.94, 2.94, -0.90, 0.94], 2.46, { desc: 'Natáčí se za Sluncem, vyrábí plně i při nízkém Slunci. 10 ⚡/s.', energy: { role: 'source', out: 10, tracker: true }, research: 'solarT3' }),
+  'solar-t4': small('Solár Slunečnice', 'solar-t4', 4750, [-2.67, 2.67, -1.75, 1.75], 5.32, { desc: 'Dvouosý hexagonální květ. 16 ⚡/s.', energy: { role: 'source', out: 16, tracker: true }, research: 'solarT4' }),
+  'solar-t5': small('Solár Koruna', 'solar-t5', 6300, [-2.67, 2.67, -3.08, 3.08], 6.11, { desc: 'Zrcadla soustředí Slunce do věže s jádrem. 25 ⚡/s.', energy: { role: 'source', out: 25, tracker: true }, research: 'solarT5', bricks: 100 }),
   'battery-t1': small('Baterie Bedna', 'battery-t1', 1440, [-1.46, 2.13, -0.83, 1.67], 1.41, { desc: 'Autobaterie v dřevěné bedně. 525 ⚡, nabíjení 15 ⚡/s.', energy: { role: 'storage', cap: 525, rate: 15 } }),
   'battery-t2': small('Baterie Skříň', 'battery-t2', 4200, [-1.72, 1.23, -0.72, 0.92], 2.90, { desc: 'Skříň se stavovou LED lištou. 1 400 ⚡, 30 ⚡/s.', energy: { role: 'storage', cap: 1400, rate: 30 } }),
-  'battery-t3': small('Baterie Kontejner', 'battery-t3', 10800, [-2.60, 3.10, -1.10, 1.54], 2.64, { desc: 'Průmyslové úložiště s chlazením. 3 500 ⚡, 60 ⚡/s.', energy: { role: 'storage', cap: 3500, rate: 60 }, research: 'batteryT3' }),
-  'battery-t4': small('Baterie Trojčata', 'battery-t4', 28800, [-2.42, 2.42, -2.80, 3.15], 4.37, { desc: 'Tři tlakové články. 8 750 ⚡, 120 ⚡/s.', energy: { role: 'storage', cap: 8750, rate: 120 }, research: 'batteryT4' }),
-  'battery-t5': small('Baterie Jádro', 'battery-t5', 48000, [-2.67, 2.67, -3.08, 3.08], 5.70, { desc: 'Plazma v gyroskopu. 21 000 ⚡, 250 ⚡/s.', energy: { role: 'storage', cap: 21000, rate: 250 }, research: 'batteryT5', bricks: 200 }),
+  'battery-t3': small('Baterie Kontejner', 'battery-t3', 6600, [-2.60, 3.10, -1.10, 1.54], 2.64, { desc: 'Průmyslové úložiště s chlazením. 3 500 ⚡, 60 ⚡/s.', energy: { role: 'storage', cap: 3500, rate: 60 }, research: 'batteryT3' }),
+  'battery-t4': small('Baterie Trojčata', 'battery-t4', 14400, [-2.42, 2.42, -2.80, 3.15], 4.37, { desc: 'Tři tlakové články. 8 750 ⚡, 120 ⚡/s.', energy: { role: 'storage', cap: 8750, rate: 120 }, research: 'batteryT4' }),
+  'battery-t5': small('Baterie Jádro', 'battery-t5', 24000, [-2.67, 2.67, -3.08, 3.08], 5.70, { desc: 'Plazma v gyroskopu. 21 000 ⚡, 250 ⚡/s.', energy: { role: 'storage', cap: 21000, rate: 250 }, research: 'batteryT5', bricks: 100 }),
   pole: {
     name: 'Kotva vedení', cat: 'energy', model: 'power-pole', ground: 'power-pole-ground', price: 150, inBase: true, ready: true, padTop: 0,
     desc: 'Vznášedlo ve výšce 6,5 m, které nese kabely jako elektrické vedení. Samo se spojí s nejbližšími 3 kotvami a stavbami v dosahu (kotva–kotva 30 m, ke stavbě 12 m).',
@@ -133,12 +135,29 @@ Object.assign(STRUCTURES, {
     bay: [0, 0],                                                     // místo pro vozidlo (jede po ose X)
     rack: [[-2.6, 1.245], [2.6, 1.245], [-2.6, 3.445], [2.6, 3.445]], // pozice baterií regálu (x, y; z = −5,57) s kontrolkou hry
     rackPrices: [4000, 6000],                                        // 3. a 4. baterie regálu
+    // dronport (3.1, L-62, D-14): boční modul na 6 sloupech u pravé kratší strany, paluba ve výšce 6 m, 2 místa pro drony
+    dronport: {
+      at: [17.5, 0, -2],                                             // střed modulu v souřadnicích výměníku (extras.umisteni_u_vymeniku)
+      pads: [[0, 6.05, 3.3], [0, 6.05, -3.3]],                       // místa přistání (uzly dron_1, dron_2)
+      lights: [[-3.15, 6.72, 3.3], [-3.15, 6.72, -3.3]],             // stavová světla (stav_1, stav_2)
+      prices: [10000, 7000],                                         // dronport s 1 dronem, 2. dron
+      power: 8,                                                      // ⚡/s při nabíjení dronu
+      foot: [-13.8, 21.9, -10.3, 10.3],
+      solid: [[14.4, 20.6], [-8.5, -2, 4.5]],                        // sloupy: x × z (0,9 × 0,9 m)
+    },
+    footFor: b => (b?.data?.dp?.n > 0 ? STRUCTURES.swapper.dronport.foot : STRUCTURES.swapper.foot),
+    solidFor: b => {
+      const def = STRUCTURES.swapper;
+      if (!(b?.data?.dp?.n > 0)) return def.solid;
+      const [xs, zs] = def.dronport.solid;
+      return [...def.solid, ...xs.flatMap(x => zs.map(z => [x - 0.45, x + 0.45, z - 0.45, z + 0.45]))];
+    },
   },
   // ---------- logistika (fáze 3: L-20 až L-24, D-05, D-06, D-11) ----------
   // sockets = zásuvky pásů { id, dir: in | out, goods: dust | brick | any, x, z, yaw (směr ven) } v místních souřadnicích
   depot: {
     name: 'Depo', cat: 'logistics', model: 'silo', price: 3000, inBase: false, ready: true, padTop: 0.25, labelY: 6.4,
-    desc: 'Sklad 5 000 kg prachu daleko od základny: vysyp do něj zásobník (kruh kolem depa). Prach neprodává – odveze ho pás z výstupu (oranžový) do Výkupu, slinovny nebo jiného depa.',
+    desc: 'Sklad 5 000 kg prachu daleko od základny: pěšky vysyp zásobník v kruhu kolem depa. Prach neprodává – odveze ho pás z výstupu (oranžový) do Výkupu, slinovny nebo jiného depa, Vozidlo vysypává do depa výsypkou: zastav pod ramenem za depem (100 kg/s, výzkum Rychlý výsyp až 400). S kladivem jde depo přesunout (E).',
     pad: [-2.6, 2.6, -2.6, 2.6], foot: [-2.9, 2.9, -2.9, 2.9], solid: [[-1.6, 1.6, -1.6, 1.6]],
     sockets: [{ id: 'in', dir: 'in', goods: 'dust', x: -2.6, z: 0, yaw: -Math.PI / 2 }, { id: 'out', dir: 'out', goods: 'dust', x: 2.6, z: 0, yaw: Math.PI / 2 }],
   },
@@ -173,12 +192,33 @@ Object.assign(STRUCTURES, {
     sockets: [{ id: 'a', dir: 'in', goods: 'any', x: -0.8, z: -1.4, yaw: Math.PI }, { id: 'b', dir: 'in', goods: 'any', x: 0.8, z: -1.4, yaw: Math.PI }, { id: 'out', dir: 'out', goods: 'any', x: 0, z: 1.4, yaw: 0 }],
   },
 });
+// LAAC (3.1, L-64, D-16): věž na jednom hexu + 1–6 plošin na sousedních hexech. Díly (věž, plošiny) dává laac.js
+// přes partsFor (stavba má víc obdélníků – kolize, srovnaný terén, pásy). Typ na konec (pořadí = číslo typu v síti).
+Object.assign(STRUCTURES, {
+  laac: {
+    name: 'LAAC', cat: 'vehicles', model: 'laac', price: 40000, inBase: false, ready: true, research: 'aviation', unique: true, hex: true,
+    padTop: 0.5, labelY: 40,
+    desc: 'Lunar Apex Aircraft Centrum: řídicí věž na jednom hexu a přistávací plošiny pro letouny na sousedních hexech (první v ceně, R / kolečko vybere stranu). Plošiny nabíjí 25 ⚡/s přívodem z věže – věž připoj kabelem k síti. Jen jedno ve světě.',
+    pad: [-5.7, 5.7, -4.95, 4.95], foot: [-5.9, 5.9, -5.1, 5.1], solid: [[-3.2, 3.2, -3.2, 3.2]], use: [-7, 7, -7, 7],
+    padPart: { pad: [-5.6, 5.6, -5.0, 4.95], foot: [-5.7, 5.7, -5.1, 5.0], solid: [[2.2, 2.9, -4.75, -4.1]] },   // plošina (laac-plocha.glb, měřítko 1)
+    padPrices: [8000, 12000, 18000, 26000, 36000],                   // 2. až 6. plošina
+    anchors: [[4.558, 2.95, 0]],
+    energy: { role: 'load' },
+    chargeRate: 25,                                                  // ⚡/s na plošinu
+  },
+});
 export const SWAP = { dur: 3, rate: 15, cap: 1000, bayR: 1.8 };   // s výměny, ⚡/s na baterii, „univerzální“ kapacita ⚡, m od středu
 export const CHARGER_RATE = [10, 20, 40];          // ⚡/s na slot podle úrovně rychlonabíjení
 for (const [k, d] of Object.entries(STRUCTURES)) d.id = k;
 export const TYPE_IDS = Object.keys(STRUCTURES);   // pořadí = číslo typu v síti (nové typy jen přidávat na konec)
 export const structureDef = type => STRUCTURES[type] || null;
 export const footOf = b => STRUCTURES[b.type]?.footFor?.(b) || STRUCTURES[b.type]?.foot;
+// Díly stavby (3.1): obvykle jeden obdélník; LAAC = věž + plošiny (partsFor z laac.js). { p, yaw, pad, foot, solid, kind }
+export function partsOf(b) {
+  const def = STRUCTURES[b?.type];
+  if (!def) return [];
+  return def.partsFor?.(b) || [{ p: b.p, yaw: b.yaw, pad: def.pad, foot: footOf(b), solid: def.solidFor?.(b) || def.solid, kind: 'main' }];
+}
 export const isEnergy = b => !!STRUCTURES[b?.type]?.energy;
 
 // Výzkum (fáze 4): zatím nic vyzkoumáno → stavby s research jsou v liště zamčené 🔒.
@@ -292,12 +332,13 @@ function circleHits(p, yaw, rect, q, r, ax) {
 
 // Jde stavbu postavit? Vrací { ok, reason }. ignoreId = stavba, která se nepočítá (přesun).
 // footOverride = jiná zabraná plocha (rozšíření stavby, např. modul nabíječky).
-export function canPlace(type, p, yaw, ignoreId = null, footOverride = null) {
+export function canPlace(type, p, yaw, ignoreId = null, footOverride = null, padOverride = null) {
   const def = STRUCTURES[type];
   if (!def) return { ok: false, reason: 'Neznámá stavba' };
   const s = game.s;
   const ax = axes(p, yaw);
   const foot = footOverride || def.foot;
+  const pad = padOverride || def.pad;                                // plošina LAAC (3.1) má vlastní desku
   const reach = rectRadius(foot) / R;
 
   if (def.unique && (s.buildings || []).some(b => b.type === type && b.id !== ignoreId)) return { ok: false, reason: `${def.name} může stát jen jedno` };
@@ -326,11 +367,14 @@ export function canPlace(type, p, yaw, ignoreId = null, footOverride = null) {
   for (const o of s.buildings || []) {
     if (o.id === ignoreId) continue;
     const od = STRUCTURES[o.type];
-    const ofoot = footOf(o);
-    if (!od || angleBetween(p, o.p) > reach + rectRadius(ofoot) / R) continue;
-    const oax = axes(o.p, o.yaw);
-    const theirs = corners(ofoot).map(([x, z]) => dirToLocal(p, yaw, localToDir(o.p, o.yaw, x, z, oax), ax));
-    if (polysOverlap(mine, theirs)) return { ok: false, reason: `Překáží ${od.name}` };
+    if (!od) continue;
+    for (const part of partsOf(o)) {                                   // LAAC: věž i každá plošina (3.1)
+      const ofoot = part.foot;
+      if (angleBetween(p, part.p) > reach + rectRadius(ofoot) / R) continue;
+      const oax = axes(part.p, part.yaw);
+      const theirs = corners(ofoot).map(([x, z]) => dirToLocal(p, yaw, localToDir(part.p, part.yaw, x, z, oax), ax));
+      if (polysOverlap(mine, theirs)) return { ok: false, reason: `Překáží ${part.kind === 'pad' ? 'plošina LAAC' : od.name}` };
+    }
   }
   // zaparkovaná vozidla, stanice robotů, depa z v2, raketa
   for (const v of s.vehicles) {
@@ -348,14 +392,14 @@ export function canPlace(type, p, yaw, ignoreId = null, footOverride = null) {
   if (angleBetween(p, siteDir(0, 0)) * R < ROCKET_R + rectRadius(foot)) return { ok: false, reason: 'Příliš blízko rakety' };
 
   // jen na vyčištěných hexech (rozhodnutí 3. 11.): pod deskou nesmí zůstat hex s prachem
-  const dusty = dustyHexes(p, yaw, def.pad, ax);
+  const dusty = dustyHexes(p, yaw, pad, ax);
   if (dusty) return { ok: false, reason: `Nejdřív vyčisti hex${dusty > 1 ? 'y' : ''} pod stavbou (${dusty} s prachem)` };
 
   const onBelt = beltCheck(p, yaw, foot);
   if (onBelt) return { ok: false, reason: onBelt };
 
   // svah pod podstavcem
-  const [lo, hi] = heightRange(p, yaw, def.pad);
+  const [lo, hi] = heightRange(p, yaw, pad);
   if (hi - lo > MAX_SLOPE) return { ok: false, reason: `Příliš strmý svah (${(hi - lo).toFixed(1).replace('.', ',')} m, nejvýš ${MAX_SLOPE.toString().replace('.', ',')} m)` };
   return { ok: true, reason: '' };
 }
@@ -389,11 +433,26 @@ export function placeStructure(type, p, yaw, id = null) {
 const normYaw = y => { const t = Math.PI * 2; return ((y % t) + t) % t; };
 const vozidel = n => `${n} ${n === 1 ? 'vozidlo' : n >= 2 && n <= 4 ? 'vozidla' : 'vozidel'}`;
 
+// Přesun depa kladivem (L-63, 3.1): depo i se zásobou se přestěhuje, napojené pásy se zbourají (60 % zpět).
+// Nová stavba dostane nové id (scéna i srovnaný terén se přestaví samy). Vrací nové id, nebo false.
+export function moveStructure(id, p, yaw) {
+  const s = game.s;
+  const i = (s.buildings || []).findIndex(b => b.id === id);
+  const b = s.buildings[i];
+  if (!b || b.type !== 'depot' || !canPlace(b.type, p, yaw, id).ok) return false;
+  s.money += demolishHook(id);
+  if (s.cables?.length) s.cables = s.cables.filter(c => c[0] !== id && c[1] !== id);
+  const moved = { ...b, id: newUid(), p: norm(p), yaw: normYaw(yaw), data: { ...b.data } };
+  s.buildings.splice(i, 1, moved);
+  return moved.id;
+}
+
 // Co by se stalo při zboření: { refund, warn, blocked } (L-14).
 export function demolishInfo(id) {
   const b = structureById(id);
   if (!b) return { refund: 0, warn: '', blocked: 'Stavba už neexistuje' };
-  const refund = Math.round((b.paid || 0) * REFUND);
+  const paid = Number.isFinite(b.paid) ? b.paid : (STRUCTURES[b.type]?.price || 0);   // L-61: bez uložené ceny = nová cena
+  const refund = Math.round(paid * REFUND);
   if (b.type === 'garage') {
     const homed = game.s.vehicles.filter(v => v.garage === id);
     if (homed.length) {
@@ -404,6 +463,7 @@ export function demolishInfo(id) {
       return { refund, warn: `${vozidel(homed.length)} se přeřadí do jiné garáže`, blocked: '' };
     }
   }
+  if (b.type === 'laac' && game.s.vehicles.some(v => v.garage === id)) return { refund, warn: '', blocked: 'Věž nejde zbořit, dokud vlastníš letoun – prodej ho v okně LAAC (Hangár)' };   // 3.1, L-64
   const belts = (game.s.belts || []).filter(bl => bl.from?.[0] === id || bl.to?.[0] === id).length;
   if (b.type === 'depot' && (b.data.store || 0) > 0) return { refund, warn: `${Math.round(b.data.store)} kg prachu ve skladu se ztratí${belts ? ` · zbourá se i ${belts} ${belts === 1 ? 'pás' : 'pásy'}` : ''}`, blocked: '' };
   return { refund, warn: belts ? `zbourá se i ${belts} ${belts === 1 ? 'napojený pás' : 'napojené pásy'}` : '', blocked: '' };
@@ -474,6 +534,32 @@ export function swapperAddRack(id) {
   b.paid = (b.paid || 0) + o.price;
   return true;
 }
+// Dronport (3.1, L-62): koupě s 1 dronem, pak 2. dron. Modul stojí vedle výměníku → místo musí být volné.
+export function dronportOffer(b) {
+  const D = STRUCTURES.swapper.dronport;
+  const n = b?.data?.dp?.n | 0;
+  if (!b || n >= 2) return { price: null, reason: 'Dronport má oba drony' };
+  const price = D.prices[n];
+  if (!hasResearch('droneDelivery')) return { price, reason: 'Chybí výzkum „Dronová donáška“' };
+  if (!n) {
+    const chk = canPlace('swapper', b.p, b.yaw, b.id, D.foot);
+    if (!chk.ok) return { price, reason: `Dronport se nevejde: ${chk.reason}` };
+  }
+  if (game.s.money < price) return { price, reason: 'Chybí peníze' };
+  return { price, reason: '' };
+}
+export function dronportBuy(id) {
+  const b = structureById(id);
+  if (b?.type !== 'swapper') return false;
+  const o = dronportOffer(b);
+  if (o.reason) return false;
+  game.s.money -= o.price;
+  const dp = b.data.dp ||= { n: 0, dr: [] };
+  dp.n++;
+  while (dp.dr.length < dp.n) dp.dr.push({ st: 'ready', chg: 0, m: null });
+  b.paid = (b.paid || 0) + o.price;
+  return true;
+}
 // Rychlonabíjení: II (20 ⚡/s) bez výzkumu, III (40 ⚡/s) po výzkumu.
 export function chargerFastOffer(b) {
   const def = STRUCTURES.charger;
@@ -498,7 +584,7 @@ export function chargerFaster(id) {
 
 export const garages = () => structuresOf('garage');
 export const fleetCapacity = () => garages().length * GARAGE_SLOTS;
-export const fleetFull = () => game.s.vehicles.length >= fleetCapacity();
+export const fleetFull = () => game.s.vehicles.filter(v => !isAirType(v.type)).length >= fleetCapacity();   // letouny mají místo na plošinách LAAC (3.1)
 
 export function freeSlots(gid) {
   const used = new Set(game.s.vehicles.filter(v => v.garage === gid).map(v => v.spot));
@@ -527,13 +613,15 @@ export function garageSlot(g, k) {
 // Kam patří vozidlo (domovská garáž a místo v ní). Bez garáže = u Výkupu.
 export function homeSpot(v) {
   const g = v.garage && structureById(v.garage);
-  if (g) return garageSlot(g, v.spot);
+  if (g?.type === 'laac') { const h = STRUCTURES.laac.homeFor?.(v); if (h) return h; }   // letoun: plošina LAAC (3.1)
+  else if (g) return garageSlot(g, v.spot);
   return { dir: baseDir(0, -14), facing: [0, -1, 0] };
 }
 export function isParkedHome(v) {
   return angleBetween(v.p, homeSpot(v).dir) * R < 3;
 }
 export const garageName = id => {
+  if (structureById(id)?.type === 'laac') return 'LAAC';
   const i = garages().findIndex(g => g.id === id);
   return i < 0 ? 'bez garáže' : `Garáž ${i + 1}`;
 };
@@ -552,6 +640,16 @@ export function padTopHeight(b) {
   return top;
 }
 
+// Totéž pro díl stavby (plošina LAAC): díly drží laac.js v cache, takže WeakMap podle objektu dílu stačí
+const partTopCache = new WeakMap();
+export function partTopHeight(part) {
+  const tv = terrainVersion(), c = partTopCache.get(part);
+  if (c && c.tv === tv) return c.top;
+  const top = heightRange(part.p, part.yaw, part.pad)[1] + 0.03;
+  partTopCache.set(part, { tv, top });
+  return top;
+}
+
 // ---------- srovnaný terén pod stavbami (4. 11.) ----------
 // Každá stavba (mimo malé opakované – soláry, baterie, RTG – a kotvy) srovná terén pod deskou na průměrnou výšku
 // původního terénu (vzorky po 2 m) a okolí plynule napojí přechodem 4–16 m podle převýšení – stavba nepropadá,
@@ -559,8 +657,8 @@ export function padTopHeight(b) {
 const FLAT_EDGE = 0.5;                                 // m – plocha přesahuje desku
 const patchCache = new Map();                          // id → { key, patch }
 export const flattens = def => !!def && !def.instanced && !def.hover && def.kind !== 'belt';
-export function terrainPatchFor(type, p, yaw) {
-  const pad = STRUCTURES[type].pad, ax = axes(p, yaw);
+export function terrainPatchFor(type, p, yaw, padOverride = null) {
+  const pad = padOverride || STRUCTURES[type].pad, ax = axes(p, yaw);
   const nx = Math.max(2, Math.ceil((pad[1] - pad[0]) / 2)), nz = Math.max(2, Math.ceil((pad[3] - pad[2]) / 2));
   let sum = 0, n = 0, lo = Infinity, hi = -Infinity;
   for (let i = 0; i <= nx; i++) for (let k = 0; k <= nz; k++) {
@@ -576,20 +674,21 @@ let patchSig = '';
 // Volá main.js každý snímek: podle staveb nastaví srovnané plochy (jen když se stavby změnily).
 export function syncTerrainPatches() {
   const list = (game.s?.buildings || []).filter(b => flattens(STRUCTURES[b.type]));
-  const sig = list.map(b => `${b.id}:${b.p[0].toFixed(7)},${b.p[1].toFixed(7)},${b.yaw.toFixed(4)}`).join('|');
+  const sig = list.map(b => `${b.id}:${b.p[0].toFixed(7)},${b.p[1].toFixed(7)},${b.yaw.toFixed(4)}${b.type === 'laac' ? ':' + (b.data?.pads || []).join('') : ''}`).join('|');
   if (sig === patchSig) return false;
   patchSig = sig;
   const before = new Map(patchCache);
   const patches = [], changed = [];
   patchCache.clear();
-  for (const b of list) {
-    const key = `${b.type}|${b.p.join(',')}|${b.yaw}`;
-    const old = before.get(b.id);
-    const patch = old && old.key === key ? old.patch : terrainPatchFor(b.type, b.p, b.yaw);
+  for (const b of list) partsOf(b).forEach((part, k) => {               // LAAC: věž i plošiny (3.1)
+    const id = k ? `${b.id}#${k}` : b.id;
+    const key = `${b.type}|${part.p.join(',')}|${part.yaw}|${part.pad.join(',')}`;
+    const old = before.get(id);
+    const patch = old && old.key === key ? old.patch : terrainPatchFor(b.type, part.p, part.yaw, part.pad);
     if (!old || old.key !== key) changed.push({ c: patch.c, ang: patch.ang });
-    patchCache.set(b.id, { key, patch });
+    patchCache.set(id, { key, patch });
     patches.push(patch);
-  }
+  });
   for (const [id, o] of before) if (!patchCache.has(id) || patchCache.get(id).key !== o.key) changed.push({ c: o.patch.c, ang: o.patch.ang });
   setTerrainPatches(patches, changed);
   return true;
@@ -602,7 +701,18 @@ export function padGround(p) {
   let best = null;
   for (const b of list) {
     const def = STRUCTURES[b.type];
-    if (!def || angleBetween(p, b.p) * R > rectRadius(def.pad) + 1) continue;
+    if (!def) continue;
+    if (def.partsFor) {                                                // LAAC: plošiny jsou také deska (3.1)
+      for (const part of partsOf(b)) {
+        if (angleBetween(p, part.p) * R > rectRadius(part.pad) + 1) continue;
+        const [x, z] = dirToLocal(part.p, part.yaw, p);
+        if (!inRect(part.pad, x, z)) continue;
+        const top = partTopHeight(part);
+        if (best === null || top > best) best = top;
+      }
+      continue;
+    }
+    if (angleBetween(p, b.p) * R > rectRadius(def.pad) + 1) continue;
     const [x, z] = dirToLocal(b.p, b.yaw, p);
     if (!inRect(def.pad, x, z)) continue;
     const top = padTopHeight(b);
@@ -660,7 +770,7 @@ export function pushOut(p, r) {
       out = { p: np, n };
     }
   };
-  for (const b of game.s.buildings || []) push(b, STRUCTURES[b.type]?.solid);
+  for (const b of game.s.buildings || []) for (const part of partsOf(b)) push(part, part.solid);   // LAAC: věž i plošiny (3.1)
   for (const b of BUILDINGS) push(b, b.solid);
   return out;
 }

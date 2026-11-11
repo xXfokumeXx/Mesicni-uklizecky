@@ -2,12 +2,13 @@
 // Propojí logiku, 3D scénu, budovy, síť, chat a nastavení; spustí smyčku a ukládání.
 import { TICK_MS, WIN_LEFT, OFFLINE_CAP_S, SUN, CAMERA, UNITS_PER_KG, MOON, BASE, PLANET, PLANET_KEY } from './config.js';
 import { game, newGame, gameTime, addStat, dustPrice, pickPersonal, putPersonal, resetPersonal } from './state.js';
-import { activeEquipment } from './equipment.js';
+import { activeEquipment, powerRefund, stripPower } from './equipment.js';
 import { robotTick, simulateOffline } from './robots.js';
 import { droneTick, dronesOffline } from './drones.js';
 import { logisticsTick, logisticsClientTick, logisticsOffline, depositToDepot } from './logistics.js';
 import {
   initPlayer, movePlayer, collect, playerFx, rotateHeading, tryJump, tryJet, activeBody, vehicleBody,
+  unloadToDepot,
   checkVehicleHits, isRagdoll, ragdollNet, currentVehicleSpeed, riding, followRide, leaveRide, currentAltitude,
 } from './player.js';
 import { currentAction, placing, startPlacing, cancelPlacing, updatePlacing, stationUpgradeNear } from './interact.js';
@@ -27,15 +28,29 @@ import { syncTerrainPatches } from './structures.js';
 import { takeTerrainChanges } from './planet/height.js';
 
 // Budovy základny (GLB) se staví hned se scénou – načtou se spolu s přípravou Měsíce.
-const BASE_MODELS = ['building-buyback', 'building-workshop', 'building-toolshop'];
+const BASE_MODELS = ['building-buyback', 'building-workshop', 'building-toolshop', 'aircraft-prachovka', 'aircraft-kolibrik', 'aircraft-mula', 'aircraft-kondor'];   // letouny: builder vozidla potřebuje GLB (3.1)
 import { updateUi, setPrompt, flashMoney, floatText, toast, updatePlayers, showAchievement, navTarget } from './ui.js';
-import { saveGame, loadGame, importV1, lockSaves, savePlanet, peekSave, saveFresh } from './storage.js';
+import { saveGame, loadGame, importV1, lockSaves, savePlanet, peekSave, saveFresh, stashHandoff, takeHandoff, logWorldLoad } from './storage.js';
 import { cloudMeta, loadCloud, cloudHasMap, hostOf, releaseHost, resetCloudMap, setWorldPassword, checkAccess, blockCloud } from './cloud.js';
+import { FIREBASE_DEV } from './firebase-config.js';
+import { VERSION, cmpVersion } from './version.js';
+import { initVersionUi } from './versionUi.js';
 import { fmt } from './format.js';
 import { settings, loadSettings, matchPreset } from './settings.js';
 import { initSettingsMenu } from './settingsMenu.js';
 import { createDebug } from './debug.js';
 import { energyTick, TICK as ENERGY_TICK, live as energyLive, swapEvents } from './energy.js';
+import { dronesTick, predictTick, setDroneHooks, takeDroneEvents, droneOffer, missionFor, orderDrone, droneStatus, DRONE as DELIVERY } from './dronport.js';
+import { roofOf } from './scene/swapperCrane.js';
+import { purchase } from './econ.js';
+import './laac.js';                                              // LAAC (3.1): díly stavby (partsFor) a domov letounů
+import { isAirType } from './catalog.js';
+import { scan, scanDust } from './flight.js';
+import { setCarryHooks, carrying } from './carry.js';
+import { takeFromDepot, stationHasBelt } from './logistics.js';
+import { stationMk } from './catalog.js';
+import { loadFromSilo } from './player.js';
+import { vehicleStats } from './equipment.js';
 import { researchCenter, researchTick, researchOffline, techById } from './research.js';
 import { batteryCap } from './catalog.js';
 import { build as bld, hammerActive, toggleHammer, toggleMenu, toggleDemolish, cancelBuild, rotateBy, updateBuild, placeNow, closeAll, startCable, connectNow, beltClick } from './build.js';
@@ -46,7 +61,7 @@ import { loadProfile, profile, saveProfile } from './profile.js';
 import {
   net, initLobby, startHost, joinWorld, netTick, addEarned, sendChat, refreshLobbyRank, players, movingVehicles,
   vehicleOverride, vehicleTakenBy, vehicleRemoteMoving, hostRobotCompleted, setRagdollPresence, savePersonal, inviteLink,
-  addCollected, reportDeposit, myStatKey, passengersOf, request, hostOwnDust, saveWorldNow, setWorldLocked, worldLocked, findWorld,
+  addCollected, reportDeposit, reportTake, reportParked, myStatKey, passengersOf, request, hostOwnDust, saveWorldNow, saveWorldOnHide, setWorldLocked, worldLocked, findWorld,
   loadPersonal,
 } from './net.js';
 import { initChat, showChat, addMessage, openChat, chatOpen } from './chat.js';
@@ -103,6 +118,18 @@ function work(dt) {
   const before = s.money;
   const eqNow = activeEquipment();
   const earned = collect();
+  unloadToDepot(dt);                                        // vozidlo pod výsypkou → do depa (L-63)
+  if (playerFx.dump?.kg > 0) {
+    const { id, kg } = playerFx.dump;
+    if (net.mode === 'client') reportDeposit(id, kg);       // hostitel ověří proti nasbíranému prachu (dk)
+    else { depositToDepot(id, kg); hostOwnDust(0, kg); }
+  }
+  loadFromSilo(dt);                                         // Kondor nad silem → náklad ze skladu (3.1, L-67)
+  if (playerFx.silo?.kg > 0) {
+    const { id, kg } = playerFx.silo;
+    if (net.mode === 'client') { reportTake(id, kg); playerFx.pendingTake = { ...(playerFx.pendingTake || {}), [id]: (playerFx.pendingTake?.[id] || 0) + kg }; }
+    else hostOwnDust(takeFromDepot(id, kg), 0);             // prach z depa je „nasbíraný“ – prodej ve Výkupu projde kontrolou
+  }
   batteryWarnings();
   const gained = s.money - before;
   const swept = playerFx.swept / UNITS_PER_KG;
@@ -145,6 +172,7 @@ function work(dt) {
       const done = robotTick(st, dt);
       if (done.length) hostRobotCompleted(done);
     }
+    stationNotes();                                          // plná stanice bez pásu (11. 11.)
     for (const dr of s.drones) {                             // UFO drony si hexy hledají samy
       const done = droneTick(dr, dt);
       if (done.length) hostRobotCompleted(done);
@@ -178,6 +206,75 @@ function researchFinished(id) {
 }
 // Hýbe se vozidlo i? (nabíjení a výměna baterie jen ve stání; řidič smí sedět)
 const vehicleMoving = i => (i === game.s.driving ? Math.abs(currentVehicleSpeed()) > 0.3 : vehicleRemoteMoving(i));
+
+// ---------- dronová donáška baterií (3.1, L-62) ----------
+// Poloha a rychlost vozidla pro let dronu: řízené mnou / jiným hráčem / zaparkované.
+setDroneHooks({
+  vehicle: i => {
+    const s = game.s, v = s.vehicles[i];
+    if (!v) return null;
+    if (i === s.driving) return { p: v.p, speed: Math.abs(currentVehicleSpeed()) };
+    const o = net.mode !== 'off' ? vehicleOverride(i) : null;
+    return o ? { p: o.p, speed: o.speed || 0 } : { p: v.p, speed: 0 };
+  },
+  roof: type => roofOf(type || 'rideon'),
+});
+// B / tlačítko v HUD: objednat baterii dronem, podruhé zrušit
+function orderBattery() {
+  const s = game.s, i = s.driving;
+  if (i < 0) { toast('Baterii dronem objednáš, když sedíš ve vozidle (B).', 4000); return; }
+  const v = s.vehicles[i], cur = missionFor(i);
+  const send = (on, ok) => Promise.resolve(purchase('dorder', [i, v.uid, on ? 1 : 0], 0, () => orderDrone(i, on))).then(r => toast(r ? ok : 'Objednávka dronu se nepovedla – zkus to znovu.', 4000));
+  if (cur) {
+    if (cur.m.carry !== 'full' || cur.m.cancel) return;
+    if (cur.m.ph === 'swap') { toast('Dron právě vyměňuje baterii.', 3000); return; }
+    send(false, 'Objednávka zrušena – dron se vrací s baterií.');
+    return;
+  }
+  const o = droneOffer(i);
+  if (!o.ok) { toast(o.reason, 4500); return; }
+  send(true, 'Dron letí s nabitou baterií. Až bude nad tebou, zastav.');
+}
+// Převoz vozidel (3.1, L-67): výška střechy, kdo vozidlo řídí, položené vozidlo klient nahlásí hostiteli
+setCarryHooks({
+  roof: type => roofOf(type || 'rideon'),
+  taken: i => i === game.s.driving || !!vehicleTakenBy(i),
+  placed: i => { if (net.mode === 'client' && i >= 0) reportParked(i); },
+});
+// Stanice robota bez pásu (11. 11.): prach se prodá jen přes pás – když se zásobník zaplní, jednou za hru hláška
+const fullWarned = new Set();
+function stationNotes() {
+  for (const st of game.s.stations) {
+    if (!st.full || stationHasBelt(st) || fullWarned.has(st.hex)) continue;
+    fullWarned.add(st.hex);
+    toast(`${stationMk(st).name}: zásobník stanice je plný (${stationMk(st).store} kg) a robot stojí. Prach se prodá jen přes pás – postav ho kladivem z oranžové zásuvky stanice do Výkupu (V → Logistika → Pás).`, 10000);
+  }
+}
+// Skener Kolibříku (3.1, L-65): za letu 1× za 2 s najde 5 nejšpinavějších hexů v dosahu → značky na mapě (M)
+let scanToast = false;
+function scanTick() {
+  const s = game.s, v = s.driving >= 0 ? s.vehicles[s.driving] : null;
+  const range = v && v.air?.mode === 'fly' ? vehicleStats(v).scan : 0;
+  if (!range) { if (scan.cells.length && performance.now() - scan.at > 30000) scan.cells = []; return; }
+  if (performance.now() - scan.at < 2000) return;
+  scan.at = performance.now();
+  scan.cells = scanDust(v.p, range);
+  if (!scanToast && scan.cells.length) { scanToast = true; toast(`Skener prachu: ${scan.cells.length} nejšpinavějších hexů do ${range} m je na mapě (M) žlutě.`, 6000); }
+}
+// Hlášky letu (hostitel z událostí, klient podle stavu letu k mému vozidlu)
+let droneSeen = { uid: null, carry: null };
+function droneNotes() {
+  const s = game.s;
+  for (const e of takeDroneEvents()) {
+    if (e.v !== s.driving) continue;
+    toast(e.kind === 'done' ? 'Baterie vyměněná dronem – 100 %. Můžeš jet.' : `Vozidlo je dál než ${DELIVERY.range} m od výměníku – dron se vrací.`, 4500);
+  }
+  if (net.mode !== 'client') return;
+  const v = s.driving >= 0 ? s.vehicles[s.driving] : null;
+  const m = v ? missionFor(s.driving)?.m : null;
+  if (v && m && droneSeen.uid === v.uid && droneSeen.carry === 'full' && m.carry === 'empty') toast('Baterie vyměněná dronem – 100 %. Můžeš jet.', 4500);
+  droneSeen = { uid: v?.uid || null, carry: m?.carry || null };
+}
 
 // Upozornění na baterii vozidla (L-02): toast při 20 % a 10 %, při 0 % nouzový režim.
 let batteryWarn = { uid: null, level: 1 };
@@ -221,7 +318,7 @@ function settle(result) {
     else if (r === 'depot') toast('Depo postavené. Vysyp do něj zásobník, a až u něj postavíš pás (E), prach pojede do Výkupu.', 8000);
     else if (r === 'belt') toast('Pás postavený. Prach z depa teď jede do Výkupu a prodává se sám.', 6000);
     else if (r === 'dcarry') toast('Depo je v hotbaru. Vyber nové místo mimo základnu: E = přesunout ($1 000), Esc = nechat na místě.', 7000);
-    else if (r === 'dmoved') toast('Depo přesunuté. Pásy z něj i do něj se samy přestavěly po nové trase.', 6000);
+    else if (r === 'dmoved') toast('Depo je přesunuté i se zásobou. Napojené pásy se zbouraly (60 % zpět) – postav je znovu kladivem.', 7000);
     else if (r === 'liftoff') liftoff();
     else if (r === 'stup') toast('Stanice vylepšená. Robot jezdí rychleji a uveze víc prachu.', 5000);
     else if (r === 'built' && bld.type === 'depot' && (game.s.buildings || []).filter(b => b.type === 'depot').length === 1) {
@@ -308,7 +405,8 @@ function trackJumps(dt) {
     if (onFoot) recordAchStat('jumpLen', angleBetween(air.from, b.p) * MOON.radius);
     air.from = null;
   }
-  if (s.driving >= 0 && !b.grounded) { air.veh += dt; recordAchStat('vehAir', air.veh); } else air.veh = 0;
+  const plane = s.driving >= 0 && isAirType(s.vehicles[s.driving]?.type);            // let letounem není skok vozidlem (3.1)
+  if (s.driving >= 0 && !plane && !b.grounded) { air.veh += dt; recordAchStat('vehAir', air.veh); } else air.veh = 0;
   // ušlá vzdálenost pěšky (bez skoků přes půl Měsíce po srážce, bez přepravníku)
   if (onFoot && air.walk) {
     const d = angleBetween(air.walk, s.p) * MOON.radius;
@@ -321,7 +419,7 @@ function trackJumps(dt) {
 function checkAchievements() {
   const s = game.s;
   if (currentAltitude() >= 150) unlock('orbit');
-  if (s.driving >= 0 && Math.abs(currentVehicleSpeed()) >= 30) unlock('speed');
+  if (s.driving >= 0 && !isAirType(s.vehicles[s.driving]?.type) && Math.abs(currentVehicleSpeed()) >= 30) unlock('speed');
   if (angleBetween(s.p, BASE.dir) > Math.PI * 170 / 180) unlock('darkside');
   if (net.mode === 'off') return;
   if (s.driving >= 0 && s.vehicles[s.driving]?.type === 'crew' && passengersOf(s.driving).length >= 2) unlock('bus');
@@ -348,7 +446,10 @@ function hostLeft() {
   try { history.replaceState(null, '', `#${code}`); } catch { /* nic */ }
   if (peers[0] === net.me) {
     toast('Hostitel odešel – svět teď hostuješ ty (načítám ho z cloudu)…', 6000);
-    setTimeout(() => {
+    // moje mapa (snímek + tahy všech) je novější než ta v cloudu → uložit na předávku, po načtení se sloučí (F-10)
+    const stash = stashHandoff(code);
+    setTimeout(async () => {
+      await stash;
       try { sessionStorage.setItem(BOOT_KEY, JSON.stringify({ mode: 'host', cloud: code, planet: PLANET.id, public: game.s.netPublic !== false })); } catch { /* nic */ }
       lockSaves();
       location.reload();
@@ -595,7 +696,6 @@ let lastRender = 0;
 let promptTimer = 0;
 let shadeTimer = 0, sunTarget = 1, sunHere = 1;
 let lampPos = null;
-let warpWarned = false;
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -612,11 +712,7 @@ function frame(now) {
     const turnRate = s.driving >= 0 ? (eq.base.kind === 'push' ? 2.0 : 1.4) : 2.2;
     if (turn && !isRagdoll()) rotateHeading(turn * dt * turnRate);
     if (input.jump) tryJump();
-    if (input.keys.t) {
-      if (net.mode === 'client') {
-        if (!warpWarned) { warpWarned = true; toast('Čas může zrychlit jen hostitel světa – denní doba je pro všechny stejná.'); }
-      } else s.warp += dt * 1000 * SUN.warpSpeed;
-    }
+    // 11. 11.: posun času klávesou T zrušen (přání hráče) – s.warp zůstává jen kvůli starým uložením (posun se drží)
 
     const ride = riding();
     if (ride) {                                             // cestující jede s přepravníkem
@@ -654,6 +750,9 @@ function frame(now) {
       work(TICK_MS / 1000);
       workAcc -= TICK_MS;
     }
+    if (net.mode !== 'client') dronesTick(dt); else predictTick(dt);   // lety dronů s bateriemi (3.1) – plynule každý snímek
+    droneNotes();
+    scanTick();
   }
   if (net.mode !== 'off') {
     setRagdollPresence(ragdollNet());
@@ -832,6 +931,24 @@ function loadFrom(slot) {
   location.reload();
 }
 
+// L-71 (3.1): vylepšení Síla u nástrojů zrušeno. Koupené úrovně se vrátí v penězích – jednou: úrovně se po vrácení
+// smažou (ve slotu / cloudu u hostitele, v osobní části klienta). Klient o vrácení požádá hostitele (peníze jsou
+// společné); dokud hostitel nepotvrdí, úrovně zůstanou a zkusí se to při dalším připojení.
+function refundToolPower(client) {
+  const back = powerRefund(game.s.tools);
+  if (back <= 0) { stripPower(game.s.tools); return; }
+  const done = () => {
+    stripPower(game.s.tools);
+    setTimeout(() => toast(`Vylepšení Síla u nástrojů bylo zrušeno, vráceno $${Math.round(back).toLocaleString('cs-CZ')}.`, 9000), client ? 0 : 3000);
+  };
+  if (!client) { game.s.money += back; done(); return; }
+  request('refund31', [back], 0).then(ok => {
+    if (!ok) { console.warn('[3.1] hostitel nepotvrdil vrácení za Sílu – zkusí se při dalším připojení'); return; }
+    done();
+    savePersonal();
+  });
+}
+
 // Doplní práci robotů za dobu, kdy hra neběžela (zavřená stránka / skrytá karta).
 function catchUp(since) {
   const sec = Math.min((Date.now() - since) / 1000, OFFLINE_CAP_S) | 0;
@@ -873,6 +990,7 @@ function bindButtons() {
   on('menu-open', () => pause.open());
   on('chat-open', () => openChat());
   on('players-invite', () => copyInvite(null));
+  on('btn-drone', () => { document.getElementById('btn-drone').blur(); orderBattery(); });   // objednat / zrušit baterii dronem (3.1)
   // Esc: zavře to, co je otevřené; když nic, otevře menu pauzy. (Fáze zachycení = stav před zavřením.)
   addEventListener('keydown', e => {
     if (!running || e.repeat) return;
@@ -914,7 +1032,7 @@ function bindVisibility() {
       hiddenAt = Date.now();
       savePersonal();
       if (net.mode !== 'client') saveGame(game.slot, toast);
-      if (net.mode === 'host') saveWorldNow(false);           // stav světa do cloudu (kdyby se karta zavřela)
+      if (net.mode === 'host') saveWorldOnHide();             // stav světa (a mapa) do cloudu (kdyby se karta zavřela)
     } else if (hiddenAt) {
       if (net.mode === 'sp') catchUp(hiddenAt);
       hiddenAt = 0;
@@ -939,6 +1057,7 @@ function build() {
   actors = createActors(world.scene, settings.shadows, profile.look, {
     vehicleOverride: i => (net.mode === 'off' ? null : vehicleOverride(i)),
     onDust: (pos, n) => { if (settings.particles) particles?.emit(pos, n, 1.6); },
+    camera: world.camera,
   });
   actors.preloadStructures();                                // GLB staveb na pozadí (O-15)
   particles = createParticles(world.scene);
@@ -966,6 +1085,8 @@ function build() {
     zoom: f => {
       if (map.active) { map.zoom(f); return; }
       if (hammerActive() && bld.mode === 'build' && input.keys.r) { rotateBy((f > 1 ? -1 : 1) * (input.keys.shift ? 15 : 1), !!input.keys.shift); return; }
+      const av = game.s.driving >= 0 ? game.s.vehicles[game.s.driving] : null;   // Mula s navijákem: kolečko = délka lana 8–20 m
+      if (av?.type === 'mula' && (av.lv?.special | 0) > 0 && carrying()) { av.ropeLen = Math.max(8, Math.min(20, (av.ropeLen || 12) + (f > 1 ? 1 : -1))); toast(`Lano ${av.ropeLen} m`, 1200); return; }
       cam.zoom(f);
     },
     onAction: doAction,
@@ -981,8 +1102,10 @@ function build() {
     onHammer: () => { const msg = toggleHammer(); promptTimer = 0; if (msg) toast(msg, 4000); updateHotbar(); },
     onBuildMenu: () => { if (!toggleMenu() && !hammerActive()) toast(game.s.hammer ? 'Nejdřív vezmi kladivo do ruky (Q nebo číslo jeho políčka).' : 'Stavět jde kladivem – kup ho v Dílně (záložka Astronaut).', 4000); promptTimer = 0; },
     onLights: toggleLights,
+    onBattery: orderBattery,                                   // B = objednat baterii dronem (3.1, L-62)
     onAuto: () => {                                            // C = autocruise → asistent hrany → vypnuto (L-40, L-41)
       if (game.s.driving < 0) return;
+      if (isAirType(game.s.vehicles[game.s.driving]?.type)) { toast('Letoun nemá autopilota – klikni do terénu a doletí tam sám.', 4000); return; }
       const msg = toggleAutopilot(Math.abs(currentVehicleSpeed()) / Math.max(0.1, activeEquipment().stats.speed));
       if (msg) toast(msg, 6000);
     },
@@ -1034,6 +1157,7 @@ function build() {
     wardrobe,
     holo: createHoloView(),
     headThumb: id => wardrobe.headThumb(id),
+    skinThumb: id => wardrobe.skinThumb(id),
   });
   pause = initPause({
     canSave, canLoad: () => net.mode === 'sp',
@@ -1102,9 +1226,14 @@ async function launch(spec) {
     // svět z cloudu: hostitel teď není online, hostovat ho budu já
     showLoading('Načítám svět z cloudu…');
     if (!(await initLobby())) { launchError('Multiplayer tu nejde připojit.'); return; }
+    const cm = await cloudMeta(spec.cloud);
+    if (cmpVersion(cm?.ver, VERSION) > 0) { launchError(`Svět je uložený ve verzi ${cm.ver} – obnov stránku (Ctrl+F5).`); return; }
     const hadMap = await cloudHasMap(spec.cloud);
     if (!(await loadCloud(spec.cloud))) { launchError('Svět se z cloudu nepodařilo načíst.'); return; }
     if (!loadPersonal(spec.cloud)) resetPersonal(game.s);     // moje vybavení a poloha, ne po předchozím hostiteli
+    const cloudDone = hexes.doneCount;
+    const handed = await takeHandoff(spec.cloud);             // převzetí hostitele: moje mapa z předchozí hry (F-10)
+    logWorldLoad(hadMap ? (handed >= 0 ? 'cloud + předávka od předchozího hostitele (sloučeno)' : 'cloud') : 'nový – v cloudu chybí mapa', `v cloudu ${cloudDone} hexů`);
     if (!hadMap) {
       setTimeout(() => toast(`V cloudu chybí mapa prachu tohoto světa – ${PLANET.name} je zatím zasypaný. Vyčištění se vrátí, až svět otevře původní hostitel ze svého slotu.`, 14000), 2500);
     }
@@ -1114,41 +1243,56 @@ async function launch(spec) {
   } else {
     if (spec.action === 'load') {
       showLoading('Načítám uloženou hru…');
-      // hostování ze slotu: když mezitím hráli kamarádi bez tebe (svět v cloudu je novější), vezme se stav
-      // z cloudu; mapa prachu ta, která je dál (víc hotových hexů – slot, nebo cloud);
-      // když svět právě hostuje někdo jiný, připojíš se k němu
-      const peek = spec.mode === 'host' ? await peekSave(spec.slot) : null;
-      if (peek?.netCode && (await initLobby())) {
+      // Sdílený svět ze slotu (hostování i „Hrát sám“) – F-10, 10. 11.: stav světa (peníze, stavby…) se vezme
+      // ten s vyšší revizí (slot / cloud), ne podle hodin různých počítačů; mapy prachu se VŽDY sloučí
+      // (v každém bodě méně prachu z obou – prach se sám nevrací, takže se nic zameteného nezasype).
+      // Když svět právě hostuje někdo jiný, připojíš se k němu (jen při hostování).
+      const peek = await peekSave(spec.slot);
+      const online = peek?.netCode && (await Promise.race([initLobby(), new Promise(r => setTimeout(() => r(false), 8000))]));
+      if (online && spec.mode === 'host') {
         const other = await hostOf(peek.netCode);
         if (other && other.u !== net.uid) {
           const w = findWorld(peek.netCode);
+          if (w && !w.compatible) { launchError(`Svět právě hostuje ${other.n || 'jiný hráč'} v jiné verzi hry (${w.ver}) – ${w.newer ? 'obnov stránku (Ctrl+F5)' : 'hostitel musí obnovit stránku'}.`); return; }
           if (w) { launching = false; launch({ mode: 'client', world: w }); return; }
         }
-        const meta = await cloudMeta(peek.netCode);
-        const cloudPlanet = meta?.pn === 'mars' ? 'mars' : 'moon';
-        if (meta?.at > peek.last + 5000 && cloudPlanet !== PLANET.id) {
-          // kamarádi mezitím odletěli na jinou planetu → načíst svět z cloudu na jeho planetě (slot se pak přepíše jím)
-          showLoading(`Svět mezitím odletěl ${cloudPlanet === 'mars' ? 'na Mars' : 'na Měsíc'} – načítám ho z cloudu…`);
-          switchPlanet(cloudPlanet, { mode: 'host', cloud: peek.netCode, planet: cloudPlanet, slot: spec.slot, public: spec.public !== false });
-          return;
-        }
-        const cloudNewer = meta?.at > peek.last + 5000 && cloudPlanet === PLANET.id;
-        const cloudMapBetter = cloudNewer && Number.isFinite(meta.d) && meta.d >= peek.done && (await cloudHasMap(peek.netCode));
-        if (cloudMapBetter && (await loadCloud(peek.netCode))) {
-          putPersonal(game.s, peek.personal);                    // moje vybavení a poloha ze slotu
-          game.slot = spec.slot;
-          setTimeout(() => toast('Kamarádi mezitím hráli bez tebe – načetl jsem novější stav světa z cloudu.', 9000), 2500);
-        } else {
-          if (!(await loadGame(spec.slot))) { launchError('Uloženou hru se nepodařilo načíst.'); return; }
-          // mapa prachu ze slotu (je dál), stav světa (peníze, vozidla…) z cloudu, pokud je novější
+      }
+      const meta = online ? await Promise.race([cloudMeta(peek.netCode), new Promise(r => setTimeout(() => r(null), 8000))]) : null;   // Firebase neodpovídá → jen slot
+      const cloudPlanet = meta?.pn === 'mars' ? 'mars' : 'moon';
+      // revize v cloudu; svět uložený starší verzí (bez revize) – podle času jako dřív
+      const cloudRev = !meta ? -1 : Number.isFinite(meta.rv) ? meta.rv : (meta.at > peek.last + 5000 ? Infinity : -1);
+      const metaNewerGame = cmpVersion(meta?.ver, VERSION) > 0;    // L-60: cloud uložila novější verze hry → stav z něj nebrat
+      const cloudNewer = !metaNewerGame && cloudRev > peek.rev;
+      if (metaNewerGame) setTimeout(() => toast(`Svět v cloudu uložila novější verze hry (${meta.ver}) – obnov stránku (Ctrl+F5). Do té doby se do cloudu neukládá.`, 12000), 2500);
+      if (meta && spec.mode === 'host' && cloudNewer && cloudPlanet !== PLANET.id) {
+        // kamarádi mezitím odletěli na jinou planetu → načíst svět z cloudu na jeho planetě (slot se pak přepíše jím)
+        showLoading(`Svět mezitím odletěl ${cloudPlanet === 'mars' ? 'na Mars' : 'na Měsíc'} – načítám ho z cloudu…`);
+        switchPlanet(cloudPlanet, { mode: 'host', cloud: peek.netCode, planet: cloudPlanet, slot: spec.slot, public: spec.public !== false });
+        return;
+      }
+      if (!(await loadGame(spec.slot))) { launchError('Uloženou hru se nepodařilo načíst.'); return; }
+      let source = 'místní slot';
+      const slotDone = hexes.doneCount;
+      if (meta && cloudPlanet === PLANET.id) {
+        const foreign = !!meta.wu && meta.wu !== net.uid;          // do cloudu naposled zapsal někdo jiný
+        const hasMap = await cloudHasMap(peek.netCode);
+        if (cloudNewer) {
           const mine = pickPersonal(game.s);
-          if (cloudNewer && (await loadCloud(peek.netCode, { map: false }))) {
-            putPersonal(game.s, mine);
+          if (await loadCloud(peek.netCode, { map: hasMap, merge: true })) {
+            putPersonal(game.s, mine);                             // moje vybavení a poloha ze slotu
             game.slot = spec.slot;
-            setTimeout(() => toast('Načetl jsem novější stav světa z cloudu a vyčištění Měsíce z tvého slotu (je dál než v cloudu).', 10000), 2500);
+            source = hasMap ? 'cloud (stav) + slot a cloud (mapa sloučená)' : 'cloud (stav) + místní slot (mapa – v cloudu chybí)';
+            if (foreign) setTimeout(() => toast('Kamarádi mezitím hráli bez tebe – načetl jsem novější stav světa z cloudu a vyčištění Měsíce ze slotu i z cloudu spojil.', 10000), 2500);
+          } else source = 'místní slot (cloud nejde načíst)';
+        } else if (hasMap && (await loadCloud(peek.netCode, { merge: true, state: false }))) {
+          source = 'místní slot + cloud (mapa sloučená)';
+          if (foreign && Number.isFinite(meta.rv) && meta.rv > peek.crv) {
+            // obě větve pokračovaly zvlášť (třeba Hrát sám ve slotu a kamarádi v cloudu)
+            setTimeout(() => toast(`Svět mezitím hrál i někdo jiný (revize ${meta.rv}), ty jsi ale hrál dál ve slotu (revize ${peek.rev}). Stav světa (peníze, stavby) je z tvého slotu, vyčištění Měsíce z obou je spojené.`, 14000), 2500);
           }
         }
-      } else if (!(await loadGame(spec.slot))) { launchError('Uloženou hru se nepodařilo načíst.'); return; }
+      }
+      logWorldLoad(source, `slot: rev ${peek?.rev ?? 0}, ${slotDone} hexů · cloud: ${meta ? `rev ${meta.rv ?? '– (starší verze)'}, ${meta.d ?? '?'} hexů` : 'není'}`);
     } else {
       if (spec.action === 'v1') importV1(spec.title);
       else newGame(spec.title);
@@ -1158,7 +1302,14 @@ async function launch(spec) {
     if (spec.mode === 'host') game.s.netPublic = spec.public !== false;
   }
 
+  if (spec.mode !== 'client') refundToolPower(false);       // L-71: zrušená Síla nástrojů → peníze zpět (sám / hostitel)
   ensureHotbar(game.s);
+  // F-10 test „druhý den“ (jen lokálně): …?dnyPosun=1 posune čas posledního uložení o N dní zpět
+  if (FIREBASE_DEV && spec.mode !== 'client' && !fresh) {
+    const days = Number(new URLSearchParams(location.search).get('dnyPosun'));
+    if (days > 0) { game.s.last = (game.s.last || Date.now()) - days * 86400000; console.info(`[svět] test: čas posledního uložení posunut o ${days} d zpět`); }
+  }
+  const loadedLast = game.s.last;
   showLoading('Stavím scénu…');
   await new Promise(r => setTimeout(r, 30));
   build();
@@ -1190,6 +1341,7 @@ async function launch(spec) {
     }
     else { net.mode = 'off'; game.mode = 'sp'; toast('Svět se nepodařilo otevřít ostatním – hraješ sám.', 6000); }
   }
+  net.onCloud = text => toast(text, 9000);                    // F-10: chyba / obnova zápisu světa do cloudu
   net.onResearchDone = ids => ids.forEach(researchFinished);   // klient: hostitel dokončil výzkum
   net.onMapLoaded = () => toast('Mapa prachu od hostitele je načtená – vyčištěná místa jsou zpět.', 6000);
   net.onDepartRequest = () => (PLANET.id === 'moon' && hexes.total > 0 && hexes.doneCount >= hexes.total ? depart('mars') : false);
@@ -1230,7 +1382,7 @@ async function launch(spec) {
       ? 'Vybavení a peníze z verze 1 jsou převedené. Vítej na větším Měsíci!'
       : `Vítej ${PLANET.loc}! Zametej zubním kartáčkem a prach odnes do Výkupu uprostřed základny.`, 8000);
   } else if (spec.mode !== 'client') {
-    catchUp(game.s.last);
+    catchUp(loadedLast);                                     // od času v načteném stavu (F-10 – první zápis do cloudu ho mezitím přepíše)
   }
 
   setInterval(() => {
@@ -1248,14 +1400,15 @@ async function launch(spec) {
   addEventListener('beforeunload', () => {
     savePersonal();
     if (net.mode !== 'client') saveGame(game.slot);
-    if (net.mode === 'host') saveWorldNow(false);             // stav světa do cloudu (stihne-li se odeslat)
+    if (net.mode === 'host') saveWorldNow(false, true);       // stav světa do cloudu (hned, stihne-li se odeslat)
   });
 
+  if (spec.mode === 'client') setTimeout(() => refundToolPower(true), 3000);   // L-71: klient – vrácení připíše hostitel
   prev = perf.since = performance.now();
   requestAnimationFrame(frame);
 }
 
-function start() {
+async function start() {
   if (!window.THREE) {
     toast('3D knihovnu se nepodařilo načíst. Zkontroluj připojení k internetu a obnov stránku.', 600000);
     return;
@@ -1270,6 +1423,9 @@ function start() {
     antialiasAtStart: settings.antialias,
   });
   document.getElementById('menu-loading-back').addEventListener('click', () => location.reload());
+  initVersionUi({ onNewer: ver => { if (running) toast(`Je dostupná nová verze hry v${ver}. Ulož hru a obnov stránku (Ctrl+F5).`, 12000); } });
+  // 3.1 (AST-02): model astronauta musí být načtený dřív, než menu vykreslí postavu, šatnu a lobby (bez něj záložní model)
+  await Promise.race([preloadModels(['astronaut']), new Promise(r => setTimeout(r, 6000))]);
   initMenu({ onLaunch: launch, openSettings: () => settingsUi.open() });
   setMoonStatus(`Připravuji ${PLANET.acc}…`, false);
   moonReady = Promise.all([prepareMoon().then(() => initRocks()), preloadModels([...BASE_MODELS, ...ROCK_MODELS])]).then(() => setMoonStatus(`${PLANET.name} připraven · ${hexes.total.toLocaleString('cs-CZ')} sektorů`, true));

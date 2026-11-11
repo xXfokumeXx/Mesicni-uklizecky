@@ -60,7 +60,7 @@ export function createDebug(renderer, scene, camera) {
   }
 
   return {
-    scene, camera,                          // pro testy z konzole (umístění modelu do scény)
+    scene, camera, renderer,                // pro testy z konzole (umístění modelu do scény, počty vykreslení)
     get on() { return !el.hidden; },
     toggle() { el.hidden = !el.hidden; if (el.hidden) split = null; show(); },
     breakdown,

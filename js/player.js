@@ -2,13 +2,15 @@
 import {
   MOON, JUMP_SPEED, UNITS_PER_KG,
 } from './config.js';
-import { JETPACK, BOOST, VEHICLE_BODY, vehicleById, VEHICLE_BATTERY, EMERGENCY_SPEED, batteryCap } from './catalog.js';
+import { JETPACK, BOOST, VEHICLE_BODY, vehicleById, VEHICLE_BATTERY, EMERGENCY_SPEED, batteryCap, isAirType } from './catalog.js';
+import { AIR, airFloor, towerPush, landSite } from './flight.js';
+import { carryTick, setCarryHooks, dropCarry, carrying, setAirHeading, noteHook } from './carry.js';
 import { game, dustPrice, hexBonus } from './state.js';
 import { activeEquipment, walkSpeed } from './equipment.js';
-import { createBody, stepBody, jumpBody, altitude } from './physics.js';
+import { createBody, stepBody, jumpBody, altitude, heightAt as groundAt } from './physics.js';   // groundAt = terén i desky staveb
 import { sweepCapsule } from './planet/dustmap.js';
 import { heightAt } from './planet/height.js';
-import { depotAt, depotRoom } from './logistics.js';
+import { depotAt, depotRoom, dumpZoneAt, dumpRate, DUMP } from './logistics.js';
 import { pushOut, structureById } from './structures.js';
 import { roofCover } from './solarRoof.js';
 import { rockHit, rockPush, rockHeight, breakRock, rockBlockedNote, ROCK_TYPES, ROCK_BREAKERS, rocks } from './rocks.js';
@@ -18,7 +20,9 @@ import { createRagdoll, stepRagdoll, ragdollPoints, encodeRagdollStart, RAG_STEP
 import { cross, madd, norm, tangentTo, angleBetween, rotateAround, dot } from './planet/vec.js';
 
 const R = MOON.radius;
-const TOOL_AHEAD = 0.95;                 // nástroj nese astronaut ~1 m před sebou
+const TOOL_AHEAD = 0.95;
+const BODY_R = 0.32;                     // kolize astronauta pěšky (3.1, AST-03: kapsle 0,32 m bez fousků a číra)
+const HIT_R = 0.45;                      // zásah vozidlem – válec kolem astronauta (AST-03)                 // nástroj nese astronaut ~1 m před sebou
 const PUSH_GAP = 1.1;                    // u ručního vozíku jde astronaut za ním
 const SWEEP_ALT = 0.5;                   // zametá se i při malém odskoku (do 0,5 m nad zemí)
 // přilnavost a tlumiče (physics.js): astronaut se z hrbolu odlepí jen výjimečně, vozidla podle katalogu
@@ -48,6 +52,10 @@ export const playerFx = {
 
 let body = null;                         // těleso astronauta
 let rag = null;                          // ragdoll po srážce (null = hráč ovládá postavu)
+let getUpUntil = 0;                      // 3.1 (AST-09): po ragdollu klip vstávání – do té doby bez ovládání
+export const GETUP_MS = 1400;
+export const isGettingUp = () => performance.now() < getUpUntil;
+const NO_INPUT = { move: () => null, turn: () => 0, target: null, pointerDown: false, boost: false };
 let ragPts = null;
 
 // Tahy nástrojem/vozidlem pro multiplayer: { seq, p, w, pw, cont } (posledních 32).
@@ -107,7 +115,7 @@ export function rotateHeading(angle) {
 }
 
 export function tryJump() {
-  if (game.s.driving >= 0 || rag || ride) return;
+  if (game.s.driving >= 0 || rag || ride || isGettingUp()) return;
   jumpBody(body, JUMP_SPEED);
 }
 
@@ -115,7 +123,7 @@ export function tryJump() {
 // nejméně o JETPACK.lift stupňů nad obzor. Vrací true, když vystřelil.
 export function tryJet(look) {
   const s = game.s;
-  if (!s.jetpack || !jetReady || s.driving >= 0 || rag || ride || body.grounded) return false;
+  if (!s.jetpack || !jetReady || s.driving >= 0 || rag || ride || body.grounded || isGettingUp()) return false;
   const up = body.p;
   let flat = tangentTo(up, look);
   if (!Number.isFinite(flat[0]) || Math.hypot(...flat) < 1e-6) flat = s.f;
@@ -206,8 +214,8 @@ function walk(input, dt) {
 
   if (body.grounded) body.jet = false;
   stepBody(body, dt, want, body.jet ? 0.12 : undefined);   // po výstřelu jetpackem se ve vzduchu skoro neřídí
-  blockByStructures(body, 0.45);
-  blockByRocks(body, 0.45);                       // pěšky jen střední kameny (malé se překročí)
+  blockByStructures(body, BODY_R);
+  blockByRocks(body, BODY_R);                     // pěšky jen střední kameny (malé se překročí)
   if (body.grounded) { body.jet = false; jetReady = true; }
   s.p = body.p;
   s.f = tangentTo(s.p, s.f);
@@ -217,9 +225,161 @@ function walk(input, dt) {
   playerFx.face = sp > 0.2 ? norm(body.v) : walkFacing();
 }
 
+// ---------- létání (3.1, L-66) ----------
+// v.air = { mode: 'ground' | 'fly' | 'land', alt: cílová výška nad terénem, to / top: místo a výška přistání }.
+// Letoun drží výšku nad terénem pod sebou a 10 a 20 m před sebou, nad stavbami střecha + 3 m, od věže LAAC odstup.
+// W/S plyn, A/D otáčení (main.js), mezerník / Shift výška, klik = let k místu, E = přistát (interact.js → landAircraft).
+export const isFlying = () => { const v = game.s.vehicles[game.s.driving]; return !!v && isAirType(v.type) && v.air?.mode !== 'ground'; };
+export const airMode = () => game.s.vehicles[game.s.driving]?.air?.mode || null;
+export const airAltitude = () => { const v = game.s.vehicles[game.s.driving]; return v?.air ? Math.max(0, altitude(vehicleBody(game.s.driving))) : 0; };
+// E ve vzduchu: přistát (na vlastní plošinu do 30 m, jinak na místě). Vrací hlášku, když to nejde, jinak null.
+export function landAircraft() {
+  const s = game.s, v = s.vehicles[s.driving];
+  if (!v?.air || v.air.mode !== 'fly') return null;
+  if (carrying()) return 'Nejdřív polož nebo odhákni vozidlo';
+  const site = landSite(v, vehicleBody(s.driving).p);
+  if (site.reason) return site.reason;
+  v.air.mode = 'land';
+  v.air.to = site.to;
+  v.air.top = site.top;
+  input0.target = null;
+  return null;
+}
+const input0 = { target: null };
+// Poloha letounu pro převoz (interact.js): { p, r, f } nebo null
+export function airPose() {
+  const s = game.s;
+  if (s.driving < 0 || !isAirType(s.vehicles[s.driving]?.type)) return null;
+  const b = vehicleBody(s.driving);
+  return { p: b.p, r: b.r, f: s.f };
+}
+let carryCap = null, carryLoad = false, airDrift = [0, 0, 0];   // převoz (3.1, L-67): z minulého snímku
+function fly(input, dt) {
+  const s = game.s;
+  const v = s.vehicles[s.driving];
+  const b = vehicleBody(s.driving);
+  const eq = activeEquipment();
+  const A = v.air ||= { mode: 'ground', alt: AIR.start };
+  input0.target = input.target;
+  const cap = batteryCap(v);
+  const empty = cap > 0 && !(v.charge > 0);
+  const ground = groundAt(b.p);
+  let h = b.r - R;                                                     // výška nad poloměrem
+  const alt = h - ground;
+  const m = input.move();
+  // vzlet: mezerník, plyn nebo klik
+  if (A.mode === 'ground' && (input.jump || (m && m.fwd > 0) || input.target)) { A.mode = 'fly'; A.alt = Math.max(AIR.min, A.alt || AIR.start); }
+  const sweeper = eq.stats.width > 0;
+  const minAlt = sweeper ? AIR.sweepAlt : AIR.min;
+  if (A.mode === 'fly') {
+    A.alt = Math.max(minAlt, Math.min(AIR.max, (A.alt || AIR.start) + ((input.jump ? 1 : 0) - (input.boost ? 1 : 0)) * AIR.climb * dt));
+    if (empty) A.alt = Math.min(A.alt, AIR.emergencyAlt);            // nouzový režim: nízko a pomalu (L-66)
+  }
+  const sweeping = sweeper && A.mode === 'fly' && alt <= AIR.sweepAlt + 0.5 && v.load < eq.stats.hopper;
+  const base = vehicleById(v.type);
+  const laden = carryLoad || (base.carry === 'arm' && (v.load || 0) > 1);           // s vozidlem / nákladem pomaleji (L-65)
+  const ladenMax = laden && base.loadSpeed ? base.loadSpeed * eq.stats.speed / base.speed : Infinity;
+  const max = Math.min(ladenMax, empty ? AIR.emergencySpeed : sweeping && eq.stats.sweepSpeed ? eq.stats.sweepSpeed : eq.stats.speed);
+
+  // vodorovně: plyn / klik jako u vozidel, přistání = přiblížení k místu
+  let target = 0;
+  if (A.mode === 'fly') {
+    if (m) { input.target = null; target = m.fwd * max * (m.fwd < 0 ? 0.4 : 1); }
+    else if (input.target) {
+      const dist = angleBetween(b.p, input.target) * R;
+      if (dist < 2) { if (!input.pointerDown) input.target = null; }
+      else {
+        const to = tangentTo(b.p, input.target);
+        const side = dot(to, playerRight()), ahead = dot(to, s.f);
+        const steer = ahead <= 0.3 ? Math.sign(side || 1) : Math.max(-1, Math.min(1, side * 3));   // cíl za zády = plný rejd
+        rotateHeading(-steer * dt * TURN_RATE * 1.4);
+        target = ahead > 0.3 ? Math.min(max, dist / 1.5) : 0;
+      }
+    }
+  }
+  if (A.mode === 'land') {
+    const d = angleBetween(b.p, A.to) * R;
+    if (d > 0.15) {                                                     // přiblížení nad místo přistání
+      const dir = tangentTo(b.p, A.to);
+      const step = Math.min(d, Math.min(AIR.approach, Math.max(1, d)) * dt);
+      b.p = norm(madd(b.p, dir, step / R));
+    }
+    vehicleSpeed *= Math.max(0, 1 - dt * 3);
+  } else {
+    const k = Math.abs(target) > Math.abs(vehicleSpeed) ? AIR.accel : Math.max(AIR.accel, max / AIR.stop);
+    vehicleSpeed += Math.max(-k * dt, Math.min(k * dt, target - vehicleSpeed));
+    if (A.mode === 'ground') vehicleSpeed = 0;
+    b.p = norm(madd(b.p, s.f, vehicleSpeed * dt / R));
+  }
+  // Mula cítí náklad: tah lana mírně posouvá letoun (drift po povrchu, tlumený)
+  if (carryLoad && A.mode !== 'ground') b.p = norm(madd(b.p, airDrift, dt / R));
+  b.p = towerPush(b.p);
+
+  // svisle: cílová výška nad terénem pod sebou a před sebou, nad stavbami střecha + 3 m
+  const g2 = groundAt(b.p);
+  let goal;
+  if (A.mode === 'ground') goal = g2;
+  else if (A.mode === 'land') {
+    const d = angleBetween(b.p, A.to) * R;
+    goal = d > 0.4 ? Math.max(h, A.top + 1) : A.top;                    // nad místem dolů
+  } else {
+    // výš (nad 3 m) hledí 10 a 20 m dopředu a stoupá s předstihem; nízko (zametání) jen 2 a 4 m před nos, ať drží terén
+    const fw = vehicleSpeed > 1 ? s.f : null;
+    const [n1, n2] = A.alt > 3 ? [10, 20] : [2, 4];
+    const ahead = fw ? Math.max(heightAt(norm(madd(b.p, fw, n1 / R))), heightAt(norm(madd(b.p, fw, n2 / R)))) : g2;
+    goal = Math.max(g2, ahead - (A.alt > 3 ? 0 : 0.2)) + A.alt;
+    const floor = Math.max(airFloor(b.p), fw ? airFloor(norm(madd(b.p, fw, 8 / R))) : -Infinity);
+    if (floor > goal) goal = floor;
+  }
+  const rate = A.mode === 'land' ? AIR.landSpeed : AIR.vRate;
+  const vr = Math.max(-rate, Math.min(rate, (goal - h) * 2.5));
+  h = Math.max(g2, h + vr * dt);
+  if (A.mode === 'land' && h - A.top < 0.05 && angleBetween(b.p, A.to) * R < 0.4) {   // dosedl
+    A.mode = 'ground';
+    h = Math.max(g2, A.top);
+    vehicleSpeed = 0;
+    A.to = null;
+  }
+  b.r = R + h;
+  b.vr = vr;
+  b.v = s.f.map(c => c * vehicleSpeed);
+  b.grounded = A.mode === 'ground';
+  s.p = b.p;
+  s.f = tangentTo(s.p, s.f);
+  v.p = b.p;
+  v.f = s.f;
+  // převoz vozidla (Mula lano / Kondor ruka): krok simulace u pilota
+  const air = { p: b.p, r: b.r, f: s.f };
+  setAirHeading(s.f);
+  noteHook(air);
+  const cr = carryTick(dt, v, air, !!input.keys?.e);
+  carryCap = cr?.cap ?? null;
+  carryLoad = !!cr?.load;
+  if (cr?.pull) {
+    const t = tangentTo(b.p, cr.pull), k = Math.hypot(...cr.pull);
+    airDrift = madd(airDrift.map(c => c * Math.max(0, 1 - dt * 2)), Number.isFinite(t[0]) ? t : [0, 0, 0], k * dt);   // rychle tlumený drift
+  } else airDrift = [0, 0, 0];
+
+  // spotřeba: vznášení + let podle rychlosti + zametání; na zemi nic
+  if (cap > 0 && A.mode !== 'ground') {
+    const B = VEHICLE_BATTERY[v.type];
+    const P = (B.hover || 0) + ((B.drive || 0) - (B.hover || 0)) * Math.min(1, Math.abs(vehicleSpeed) / Math.max(1, eq.stats.speed)) + (sweeping ? B.sweep || 0 : 0) + (laden ? B.load || 0 : 0);
+    v.charge = Math.max(0, (v.charge || 0) - P * dt);
+  }
+  playerFx.flying = A.mode !== 'ground';
+  playerFx.airClimb = vr;
+  body.p = b.p;
+  body.r = b.r;
+  body.vr = 0;
+  body.grounded = true;
+  playerFx.moving = Math.abs(vehicleSpeed) > 0.2;
+  playerFx.speed = Math.abs(vehicleSpeed);
+  playerFx.face = s.f;
+}
 function drive(input, dt) {
   const s = game.s;
   const v = s.vehicles[s.driving];
+  if (isAirType(v?.type)) { fly(input, dt); return; }
   const b = vehicleBody(s.driving);
   const eq = activeEquipment();
   // boost (Shift): skokové zrychlení, dokud zbývá; nabíjí se, když se nepoužívá
@@ -373,7 +533,7 @@ export function checkVehicleHits(movers, posePoints) {
   for (const m of movers) {
     if (m.speed < 1.8) continue;
     const d = Math.hypot(me[0] - m.pos[0], me[1] - m.pos[1], me[2] - m.pos[2]);
-    if (d > m.radius * 0.8 + 0.5) continue;
+    if (d > m.radius * 0.8 + HIT_R) continue;
     const up = b.p;
     const lift = 2.2 + m.speed * 0.55;
     const k = 1.25;
@@ -405,10 +565,14 @@ function flyRagdoll(dt) {
   playerFx.alt = 0;
   if (landed) playerFx.landed = Math.min(3, landed * 0.6);
   if (rag.done) {
-    // vstát: astronaut se postaví tam, kde leží pánev, čelem tam, kam míří hlava
+    // vstát: astronaut se postaví tam, kde leží pánev. Na břiše čelem tam, kam míří hlava, na zádech tam, kde
+    // má nohy (3.1: klipy vstavani_bricho / vstavani_zada začínají v této póze – scene/astronaut.js endRagdoll)
     const head = ragPts[RG.head];
     const toHead = tangentTo(s.p, [head[0] - pel[0], head[1] - pel[1], head[2] - pel[2]]);
-    if (Number.isFinite(toHead[0])) s.f = toHead;
+    const onBack = Math.hypot(...ragPts[RG.pack]) < Math.hypot(...ragPts[RG.chest]);
+    if (Number.isFinite(toHead[0])) s.f = onBack ? toHead.map(c => -c) : toHead;
+    getUpUntil = performance.now() + GETUP_MS;
+    walkFace = null;                               // směr chůze myší z doby před srážkou neplatí
     body = walkerBody(s.p);
     rag = null;
     ragPts = null;
@@ -429,6 +593,7 @@ export function currentAltitude() {
 
 export function movePlayer(input, dt) {
   if (rag) { flyRagdoll(dt); return; }
+  if (isGettingUp() && game.s.driving < 0) input = NO_INPUT;    // vstává po ragdollu (klip 1,4 s)
   if (ride) {
     playerFx.moving = false;
     playerFx.speed = 0;
@@ -441,7 +606,9 @@ export function movePlayer(input, dt) {
   if (game.s.driving >= 0) drive(input, dt);
   else walk(input, dt);
   const b = activeBody();
-  playerFx.airborne = !b.grounded;
+  const flyingNow = game.s.driving >= 0 && isAirType(game.s.vehicles[game.s.driving]?.type);
+  if (!flyingNow) playerFx.flying = false;
+  playerFx.airborne = !b.grounded && !flyingNow;                       // v letounu astronaut sedí (žádný klip skoku)
   playerFx.alt = Math.max(0, altitude(b));
   playerFx.vr = b.vr;
   if (b.landed > 0.8) {
@@ -458,6 +625,7 @@ export function enterVehicle(i) {
   s.driving = i;
   walkFace = null;
   const v = s.vehicles[i];
+  if (isAirType(v.type)) v.air = { mode: 'fly', alt: AIR.start };      // po nástupu letoun vzlétne na 6 m (L-66)
   s.p = v.p;
   s.f = v.f;
   vehicleSpeed = 0;
@@ -470,6 +638,7 @@ export function exitVehicle() {
   const i = s.driving;
   if (i < 0) return;
   const v = s.vehicles[i];
+  if (isAirType(v.type)) dropCarry();                // nesené vozidlo se položí pod letoun (3.1)
   const b = vehicleBody(i);
   b.v = [0, 0, 0];
   vehicleSpeed = 0;
@@ -477,7 +646,7 @@ export function exitVehicle() {
   autopilotOff();
   // vystoupíš vedle vozidla (vpravo)
   const side = norm(cross(v.f, v.p));
-  const out = norm(madd(v.p, side, 2.2 / R));
+  const out = norm(madd(v.p, side, (isAirType(v.type) ? 3.8 : 2.2) / R));   // z letounu vedle trupu (3.1)
   body = walkerBody(out);
   s.p = out;
   s.f = tangentTo(out, v.f);
@@ -519,7 +688,8 @@ export function collect() {
     playerFx.tool = tool;
 
     const item = eq.item;
-    const onGround = b.grounded || altitude(b) < SWEEP_ALT;
+    const airV = eq.kind === 'vehicle' && eq.base.kind === 'air';
+    const onGround = airV ? altitude(b) <= AIR.sweepAlt + 0.5 : b.grounded || altitude(b) < SWEEP_ALT;   // Prachovka zametá v 1,5 m (3.1)
     if (onGround && item.load < eq.stats.hopper) {
       const limit = Math.ceil((eq.stats.hopper - item.load) * UNITS_PER_KG);
       const r = sweepCapsule(prevTool || tool, tool, width / 2, eq.stats.power, limit);
@@ -543,7 +713,7 @@ export function collect() {
 
   // výkup: stačí vstoupit / vjet do zóny uprostřed základny. Vysype se náklad v ruce (vozidlo / nástroj)
   // i všech ostatních nástrojů v hotbaru.
-  if (!b.grounded) return 0;
+  if (!b.grounded && !(eq.base.kind === 'air' && altitude(b) <= AIR.sellAlt)) return 0;   // letoun vysype i ve visu do 10 m (L-65)
   const loads = [eq.item];
   for (const id of s.hotbar || []) {
     const t = typeof id === 'string' ? s.tools[id] : null;
@@ -558,7 +728,7 @@ export function collect() {
     return earned;
   }
   // depo (L-20): náklad se vysype do skladu – jen kolik se vejde, peníze přinese pás (zpracuje main.js)
-  const id = depotAt(s.p);
+  const id = s.driving >= 0 ? null : depotAt(s.p);           // 3.1: vozidlo vysypává do depa jen výsypkou (unloadToDepot)
   const room = id ? depotRoom(structureById(id)) - (playerFx.pendingDeposit?.[id] || 0) : 0;
   if (id && room >= 0.1) {
     const kg = Math.min(total, room);
@@ -569,7 +739,58 @@ export function collect() {
   return 0;
 }
 
+// Výsypka depa (L-63, 3.1): řízené vozidlo se zásobníkem, které stojí pod výsypkou (pod 0,5 m/s déle než 0,5 s),
+// do ní vysype náklad rychlostí dumpRate() (100 / 200 / 400 kg/s). playerFx.dump = { id, state: dump | wait | empty | full,
+// rate, kg } (empty = vozidlo nemá co vysypat, full = depo je plné; kg = vysypáno v tomto ticku).
+// Volá main.js work() 10× za s; připsání do skladu (hostitel) / hlášení hostiteli (klient, dk) dělá main.js.
+let dumpStill = 0;
+export function unloadToDepot(dt) {
+  const s = game.s;
+  playerFx.dump = null;
+  if (s.driving < 0 || rag || ride) { dumpStill = 0; return; }
+  const eq = activeEquipment();
+  if (!(eq.stats.hopper > 0)) return;
+  const b = dumpZoneAt(activeBody().p);
+  if (!b) { dumpStill = 0; return; }
+  dumpStill = playerFx.speed < DUMP.maxSpeed ? dumpStill + dt : 0;
+  const v = eq.item, rate = dumpRate();
+  const room = depotRoom(b) - (playerFx.pendingDeposit?.[b.id] || 0), load = v.load || 0;
+  const state = load < 0.05 ? 'empty' : room < 0.1 ? 'full' : dumpStill < DUMP.still ? 'wait' : 'dump';
+  playerFx.dump = { id: b.id, state, rate, kg: 0 };
+  if (state !== 'dump') return;
+  const kg = Math.min(rate * dt, load, room);
+  v.load = load - kg;
+  playerFx.dump.kg = kg;
+}
+
+// Kondor (3.1, L-63/L-67): visí 6–14 m nad silem depa (do 3 m od středu) a stojí → náklad se plní ze skladu rychlostí
+// výsypky (100 / 200 / 400 kg/s). playerFx.silo = { id, state: load | wait | low | high | full | empty, rate, kg }.
+// Odečtení ze skladu dělá main.js (hostitel takeFromDepot, klient hlásí hostiteli).
+const SILO_TOP = 6;
+let siloStill = 0;
+export function loadFromSilo(dt) {
+  const s = game.s;
+  playerFx.silo = null;
+  const v = s.driving >= 0 ? s.vehicles[s.driving] : null;
+  if (!v || vehicleById(v.type)?.carry !== 'arm' || v.air?.mode !== 'fly' || rag) { siloStill = 0; return; }
+  const b = activeBody();
+  const dep = (s.buildings || []).find(d => d.type === 'depot' && angleBetween(d.p, b.p) * R < 3);
+  if (!dep) { siloStill = 0; return; }
+  const above = altitude(b) - SILO_TOP;
+  const eq = activeEquipment(), rate = dumpRate();
+  siloStill = playerFx.speed < DUMP.maxSpeed ? siloStill + dt : 0;
+  const room = eq.stats.hopper - (v.load || 0), store = (dep.data.store || 0) - (playerFx.pendingTake?.[dep.id] || 0);
+  const state = above < 6 ? 'low' : above > 14 ? 'high' : room < 0.5 ? 'full' : store < 0.5 ? 'empty' : siloStill < DUMP.still ? 'wait' : 'load';
+  playerFx.silo = { id: dep.id, state, rate, kg: 0 };
+  if (state !== 'load') return;
+  const kg = Math.min(rate * dt, room, store);
+  v.load = (v.load || 0) + kg;
+  playerFx.silo.kg = kg;
+}
+
 // Kde stojí astronaut, když tlačí ruční vozík (za vozíkem).
 export function pusherOffset() {
   return -PUSH_GAP;
 }
+
+setCarryHooks({ body: i => (game.s.vehicles[i] ? vehicleBody(i) : null) });   // převoz zapisuje polohu do tělesa neseného vozidla

@@ -76,7 +76,7 @@ export const WALK_SPEED = 5;                         // m/s
 export const AIR_CONTROL = 0.6;                      // jak moc jde ve vzduchu měnit směr (0–1)
 
 // Slunce obíhá kolem osy Měsíce (sklon 1,54°). Skutečný lunární den = 29,5 dne, tady zkrácený.
-// dayLength = celý cyklus v s (6 min = 3 min den + 3 min noc), warpSpeed = zrychlení při podržení T.
+// dayLength = celý cyklus v s (6 min = 3 min den + 3 min noc), warpSpeed = dřívější zrychlení klávesou T (zrušeno 11. 11.).
 export const SUN = { dayLength: 360, tilt: 1.54 * Math.PI / 180, warpSpeed: 15 };
 
 // Země visí díky vázané rotaci pořád na stejném místě oblohy nad přivrácenou stranou.
