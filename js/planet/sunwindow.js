@@ -19,6 +19,8 @@ const SEARCH = 7;                                       // kroků půlení inter
 // ---------- výšky z mřížky terénu (s mezipamětí) ----------
 
 const cache = FACES.map(() => null);
+// Srovnaný terén pod stavbami změnil výšky → mezipaměť mřížky zahodit (Worker mapy oken, O-28)
+export function resetHeights() { for (let f = 0; f < cache.length; f++) cache[f] = null; }
 const tmp = [0, 0];
 const dir = [0, 0, 0];
 
@@ -71,7 +73,7 @@ export function sunVisible(P, theta) {
 }
 
 // Okno osvětlení bodu ve směru d: [východ, západ] jako úhly vůči místnímu poledni.
-export function sunWindow(d) {
+export function sunWindow(d, search = SEARCH) {
   const r = R + terrainHeight(d) + 0.35;
   const P = [d[0] * r, d[1] * r, d[2] * r];
   const noon = Math.atan2(d[0], d[2]);
@@ -85,7 +87,7 @@ export function sunWindow(d) {
     let vis = 0;
     let inv = sign * Math.min(Math.PI, H + 0.06);
     if (H > Math.PI - 1e-6 && sunVisible(P, noon + inv)) return inv;
-    for (let k = 0; k < SEARCH; k++) {
+    for (let k = 0; k < search; k++) {
       const mid = (vis + inv) / 2;
       if (sunVisible(P, noon + mid)) vis = mid; else inv = mid;
     }
@@ -133,4 +135,32 @@ export function chunkWindowsRow({ f, oi, oj, dir: sgn, Q, step }, b2, out) {
     out[(b2 * n + a2) * 2] = w[0];
     out[(b2 * n + a2) * 2 + 1] = w[1];
   }
+}
+
+// ---------- mapa oken v atlasu (3.1, O-28) ----------
+// Dlaždice size × size bodů atlasu v polovičním rozlišení prachu (S2 bodů na čtverec atlasu, 5 × 2 čtverce).
+// Bod (x, y) → stěna a (s, t) stejně jako dustmap.js texelOf (stěna 2q vlevo dole, 2q+1 otočená vpravo nahoře).
+// Přesnost 11 kroků půlení (~0,04°). Vrací Float32Array (size² · 2): [východ, západ] po řádcích.
+export const SEARCH_FINE = 11;
+export function texelWindows({ x0, y0, size, S2 }) {
+  const out = new Float32Array(size * size * 2);
+  const d = [0, 0, 0];
+  for (let yy = 0; yy < size; yy++) {
+    for (let xx = 0; xx < size; xx++) {
+      const x = x0 + xx, y = y0 + yy;
+      const qx = x / S2 | 0, qy = y / S2 | 0, lx = x - qx * S2, ly = y - qy * S2, q = qy * 5 + qx;
+      let f, s, tt;
+      if (lx + ly <= S2 - 1) { f = 2 * q; s = (lx + 0.5) / S2; tt = (ly + 0.5) / S2; }
+      else { f = 2 * q + 1; s = (S2 - lx - 0.5) / S2; tt = (S2 - ly - 0.5) / S2; }
+      const P = FACES[f];
+      d[0] = P.A[0] + P.e1[0] * s + P.e2[0] * tt;
+      d[1] = P.A[1] + P.e1[1] * s + P.e2[1] * tt;
+      d[2] = P.A[2] + P.e1[2] * s + P.e2[2] * tt;
+      const l = Math.hypot(d[0], d[1], d[2]);
+      const w = sunWindow([d[0] / l, d[1] / l, d[2] / l], SEARCH_FINE);
+      out[(yy * size + xx) * 2] = w[0];
+      out[(yy * size + xx) * 2 + 1] = w[1];
+    }
+  }
+  return out;
 }

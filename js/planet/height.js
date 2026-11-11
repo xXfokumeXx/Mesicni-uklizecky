@@ -75,7 +75,12 @@ export function setTerrainPatches(list, changed = []) {
   PATCHES = list;
   version++;
   changes.push(...changed);
+  for (const fn of listeners) fn(list, changed);
 }
+const listeners = [];
+// Další odběratelé změn terénu (mapa oken osvětlení, O-28) – terrain.js si změny bere přes takeTerrainChanges
+export const onTerrainChange = fn => listeners.push(fn);
+export const terrainPatches = () => PATCHES;
 
 export function heightAt(d) {
   let h = rawHeightAt(d);
