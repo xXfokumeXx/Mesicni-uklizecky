@@ -65,6 +65,13 @@
   }
 }
 
+/* dronová donáška baterie (3.1): tlačítko pod stavem dronu */
+.stats__btn {
+  grid-column: 1 / -1;
+  justify-self: end;
+  padding: 4px 9px;
+}
+
 /* „Tento hex“ je vidět jen při pohybu, po zastavení plynule zmizí */
 .stats__row--fade {
   max-height: 60px;

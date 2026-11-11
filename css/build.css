@@ -6,7 +6,7 @@
   z-index: 2;
   display: grid;
   gap: 8px;
-  width: min(760px, calc(100vw - 32px));
+  width: min(960px, calc(100vw - 32px));   /* 11. 11.: širší mřížka místo posuvníku */
   padding: 10px;
   background: var(--panel);
   border: 1px solid var(--panel-line);
@@ -44,18 +44,31 @@
   opacity: 1;
 }
 
+/* karty v mřížce (zalamují se do řádků), posuvník jen svisle, kdyby se nevešly na výšku obrazovky */
 .buildbar__cards {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
   gap: 8px;
-  overflow-x: auto;
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
 }
+
+/* nadpis řádku (Energie: zdroje / baterie / rozvod) přes celou šířku mřížky */
+.buildbar__row {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  font: 600 11px / 1.2 var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.buildbar__row:first-child { margin-top: 0; }
 
 .buildbar__card {
   display: grid;
   justify-items: center;
   gap: 2px;
-  flex: none;
-  width: 120px;
+  min-width: 0;
   padding: 6px;
   color: var(--regolith);
   background: var(--surface);
@@ -132,7 +145,7 @@ body.demolish-cursor #scene-canvas {
 
 @media (max-width: 720px) {
   .buildbar { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
-  .buildbar__card { width: 96px; }
+  .buildbar__cards { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
   .buildbar__img { width: 80px; height: 56px; }
 }
 

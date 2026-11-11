@@ -369,3 +369,14 @@
   .menu-wardrobe { grid-template-columns: minmax(0, 1fr); }
   .menu-wardrobe__stage { height: 300px; }
 }
+/* odznak hodnosti v profilu a v lobby (3.1) */
+.menu__rank .rank-badge { width: 30px; height: 30px; margin-right: 6px; vertical-align: -10px; }
+/* další hodnost pod současnou (11. 11.): menší odznak, název, kolik prachu chybí, průběh */
+.menu__rank-next { margin: 4px 0 0; font: 500 12px var(--font-mono); color: var(--muted); }
+.menu__rank-next .rank-badge { width: 20px; height: 20px; margin: 0 3px 0 2px; vertical-align: -6px; opacity: 0.85; }
+.menu__rank-next-label { color: var(--muted); }
+.menu__rank-next-left { color: var(--regolith); }
+.menu__rank-bar { display: block; height: 4px; margin-top: 5px; background: rgba(255, 255, 255, 0.1); border-radius: 2px; overflow: hidden; }
+.menu__rank-bar span { display: block; height: 100%; background: var(--hivis); border-radius: 2px; }
+.lobby-plate em .rank-badge { width: 22px; height: 22px; margin-right: 4px; vertical-align: -7px; }
+.lobby-people__list small .rank-badge { width: 16px; height: 16px; margin-right: 3px; vertical-align: -4px; }

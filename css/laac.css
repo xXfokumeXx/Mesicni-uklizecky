@@ -1,0 +1,43 @@
+/* LAAC (3.1, D-16): nákres věže a 6 stran na záložce Plošiny. Strana = šestiúhelník, klik vybere (data-sel). */
+.pads {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.pads__svg {
+  width: min(100%, 360px);
+  height: auto;
+}
+
+.pads__hint {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--muted);
+  text-align: center;
+}
+
+.pad polygon {
+  stroke-width: 3;
+  transition: fill 0.15s ease, stroke 0.15s ease;
+}
+
+.pad text {
+  font: 600 18px var(--font-display);
+  fill: var(--regolith);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.pad .pad__sub {
+  font: 500 11px var(--font-body);
+  fill: var(--muted);
+}
+
+.pad--tower polygon { fill: rgba(95, 184, 217, 0.18); stroke: #5fb8d9; }
+.pad--built polygon { fill: rgba(240, 144, 48, 0.22); stroke: #f09030; }
+.pad--free polygon { fill: rgba(255, 255, 255, 0.04); stroke: var(--panel-line); stroke-dasharray: 6 5; }
+.pad--blocked polygon { fill: rgba(224, 101, 76, 0.12); stroke: #e0654c; stroke-dasharray: 3 4; }
+.pad[data-sel] { cursor: pointer; }
+.pad[data-sel]:hover polygon { stroke: var(--regolith); }
+.pad--selected polygon { stroke: var(--hivis); stroke-width: 4; stroke-dasharray: none; }
