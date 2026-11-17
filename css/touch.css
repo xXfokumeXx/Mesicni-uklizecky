@@ -362,3 +362,68 @@
 }
 .menu__ios[hidden],
 .pause__ios[hidden] { display: none; }
+
+/* ---------- 3.3.2: vždy na celý displej (žádné přiblížení stránky) a menší HUD na telefonu ---------- */
+/* Přiblížení dvěma prsty / dvojklepnutím mimo plátno (na panelech HUD) zůstalo a hra pak byla větší než displej.
+   pan-x pan-y = posouvat jde (menu, okna), přibližovat ne. Plátno a tlačítka dál bez gest prohlížeče. */
+.is-touch,
+.is-touch * { touch-action: pan-x pan-y; }
+.is-touch .viewport,
+.is-touch .touch__btn,
+.is-touch .holo__canvas { touch-action: none; }
+html:has(body.is-touch),
+.is-touch { width: 100%; height: 100%; overflow: hidden; }
+
+/* stavový panel vlevo nahoře: menší písmo a odstupy */
+.is-touch .hud__stats {
+  max-width: 200px;
+  padding: 6px 9px;
+  gap: 4px;
+}
+.is-touch .stats { gap: 4px; }
+.is-touch .stats__money { padding-bottom: 4px; gap: 8px; }
+.is-touch .stats__money-value { font-size: 1.15rem; }
+.is-touch .stats__label { font-size: 11px; }
+.is-touch .stats__value { font-size: 12px; line-height: 1.2; }
+.is-touch .stats__row { gap: 2px 8px; }
+.is-touch .stats__row .meter { height: 3px; }
+/* objednat baterii dronem je na dotyku tlačítko 🔋 vpravo dole */
+.is-touch #btn-drone { display: none; }
+
+/* baterie vozidla: malá ikona na výšku vedle textu (články odspodu nahoru) */
+.is-touch #row-battery { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
+.is-touch #row-battery .batt {
+  grid-column: auto;
+  flex-direction: column-reverse;
+  gap: 1px;
+}
+.is-touch #row-battery .batt__body {
+  flex: none;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 1px;
+  width: 12px;
+  height: 22px;
+  padding: 1px;
+  border-width: 1.5px;
+  border-radius: 2px;
+}
+.is-touch #row-battery .batt__cell {
+  flex: 1;
+  background-image: linear-gradient(0deg, var(--batt) var(--fill, 0%), transparent var(--fill, 0%));
+}
+.is-touch #row-battery .batt__nub { width: 6px; height: 2px; border-radius: 1px 1px 0 0; }
+.is-touch #row-battery .batt__bolt { font-size: 9px; }
+
+/* panel energie (In / Out / ± / Bat): menší */
+.is-touch .power {
+  width: auto;
+  grid-template-columns: 1rem 3ch auto;
+  column-gap: 5px;
+  row-gap: 0;
+  padding: 4px 8px;
+}
+.is-touch .power__icon { font-size: 1rem; }
+.is-touch .power__label { font-size: 10px; }
+.is-touch .power__value { font-size: 11px; }
+.is-touch .power__value--store { font-size: 10px; }
