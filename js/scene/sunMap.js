@@ -122,7 +122,9 @@ export function createSunMap(renderer) {
   }
 
   // ---------- Workery ----------
-  const nW = Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 1));
+  // telefon / tablet (3.3, M5): jen 1 Worker – výpočet trvá déle, ale nebere výkon hře ani baterii (dlaždice kolem hráče jsou stejně první)
+  const lite = document.body.classList.contains('is-touch');
+  const nW = lite ? 1 : Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 1));
   const workers = [];
   const tileTex = new THREE.DataTexture(new Uint16Array(TILE * TILE * 2), TILE, TILE, THREE.RGFormat, THREE.HalfFloatType);
   tileTex.internalFormat = 'RG16F';

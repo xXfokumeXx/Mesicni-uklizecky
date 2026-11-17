@@ -171,13 +171,32 @@ export function createHoloView() {
     camera = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
     globe = createHoloGlobe();
     scene.add(globe.root);
-    canvas.addEventListener('pointerdown', e => { dragging = true; auto = false; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
+    // tažení = otáčení; dva prsty (3.3, M4) = přiblížení jako kolečko
+    const fingers = new Map();
+    let pinchD = 0;
+    const spread = () => { const [a, b] = [...fingers.values()]; return Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)); };
+    canvas.style.touchAction = 'none';
+    canvas.addEventListener('pointerdown', e => {
+      fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      try { canvas.setPointerCapture(e.pointerId); } catch { /* nic */ }
+      auto = false;
+      if (fingers.size === 2) { dragging = false; pinchD = spread(); return; }
+      dragging = fingers.size === 1; lx = e.clientX; ly = e.clientY;
+    });
     canvas.addEventListener('pointermove', e => {
+      const f = fingers.get(e.pointerId);
+      if (f) { f.x = e.clientX; f.y = e.clientY; }
+      if (fingers.size === 2) {
+        const d = spread();
+        dist = Math.max(1.8, Math.min(6, dist * pinchD / d));
+        pinchD = d;
+        return;
+      }
       if (!dragging) return;
       turn(e.clientX - lx, e.clientY - ly);
       lx = e.clientX; ly = e.clientY;
     });
-    const stop = () => { dragging = false; };
+    const stop = e => { fingers.delete(e.pointerId); dragging = false; };
     canvas.addEventListener('pointerup', stop);
     canvas.addEventListener('pointercancel', stop);
     canvas.addEventListener('wheel', e => {
