@@ -1,9 +1,9 @@
 // Verze hry – jediný zdroj pravdy (L-60, 3.1). BUILD a DATE doplní při nasazení scripts/stamp-version.mjs
 // (zároveň zapíše version.json do kořene webu, podle kterého hra pozná, že je na serveru novější verze).
 // VERSION mění Claude Code ručně: oprava po nasazení 3.1.1, 3.1.2…, větší update 3.2.0.
-export const VERSION = '3.3.2';          // MAJOR.MINOR.PATCH
-export const BUILD = 'f4d7ef0';              // zkrácený hash commitu (skript při nasazení)
-export const DATE = '2026-11-17T14:10';  // čas sestavení (skript při nasazení)
+export const VERSION = '3.3.3';          // MAJOR.MINOR.PATCH
+export const BUILD = '01d58e3';              // zkrácený hash commitu (skript při nasazení)
+export const DATE = '2026-11-17T14:18';  // čas sestavení (skript při nasazení)
 export const NET_PROTOCOL = 6;           // zvýšit při každé změně formátu dat v multiplayeru (5 = 3.1, 6 = Prachocuc a vozidla z GLB)
 
 export const MAJOR_MINOR = VERSION.split('.').slice(0, 2).join('.');
