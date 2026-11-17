@@ -17,7 +17,7 @@ export function initVersionUi(h = {}) {
   for (const el of document.querySelectorAll('[data-ver]')) renderBadge(el);
   document.addEventListener('click', e => {
     if (e.target.closest('.ver__new')) { location.reload(); return; }
-    if (e.target.closest('.ver__btn')) openNews();
+    if (e.target.closest('.ver__btn, [data-news]')) openNews();     // číslo verze nebo tlačítko Novinky (lobby, 3.3)
   });
   addEventListener('keydown', e => {                      // Esc zavře Novinky dřív, než ho chytí menu pauzy
     if (e.key === 'Escape' && newsOpen()) { closeNews(); e.stopImmediatePropagation(); e.preventDefault(); }
@@ -68,7 +68,7 @@ function ensureModal() {
     <div class="modal__backdrop" data-news-close></div>
     <div class="modal__panel news__panel">
       <header class="modal__header">
-        <h2 class="modal__title" id="news-title">Novinky ve verzi</h2>
+        <h2 class="modal__title" id="news-title">Novinky ve hře</h2>
         <button class="modal__close" type="button" aria-label="Zavřít" data-news-close>×</button>
       </header>
       <div class="modal__body news__body" id="news-body"><p class="field__hint">Načítám…</p></div>
@@ -87,7 +87,7 @@ export async function openNews() {
   try {
     const res = await fetch(`CHANGELOG.md?t=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) throw new Error(String(res.status));
-    body.innerHTML = newsHtml(parseChangelog(await res.text()).slice(0, 3));
+    body.innerHTML = newsHtml(parseChangelog(await res.text()).slice(0, NEWS_COUNT));
   } catch {
     body.innerHTML = '<p class="field__hint">Seznam novinek se nepodařilo načíst.</p>';
   }
@@ -97,15 +97,24 @@ export function closeNews() {
   if (modal) modal.hidden = true;
 }
 
-// „## 3.1.0 · 10. 11. 2026“ + body „- …“ → [{ version, date, items[] }]
+const NEWS_COUNT = 5;                                      // kolik posledních verzí okno ukazuje
+
+// „## 3.1.0 · 10. 11. 2026“ + volitelně kategorie „### 📱 Telefon“ + body „- …“
+// → [{ version, date, items[], groups: [{ title, items[] }] }] (items = všechny body; starší verze bez kategorií = 1 skupina bez nadpisu)
 export function parseChangelog(md) {
   const out = [];
-  let cur = null;
+  let cur = null, group = null;
   for (const line of String(md).split(/\r?\n/)) {
     const h = /^##\s+(\d+\.\d+\.\d+)\s*(?:·\s*(.*))?$/.exec(line.trim());
-    if (h) { cur = { version: h[1], date: (h[2] || '').trim(), items: [] }; out.push(cur); continue; }
+    if (h) { cur = { version: h[1], date: (h[2] || '').trim(), items: [], groups: [] }; group = null; out.push(cur); continue; }
+    const g = /^###\s+(.+)$/.exec(line.trim());
+    if (g && cur) { group = { title: g[1].trim(), items: [] }; cur.groups.push(group); continue; }
     const li = /^\s*[-*]\s+(.*)$/.exec(line);
-    if (li && cur) cur.items.push(li[1].trim());
+    if (li && cur) {
+      cur.items.push(li[1].trim());
+      if (!group) { group = { title: '', items: [] }; cur.groups.push(group); }
+      group.items.push(li[1].trim());
+    }
   }
   return out;
 }
@@ -117,6 +126,6 @@ function newsHtml(list) {
   return list.map(v => `
     <section class="news__item">
       <h3 class="news__title">v${esc(v.version)}${v.date ? ` <span>${esc(v.date)}</span>` : ''}${v.version === VERSION ? ' <em>tvoje verze</em>' : ''}</h3>
-      <ul class="news__list">${v.items.map(i => `<li>${inline(i)}</li>`).join('')}</ul>
+      ${v.groups.map(g => `${g.title ? `<h4 class="news__cat">${esc(g.title)}</h4>` : ''}<ul class="news__list">${g.items.map(i => `<li>${inline(i)}</li>`).join('')}</ul>`).join('')}
     </section>`).join('');
 }
