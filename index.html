@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Měsíční zametačky</title>
+<!-- 3.3 (M5): „Přidat na plochu“ – na plochu se hra uloží jako aplikace přes celou obrazovku (bez offline režimu) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#05060a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Zametačky">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
 <meta name="description" content="Chill inkrementální hra: zametej prach z celého Měsíce sám nebo s kamarády.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23c9b98a'/%3E%3Ccircle cx='11' cy='12' r='3' fill='%23a8996e'/%3E%3Ccircle cx='20' cy='19' r='4' fill='%23a8996e'/%3E%3C/svg%3E">
 <style>
@@ -46,6 +54,8 @@
 <link rel="stylesheet" href="css/research.css">
 <link rel="stylesheet" href="css/laac.css">
 <link rel="stylesheet" href="css/version.css">
+<link rel="stylesheet" href="css/account.css">
+<link rel="stylesheet" href="css/touch.css">
 </head>
 <body>
 <canvas class="viewport" id="scene-canvas" aria-label="Měsíční povrch"></canvas>
@@ -158,7 +168,7 @@
       <button class="controls__button" id="zoom-out" type="button" aria-label="Oddálit">−</button>
       <button class="controls__button controls__button--wide" id="map-toggle" type="button" aria-pressed="false" title="Mapa celého Měsíce (M)">Mapa</button>
       <button class="controls__button controls__button--wide" id="trophies-open" type="button" aria-haspopup="dialog" title="Úspěchy (U)">Úspěchy</button>
-      <button class="controls__button controls__button--wide" id="settings-open" type="button" aria-haspopup="dialog">Grafika</button>
+      <button class="controls__button controls__button--wide" id="settings-open" type="button" aria-haspopup="dialog">Nastavení</button>
       <button class="controls__button controls__button--wide" id="menu-open" type="button" aria-haspopup="dialog" title="Menu (Esc)">Menu</button>
     </div>
     <p class="controls__hint controls__hint--touch">Klepni nebo táhni prstem = jdi sem · tlačítko nahoře = akce</p>
@@ -170,7 +180,7 @@
   <div class="modal__backdrop" id="settings-backdrop"></div>
   <div class="modal__panel">
     <header class="modal__header">
-      <h2 class="modal__title" id="settings-title">Nastavení grafiky</h2>
+      <h2 class="modal__title" id="settings-title">Nastavení</h2>
       <span class="modal__badge" id="preset-badge">Střední</span>
       <button class="modal__close" id="settings-close" type="button" aria-label="Zavřít">×</button>
     </header>
@@ -178,10 +188,11 @@
     <div class="modal__body">
       <div class="field">
         <span class="field__label" id="preset-label">Předvolba</span>
-        <div class="segmented" role="group" aria-labelledby="preset-label">
+        <div class="segmented segmented--4" role="group" aria-labelledby="preset-label">
           <button class="segmented__option" type="button" data-preset="low">Nízká</button>
           <button class="segmented__option" type="button" data-preset="medium">Střední</button>
           <button class="segmented__option" type="button" data-preset="high">Vysoká</button>
+          <button class="segmented__option" type="button" data-preset="mobile">Mobil</button>
         </div>
         <p class="field__hint" id="preset-hint"></p>
       </div>
@@ -272,6 +283,51 @@
           <span class="toggle__track" aria-hidden="true"></span>
         </label>
       </div>
+
+      <!-- 3.3 (M4): ovládání – ukládá se u zařízení (moonsweep_settings_v2), ne do profilu -->
+      <h3 class="modal__section">Ovládání</h3>
+      <div class="field">
+        <span class="field__label" id="ctl-label">Ovládání</span>
+        <div class="segmented" role="group" aria-labelledby="ctl-label">
+          <button class="segmented__option" type="button" data-ctl="auto">Automaticky</button>
+          <button class="segmented__option" type="button" data-ctl="dotyk">Dotyk</button>
+          <button class="segmented__option" type="button" data-ctl="klavesnice">Klávesnice</button>
+        </div>
+        <p class="field__hint">Automaticky = dotyk na telefonu a tabletu, klávesnice a myš na počítači (i s dotykovou obrazovkou).</p>
+      </div>
+      <div class="field" data-touch-only>
+        <label class="field__label" for="set-joyside">Joystick</label>
+        <select class="field__select" id="set-joyside">
+          <option value="left">Vlevo, tlačítka vpravo</option>
+          <option value="right">Vpravo, tlačítka vlevo (pro leváky)</option>
+        </select>
+      </div>
+      <div class="field" data-touch-only>
+        <label class="field__label" for="set-camsens">Citlivost kamery · <output id="set-camsens-out">1×</output></label>
+        <input class="field__range" id="set-camsens" type="range" min="0.5" max="2" step="0.1">
+      </div>
+      <div class="field" data-touch-only>
+        <span class="field__label" id="btnsize-label">Velikost tlačítek</span>
+        <div class="segmented" role="group" aria-labelledby="btnsize-label">
+          <button class="segmented__option" type="button" data-btnsize="mala">Malá</button>
+          <button class="segmented__option" type="button" data-btnsize="stredni">Střední</button>
+          <button class="segmented__option" type="button" data-btnsize="velka">Velká</button>
+        </div>
+      </div>
+      <div class="field" data-touch-only>
+        <label class="field__label" for="set-btnopacity">Průhlednost tlačítek · <output id="set-btnopacity-out">70 %</output></label>
+        <input class="field__range" id="set-btnopacity" type="range" min="40" max="100" step="5">
+      </div>
+      <div class="field" data-touch-only data-vibrate>
+        <label class="toggle" for="set-vibrace">
+          <span class="toggle__text">
+            <span class="field__label">Vibrace</span>
+            <span class="field__hint">Krátce při plném zásobníku, nárazu a postavení stavby.</span>
+          </span>
+          <input class="toggle__input" id="set-vibrace" type="checkbox">
+          <span class="toggle__track" aria-hidden="true"></span>
+        </label>
+      </div>
     </div>
 
     <footer class="modal__footer">
@@ -330,7 +386,9 @@
           </div>
         </form>
         <button class="button pause__button" id="pause-help" type="button" aria-expanded="false" aria-controls="pause-help-box">Ovládání</button>
-        <button class="button pause__button" id="pause-gfx" type="button">Nastavení grafiky</button>
+        <button class="button pause__button" id="pause-gfx" type="button">Nastavení</button>
+        <button class="button pause__button" id="pause-full" type="button" hidden>Celá obrazovka</button>
+        <p class="pause__ios" data-ios-hint hidden>Pro hru přes celou obrazovku: v Safari klepni na Sdílet → Přidat na plochu a hru spouštěj z ikony.</p>
         <button class="button pause__button" id="pause-menu" type="button">Uložit a odejít do hlavního menu</button>
       </div>
       <div class="pause__help" id="pause-help-box" hidden>
@@ -344,7 +402,7 @@
           <dt><kbd>E</kbd></dt><dd>akce: budovy, Výkup (hologram, burza, statistiky), vozidla, stavby, raketa</dd>
           <dt><kbd>1</kbd>–<kbd>3</kbd></dt><dd>políčko hotbaru · × v políčku = zničit nástroj (znovu ho koupíš v Obchodě, kladivo v Dílně) · <kbd>X</kbd> s kladivem = bourání</dd>
           <dt><kbd>Q</kbd></dt><dd>kladivo (zabírá políčko hotbaru) do ruky / zpět · <kbd>V</kbd> = stavební menu · <kbd>R</kbd> + kolečko nebo <kbd>,</kbd> <kbd>.</kbd> = otočit stavbu (<kbd>Shift</kbd> po 15°)</dd>
-          <dt><kbd>R</kbd> · <kbd>G</kbd></dt><dd>jiný cíl pásu z depa · přesunout depo</dd>
+          <dt><kbd>R</kbd></dt><dd>jiný cíl pásu z depa · vylepšení stanice robota · depo přesuneš kladivem (<kbd>E</kbd> u depa)</dd>
           <dt><kbd>L</kbd></dt><dd>světla vozidla a čelovka zapnout / vypnout</dd>
           <dt><kbd>M</kbd></dt><dd>pohled: ptačí perspektiva (hraješ dál) → celá planeta (WSAD / šipky otáčí, Q / E přibližuje, klik = jdi tam) → zpátky za postavu</dd>
           <dt><kbd>U</kbd></dt><dd>úspěchy</dd>
@@ -373,6 +431,13 @@
     </header>
 
     <div class="menu__home" id="menu-home">
+      <!-- 3.3 (U1): herní účet – stav vpravo nahoře (accountUi.js) -->
+      <div class="account-bar" id="account-bar" hidden>
+        <span class="account-bar__state" id="account-state">Hraješ bez účtu</span>
+        <button class="account-bar__link" id="account-login-open" type="button">Přihlásit</button>
+        <button class="account-bar__link" id="account-register-open" type="button">Vytvořit účet</button>
+        <button class="account-bar__link" id="account-profile-open" type="button" hidden>Profil</button>
+      </div>
       <section class="menu__card" aria-label="Tvůj zametač">
         <div class="menu__portrait"><img class="menu__portrait-img" id="menu-avatar" alt="Tvůj astronaut"></div>
         <div class="menu__who">
@@ -393,8 +458,109 @@
           </button>
         </div>
       </section>
-      <button class="menu__link menu__gfx" id="menu-gfx" type="button">Nastavení grafiky</button>
+      <button class="menu__link menu__gfx" id="menu-gfx" type="button">Nastavení</button>
+      <button class="menu__link menu__gfx" type="button" data-privacy>Co ukládáme</button>
+      <p class="menu__ios" data-ios-hint hidden>Pro hru přes celou obrazovku: v Safari klepni na Sdílet → Přidat na plochu a hru spouštěj z ikony.</p>
     </div>
+
+    <!-- 3.3 (U1): účet – vytvořit, přihlásit, profil -->
+    <section class="menu__panel account" id="menu-account" hidden>
+      <div class="menu__panel-head">
+        <button class="button" type="button" data-menu-back>← Zpět</button>
+        <h2 class="menu__panel-title" id="account-title">Účet</h2>
+      </div>
+
+      <form class="account-form" id="account-register" hidden autocomplete="on" novalidate>
+        <p class="account-form__lead">Účet je zdarma a stačí jméno a heslo. Pak hraješ se stejnou postavou na počítači i na telefonu.</p>
+        <label class="account-form__label" for="reg-name">Jméno astronauta</label>
+        <input class="field__input account-form__input" id="reg-name" type="text" maxlength="16" autocomplete="username" spellcheck="false" required>
+        <p class="account-form__state" id="reg-name-state" aria-live="polite"></p>
+        <p class="account-form__hint">Použij přezdívku, ne své skutečné jméno. 3–16 znaků: písmena, číslice, mezera, - a _. Jméno později změnit nejde.</p>
+        <label class="account-form__label" for="reg-pass">Heslo</label>
+        <input class="field__input account-form__input" id="reg-pass" type="password" minlength="8" autocomplete="new-password" required>
+        <label class="account-form__label" for="reg-pass2">Heslo znovu</label>
+        <input class="field__input account-form__input" id="reg-pass2" type="password" minlength="8" autocomplete="new-password" required>
+        <p class="account-form__hint">Aspoň 8 znaků. Heslo zná jen přihlašovací služba, hra ho nikam neukládá. Bez e-mailu ho nejde obnovit, tak si ho zapamatuj.</p>
+        <details class="account-form__more">
+          <summary>Přidat e-mail pro obnovu hesla (nepovinné)</summary>
+          <label class="account-form__label" for="reg-email">E-mail</label>
+          <input class="field__input account-form__input" id="reg-email" type="email" autocomplete="email">
+          <p class="account-form__hint">Jen pro obnovu zapomenutého hesla. Přijde ti ověřovací odkaz; po potvrzení se přihlašuješ jménem, e-mailem a heslem. E-mail vidí jen přihlašovací služba, ve hře se nikde neukazuje.</p>
+        </details>
+        <p class="account-form__note">Účet, se kterým 30 dní nehraješ, se i se vším uloženým smaže a jméno se uvolní. <button class="account-bar__link" type="button" data-privacy>Co ukládáme</button></p>
+        <p class="account-form__hint" id="reg-saves" hidden>Tvé uložené hry, vzhled a úspěchy z tohoto prohlížeče se nahrají do účtu.</p>
+        <p class="account-form__error" id="reg-error" role="alert" hidden></p>
+        <button class="button button--primary account-form__submit" id="reg-submit" type="submit">Vytvořit účet</button>
+        <p class="account-form__switch">Už máš účet? <button class="account-bar__link" type="button" data-account-mode="login">Přihlásit</button></p>
+      </form>
+
+      <form class="account-form" id="account-login" hidden autocomplete="on" novalidate>
+        <label class="account-form__label" for="login-name">Jméno astronauta</label>
+        <input class="field__input account-form__input" id="login-name" type="text" maxlength="16" autocomplete="username" spellcheck="false" required>
+        <div class="account-form__row" id="login-email-row" hidden>
+          <p class="account-form__hint">Tento účet se přihlašuje e-mailem, který sis nastavil.</p>
+          <label class="account-form__label" for="login-email">E-mail</label>
+          <input class="field__input account-form__input" id="login-email" type="email" autocomplete="email">
+        </div>
+        <label class="account-form__label" for="login-pass">Heslo</label>
+        <input class="field__input account-form__input" id="login-pass" type="password" autocomplete="current-password" required>
+        <p class="account-form__error" id="login-error" role="alert" hidden></p>
+        <button class="button button--primary account-form__submit" id="login-submit" type="submit">Přihlásit</button>
+        <details class="account-form__more" id="forgot-box">
+          <summary>Zapomněl jsem heslo</summary>
+          <p class="account-form__hint">Heslo obnovíš jen přes e-mail, který sis k účtu nastavil. Bez e-mailu obnovit nejde – účet se smaže po 30 dnech bez hraní a pak si jméno můžeš zaregistrovat znovu.</p>
+          <label class="account-form__label" for="forgot-email">E-mail k účtu</label>
+          <input class="field__input account-form__input" id="forgot-email" type="email" autocomplete="email">
+          <p class="account-form__state" id="forgot-state" aria-live="polite"></p>
+          <button class="button account-form__submit" id="forgot-send" type="button">Poslat odkaz pro nové heslo</button>
+        </details>
+        <p class="account-form__switch">Nemáš účet? <button class="account-bar__link" type="button" data-account-mode="register">Vytvořit účet</button></p>
+      </form>
+
+      <div class="account-form" id="account-profile" hidden>
+        <p class="account-form__lead">Přihlášen jako <strong id="profile-name"></strong></p>
+        <p class="account-form__note" id="profile-expiry"></p>
+        <p class="account-form__error" id="profile-error" role="alert" hidden></p>
+        <button class="button account-form__submit" id="profile-logout" type="button">Odhlásit</button>
+
+        <h3 class="account-form__section">E-mail</h3>
+        <p class="account-form__hint" id="profile-email-state"></p>
+        <details class="account-form__more" id="email-box">
+          <summary>Přidat e-mail pro obnovu hesla</summary>
+          <label class="account-form__label" for="email-new">E-mail</label>
+          <input class="field__input account-form__input" id="email-new" type="email" autocomplete="email">
+          <label class="account-form__label" for="email-pass">Tvé heslo</label>
+          <input class="field__input account-form__input" id="email-pass" type="password" autocomplete="current-password">
+          <p class="account-form__hint">Pošleme ověřovací odkaz. Až ho potvrdíš, přihlašuješ se jménem, tímto e-mailem a heslem. Odebrat e-mail zatím nejde – kdo ho nechce, může účet smazat a založit nový.</p>
+          <p class="account-form__state" id="email-state" aria-live="polite"></p>
+          <button class="button account-form__submit" id="email-send" type="button">Poslat ověřovací odkaz</button>
+        </details>
+
+        <h3 class="account-form__section">Heslo</h3>
+        <details class="account-form__more" id="pass-box">
+          <summary>Změnit heslo</summary>
+          <label class="account-form__label" for="pass-old">Současné heslo</label>
+          <input class="field__input account-form__input" id="pass-old" type="password" autocomplete="current-password">
+          <label class="account-form__label" for="pass-new">Nové heslo</label>
+          <input class="field__input account-form__input" id="pass-new" type="password" minlength="8" autocomplete="new-password">
+          <label class="account-form__label" for="pass-new2">Nové heslo znovu</label>
+          <input class="field__input account-form__input" id="pass-new2" type="password" minlength="8" autocomplete="new-password">
+          <p class="account-form__state" id="pass-state" aria-live="polite"></p>
+          <button class="button account-form__submit" id="pass-send" type="button">Změnit heslo</button>
+        </details>
+
+        <h3 class="account-form__section account-form__section--danger">Smazat účet</h3>
+        <details class="account-form__more account-form__more--danger" id="delete-box">
+          <summary>Smazat účet natrvalo</summary>
+          <p class="account-form__hint">Smaže se: jméno (uvolní se pro ostatní), vzhled a úspěchy v účtu, všechny uložené hry v účtu, tvůj postup ve sdílených světech v účtu a e-mail. Vrátit to nejde. Sdílené světy, které hostuješ, žijí dál, dokud je hrají ostatní.</p>
+          <label class="menu__check account-form__check"><input type="checkbox" id="delete-local" checked> Smazat i uložené hry a profil z tohoto prohlížeče</label>
+          <label class="account-form__label" for="delete-pass">Heslo</label>
+          <input class="field__input account-form__input" id="delete-pass" type="password" autocomplete="current-password">
+          <p class="account-form__state" id="delete-state" aria-live="polite"></p>
+          <button class="button button--danger account-form__submit" id="delete-send" type="button" disabled>Smazat natrvalo</button>
+        </details>
+      </div>
+    </section>
 
     <section class="menu__panel" id="menu-slots" hidden>
       <div class="menu__panel-head">

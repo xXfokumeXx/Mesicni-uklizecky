@@ -2,6 +2,15 @@
 
 Hra ukazuje poslední 3 verze (okno Novinky po kliknutí na číslo verze v menu). Formát: nadpis `## verze · datum`, pod ním body `- …`.
 
+## 3.3.0 · 17. 11. 2026
+- Hra jde hrát na telefonu a tabletu: joystick pod palcem, klepnutí = jdi sem, tah prstem otáčí kamerou, dva prsty přibližují. Tlačítka se ukazují podle toho, co právě děláš (stavění, vozidlo, letoun). Hraje se naležato.
+- Stavění prstem: stavbu posouváš prstem, otáčíš tlačítky ⟲ ⟳ a postavíš ji velkým tlačítkem akce.
+- Na telefonu se hra sama přepne na grafiku Mobil a když nestíhá, sníží rozlišení. V menu pauzy je Celá obrazovka; na iPhonu hru dej na plochu (Sdílet → Přidat na plochu).
+- Herní účet: stačí jméno astronauta a heslo, e-mail je nepovinný (jen pro obnovu hesla). Postava, úspěchy, uložené hry i postup ve sdílených světech se pak ukládají do účtu – hraješ stejně na počítači i na telefonu.
+- Účet, se kterým 30 dní nehraješ, se i s daty smaže. Smazat ho jde i ručně v profilu. Co přesně ukládáme, najdeš v menu (Co ukládáme).
+- Nastavení má novou část Ovládání (dotyk / klávesnice, velikost tlačítek, joystick pro leváky, vibrace).
+- Bez účtu hraješ jako dřív. Po aktualizaci dejte všichni Ctrl+F5.
+
 ## 3.2.0 · 11. 11. 2026
 - Nové vozidlo Lunar Prachocuc 5000 ($100 000 v Garáži): měsíční traktor se sběrným ramenem a přívěsem. Klávesa F přepíná jízdu (ramena nahoře) a sběr (ramena do stran, o 35 % pomaleji) – čistí pás 4 m za sebou.
 - Prachocuc jde vylepšit v Dílně: Sběrné rameno až na 8,5 m a Přívěs až na 6 000 kg. V garáži zabere 2 místa. Vysypává se přívěsem – ve Výkupu i pod výsypkou depa musí stát přívěs.

@@ -45,6 +45,83 @@
       "$doc": {
         ".write": "auth != null && $doc.beginsWith('worlds~')"
       }
+    },
+    "jmena": {
+      ".read": false,
+      "$klic": {
+        ".read": true,
+        ".write": "auth != null && auth.provider === 'password' && ((!data.exists() && newData.child('uid').val() === auth.uid) || (data.exists() && data.child('uid').val() === auth.uid))",
+        ".validate": "$klic.matches(/^[a-z0-9_-]{3,16}$/) && newData.hasChildren(['uid', 'jmeno', 'prihlaseni', 'posledni']) && newData.child('uid').val() === auth.uid && newData.child('jmeno').isString() && newData.child('jmeno').val().length >= 3 && newData.child('jmeno').val().length <= 16 && (newData.child('prihlaseni').val() === 'jmeno' || newData.child('prihlaseni').val() === 'email') && (!newData.child('tech').exists() || newData.child('tech').val().endsWith('@hraci.mesicni-zametacky.invalid')) && newData.child('posledni').isNumber() && newData.child('posledni').val() <= now + 60000",
+        "uid": {
+          ".validate": "newData.isString()"
+        },
+        "jmeno": {
+          ".validate": "newData.isString()"
+        },
+        "tech": {
+          ".validate": "newData.isString() && newData.val().length <= 64"
+        },
+        "prihlaseni": {
+          ".validate": "newData.isString()"
+        },
+        "posledni": {
+          ".validate": "newData.isNumber() && newData.val() <= now + 60000"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "ucty": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid && auth.provider === 'password'",
+        "jmeno": {
+          ".validate": "newData.isString() && newData.val().length <= 16"
+        },
+        "klic": {
+          ".validate": "newData.isString() && newData.val().matches(/^[a-z0-9_-]{3,16}$/)"
+        },
+        "vytvoreno": {
+          ".validate": "newData.isNumber() && newData.val() <= now + 60000"
+        },
+        "posledni": {
+          ".validate": "newData.isNumber() && newData.val() <= now + 60000"
+        },
+        "profil": {
+          ".validate": "newData.hasChildren(['look'])"
+        },
+        "sloty": {
+          "$id": {
+            ".validate": "$id.matches(/^(slot[1-5]|zaloha)$/)",
+            "meta": {
+              ".validate": "newData.hasChildren(['rev', 'dilu', 'dh', 'velikost']) && newData.child('dilu').isNumber() && newData.child('dilu').val() <= 30"
+            },
+            "stav": {
+              ".validate": "newData.isString() && newData.val().length <= 3000000"
+            },
+            "dily": {
+              "$d": {
+                ".validate": "$d.matches(/^d([0-9]|[12][0-9])$/) && newData.isString() && newData.val().length <= 400000"
+              }
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "svety": {
+          "$k": {
+            ".validate": "$k.matches(/^[a-z0-9_-]{1,40}$/) && newData.isString() && newData.val().length <= 20000"
+          }
+        }
+      }
+    },
+    "aktivita": {
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid && auth.provider === 'password'",
+        ".validate": "newData.hasChildren(['t', 'k']) && newData.child('t').isNumber() && newData.child('t').val() <= now + 60000 && newData.child('k').isString() && newData.child('k').val().matches(/^[a-z0-9_-]{3,16}$/)"
+      }
     }
   }
 }
