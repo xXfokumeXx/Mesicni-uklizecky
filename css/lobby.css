@@ -395,3 +395,143 @@
   .menu-wardrobe { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr); }   /* šatna vedle sebe: postava | výběr */
   .menu-wardrobe__stage { height: 240px; }
 }
+
+/* ---------- 3.3.3: telefon naležato – hlavní menu na jednu obrazovku bez posouvání ----------
+   Úvodní obrazovka ve dvou sloupcích: vlevo název hry, vpravo účet, karta hráče, volby a odkazy. */
+@media (max-height: 500px) and (min-width: 600px) {
+  .menu:not(.menu--compact):not(.menu--lobby) .menu__inner {
+    grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
+    align-content: center;
+    align-items: start;
+    gap: 0 18px;
+    width: calc(100% - var(--menu-left) - max(12px, env(safe-area-inset-right, 0px)));
+    max-width: 900px;
+    padding-top: max(10px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  }
+  .menu:not(.menu--compact):not(.menu--lobby) .menu__brand { gap: 6px; padding-top: 6px; }
+  .menu:not(.menu--compact):not(.menu--lobby) .menu__eyebrow { font-size: 11px; }
+  .menu:not(.menu--compact):not(.menu--lobby) .menu__title { font-size: 2rem; }
+  .menu:not(.menu--compact):not(.menu--lobby) .menu__haz { width: 150px; height: 8px; margin-top: 4px; background-size: auto; }
+  .menu:not(.menu--compact):not(.menu--lobby) .menu__moon-status { font-size: 12px; }
+
+  .menu__home { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 0; }
+  .menu__home > .account-bar,
+  .menu__home > .menu__card,
+  .menu__home > .menu__ios { flex: 1 1 100%; }
+  .menu__home .account-bar { padding: 3px 10px; font-size: 12px; gap: 2px 10px; }
+  .menu__home .account-bar__link { min-height: 28px; font-size: 12px; }
+  .menu__gfx { font-size: 12px; }
+
+  .menu__card { grid-template-columns: 92px minmax(0, 1fr); gap: 0 12px; padding: 10px; }
+  .menu__portrait { min-height: 0; padding: 4px; }
+  .menu__portrait-img { height: 118px; }
+  .menu__who { gap: 3px; }
+  .menu__label { font-size: 12px; }
+  .menu__name { height: 34px; padding: 0 10px; font-size: 15px; }
+  .menu__rank { margin: 2px 0 0; font-size: 11px; }
+  .menu__rank .rank-badge { width: 20px; height: 20px; margin-right: 4px; vertical-align: -6px; }
+  .menu__rank-next { margin: 0; font-size: 10px; }
+  .menu__rank-next .rank-badge { width: 14px; height: 14px; }
+  .menu__rank-bar { height: 3px; margin-top: 2px; }
+  .menu__outfit { font-size: 11px; gap: 8px; }
+  .menu__outfit .menu__link { font-size: 11px; }
+  .menu__choices { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 6px; gap: 8px; }
+  .menu__choice { padding: 7px 10px; gap: 1px; }
+  .menu__choice-title { font-size: 15px; }
+  .menu__choice-text { font-size: 11px; }
+}
+
+/* ---------- 3.3.3: telefon naležato – lobby na jednu obrazovku bez posouvání ----------
+   Nahoře jeden řádek (Zpět, název, Novinky | online, stav, oblečení), pod ním vlevo připojení kódem a založení
+   světa, vpravo seznam otevřených světů (posouvá se jen seznam, když je dlouhý). */
+@media (max-height: 500px) and (min-width: 600px) {
+  .lobby-screen:not([hidden]) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px 10px;
+    padding: max(8px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+    overflow: hidden;
+  }
+  .lobby-head { grid-column: 1; grid-row: 1; padding: 0; gap: 8px; }
+  .lobby-head__title { font-size: 18px; white-space: nowrap; }
+  .lobby-head .menu__haz { display: none; }
+  .lobby-head .lobby-btn { height: 36px; padding: 0 10px; font-size: 13px; }
+  .lobby-bar { grid-column: 2; grid-row: 1; margin: 0; height: auto; min-height: 0; flex-wrap: nowrap; gap: 10px; padding: 4px 10px; }
+  .lobby-bar > div:first-child { display: flex; align-items: baseline; gap: 6px; }
+  .lobby-bar__count { margin: 0; font-size: 18px; }
+  .lobby-bar__sep { height: 22px; }
+  .lobby-bar__status { min-width: 0; font-size: 11px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .lobby-bar .lobby-btn { height: 32px; padding: 0 10px; font-size: 12px; }
+  .lobby-lab { font-size: 11px; }
+
+  .lobby-side {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 8px 14px;
+    min-height: 0;
+    padding: 10px 12px;
+    overflow: hidden;
+  }
+  .lobby-side__title,
+  .ver--lobby { display: none; }
+  .lobby-side > .lobby-side__block:first-of-type { grid-column: 1; grid-row: 1; gap: 5px; }
+  .lobby-side__worlds { grid-column: 2; grid-row: 1 / span 3; min-height: 0; gap: 6px; }
+  .lobby-worlds { gap: 6px; }
+  .lobby-world { padding: 6px 10px; }
+  .lobby-side__host { grid-column: 1; grid-row: 2; height: 40px; font-size: 15px; }
+  .lobby-side__info { grid-column: 1; grid-row: 3; align-self: start; font-size: 11px; line-height: 1.35; overflow: hidden; }
+  .lobby-input,
+  .lobby-side__row .lobby-btn { height: 36px; }
+  .lobby-side__error { font-size: 12px; }
+  /* „Všichni online“ (Zobrazit další) jako překryv přes seznam světů, ne pod lobby */
+  .lobby-people:not([hidden]) {
+    position: fixed;
+    right: max(12px, env(safe-area-inset-right, 0px));
+    top: 56px;
+    bottom: 8px;
+    z-index: 3;
+    width: min(320px, 46vw);
+    max-height: none;
+    margin: 0;
+    padding: 10px 12px;
+  }
+}
+
+/* ---------- 3.3.3: telefon naležato – panely menu (sloty, šatna, účet) ----------
+   Velký nadpis hry nad panelem na telefonu nezobrazujeme (panel má vlastní nadpis a Zpět); sloty v nízkých řádcích. */
+@media (max-height: 500px) and (min-width: 600px) {
+  .menu--compact .menu__brand { display: none; }
+  .menu--compact .menu__inner {
+    width: calc(100% - var(--menu-left) - max(12px, env(safe-area-inset-right, 0px)));
+    max-width: 900px;
+    padding-top: max(8px, env(safe-area-inset-top, 0px));
+    padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  }
+  .menu__panel { gap: 6px; padding: 10px 12px; }
+  .menu__panel-head .button { min-height: 34px; padding: 4px 10px; }
+  .menu__panel-title { font-size: 1.05rem; }
+  .menu__panel-text { margin: 0; font-size: 11px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .slot-list { gap: 5px; }
+  .menu .slot { flex-wrap: nowrap; gap: 4px 10px; padding: 3px 10px; }
+  .menu .slot--empty .slot__info { grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 10px; }   /* „Prázdný slot 1“ a název vedle sebe */
+  .menu .slot--empty .slot__v1 { grid-column: 1 / -1; }
+  .slot__info { flex: 1 1 auto; gap: 1px; }
+  .menu .slot__title { font-size: 0.9rem; line-height: 1.15; }
+  .slot__meta { font-size: 10.5px; }
+  .slot__info .slot__meta + .slot__meta { display: none; }      /* „Uloženo …“ – stačí první řádek (hexy, peníze, čas) */
+  .menu .slot__name { height: 30px; min-height: 0; padding: 2px 8px; font-size: 14px; }
+  .slot__v1 { font-size: 10.5px; }
+  .slot__actions { gap: 6px; flex: none; }
+  .menu .slot__actions .button { min-height: 32px; height: 32px; padding: 4px 10px; font-size: 12px; }
+  .menu-wardrobe__stage { height: 210px; }
+}
+/* nejužší telefony naležato: bez řádku „Další hodnost“ (hodnost sama zůstává) */
+@media (max-height: 500px) and (min-width: 600px) and (max-width: 700px) {
+  .menu__rank-next { display: none; }
+}

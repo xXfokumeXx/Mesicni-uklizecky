@@ -88,3 +88,7 @@
 .news__cat:first-of-type { margin-top: 2px; }
 .lobby-btn--news { white-space: nowrap; }
 .lobby-btn--news [data-ver-mm] { margin-left: 0.35em; }
+/* telefon naležato (3.3.3): číslo verze v pravém dolním rohu, ne pod obsahem (menu se nemá posouvat) */
+@media (max-height: 500px) and (min-width: 600px) {
+  .ver--menu { position: absolute; left: auto; right: max(12px, env(safe-area-inset-right, 0px)); bottom: 4px; margin: 0; font-size: 11px; }
+}
