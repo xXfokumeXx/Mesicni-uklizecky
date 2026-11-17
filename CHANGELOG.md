@@ -1,15 +1,25 @@
 # Novinky ve hře
 
-Hra ukazuje poslední 3 verze (okno Novinky po kliknutí na číslo verze v menu). Formát: nadpis `## verze · datum`, pod ním body `- …`.
+Hra ukazuje posledních 5 verzí (okno Novinky: tlačítko v lobby nebo klik na číslo verze). Formát: nadpis `## verze · datum`, pod ním volitelně kategorie `### název` a body `- …` (krátce, pro hráče).
+
+## 3.3.1 · 17. 11. 2026
+- V lobby je tlačítko Novinky – přehled změn v každé verzi.
 
 ## 3.3.0 · 17. 11. 2026
-- Hra jde hrát na telefonu a tabletu: joystick pod palcem, klepnutí = jdi sem, tah prstem otáčí kamerou, dva prsty přibližují. Tlačítka se ukazují podle toho, co právě děláš (stavění, vozidlo, letoun). Hraje se naležato.
-- Stavění prstem: stavbu posouváš prstem, otáčíš tlačítky ⟲ ⟳ a postavíš ji velkým tlačítkem akce.
-- Na telefonu se hra sama přepne na grafiku Mobil a když nestíhá, sníží rozlišení. V menu pauzy je Celá obrazovka; na iPhonu hru dej na plochu (Sdílet → Přidat na plochu).
-- Herní účet: stačí jméno astronauta a heslo, e-mail je nepovinný (jen pro obnovu hesla). Postava, úspěchy, uložené hry i postup ve sdílených světech se pak ukládají do účtu – hraješ stejně na počítači i na telefonu.
-- Účet, se kterým 30 dní nehraješ, se i s daty smaže. Smazat ho jde i ručně v profilu. Co přesně ukládáme, najdeš v menu (Co ukládáme).
-- Nastavení má novou část Ovládání (dotyk / klávesnice, velikost tlačítek, joystick pro leváky, vibrace).
-- Bez účtu hraješ jako dřív. Po aktualizaci dejte všichni Ctrl+F5.
+### 📱 Telefon a tablet
+- Hra jde hrát prstem: joystick pod palcem, klepnutí = jdi sem, tah = kamera, dva prsty = přiblížení.
+- Tlačítka se mění podle situace – chůze, vozidlo, letoun, stavění.
+- Stavění prstem: posun tahem, otočení ⟲ ⟳, postavení tlačítkem akce.
+- Grafika Mobil se zapne sama, při sekání hra sníží rozlišení. Hraje se naležato.
+- Celá obrazovka v menu pauzy; na iPhonu Sdílet → Přidat na plochu.
+### 👤 Herní účet
+- Nový účet jen jménem a heslem, e-mail nepovinný (obnova hesla).
+- Postava, úspěchy, uložené hry i postup ve světech jsou v účtu – stejné na počítači i telefonu.
+- Hrál jsi na dvou zařízeních? Hra se zeptá, které uložení chceš, druhé dá do Zálohy.
+- Účet bez hraní 30 dní se smaže. Co ukládáme, najdeš v menu.
+### ⚙️ Ostatní
+- Nastavení má část Ovládání: dotyk / klávesnice, velikost tlačítek, joystick pro leváky, vibrace.
+- Bez účtu se hraje jako dřív. Po aktualizaci dejte Ctrl+F5.
 
 ## 3.2.0 · 11. 11. 2026
 - Nové vozidlo Lunar Prachocuc 5000 ($100 000 v Garáži): měsíční traktor se sběrným ramenem a přívěsem. Klávesa F přepíná jízdu (ramena nahoře) a sběr (ramena do stran, o 35 % pomaleji) – čistí pás 4 m za sebou.
