@@ -2,6 +2,9 @@
 
 Hra ukazuje posledních 5 verzí (okno Novinky: tlačítko v lobby nebo klik na číslo verze). Formát: nadpis `## verze · datum`, pod ním volitelně kategorie `### název` a body `- …` (krátce, pro hráče).
 
+## 3.3.3 · 17. 11. 2026
+- Telefon: hlavní menu, lobby, sloty a šatna se vejdou na obrazovku bez posouvání.
+
 ## 3.3.2 · 17. 11. 2026
 - Telefon: hra vždy vyplní displej (stránka se už nepřiblíží), menší panel stavu a energie, baterie vozidla jako malá ikona.
 
