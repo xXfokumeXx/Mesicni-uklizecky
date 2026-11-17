@@ -35,8 +35,9 @@
 
 /* ---------- úvodní obrazovka ---------- */
 .menu__inner {
-  width: min(830px, 100%);
-  margin-left: clamp(16px, 5.7vw, 110px);
+  --menu-left: clamp(16px, 5.7vw, 110px);
+  width: min(830px, calc(100% - var(--menu-left)));   /* 3.3: šířka bez levého okraje – jinak na úzkém okně přetékalo doprava */
+  margin-left: var(--menu-left);
   gap: 14px;
 }
 .menu__brand { gap: 14px; }
@@ -59,7 +60,7 @@
 .menu__moon-status--ready { color: var(--lb-green); }
 
 /* na ostatních obrazovkách menší značka (Založit svět, Šatna, Načítám) */
-.menu--compact .menu__inner { align-content: start; padding-top: 44px; width: min(800px, 100%); }
+.menu--compact .menu__inner { align-content: start; padding-top: 44px; width: min(800px, calc(100% - var(--menu-left))); }
 .menu--compact .menu__eyebrow, .menu--compact .menu__moon-status { display: none; }
 .menu--compact .menu__title { font-size: 44px; line-height: 1; }
 .menu--compact .menu__title-line { display: inline; }
@@ -380,3 +381,17 @@
 .menu__rank-bar span { display: block; height: 100%; background: var(--hivis); border-radius: 2px; }
 .lobby-plate em .rank-badge { width: 22px; height: 22px; margin-right: 4px; vertical-align: -7px; }
 .lobby-people__list small .rank-badge { width: 16px; height: 16px; margin-right: 3px; vertical-align: -4px; }
+
+/* telefon naležato (3.3, M4): nízká obrazovka – menší značka, ať je vidět i nabídka */
+@media (max-height: 500px) {
+  .menu__inner { padding-top: 16px; gap: 10px; }
+  .menu__eyebrow, .menu__moon-status { font-size: 14px; }
+  .menu__title { font-size: 2.4rem; }
+  .menu--compact .menu__inner { padding-top: 16px; }
+  .menu--compact .menu__title { font-size: 28px; }
+  .menu__home { margin-top: 8px; }
+}
+@media (max-height: 500px) and (min-width: 600px) {
+  .menu-wardrobe { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr); }   /* šatna vedle sebe: postava | výběr */
+  .menu-wardrobe__stage { height: 240px; }
+}

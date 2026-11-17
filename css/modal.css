@@ -88,3 +88,14 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* nadpis části okna (Nastavení → Ovládání, 3.3) */
+.modal__section {
+  margin: 8px 0 0;
+  padding-top: 12px;
+  font: 600 var(--step--1) / 1.2 var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-top: 1px solid var(--panel-line);
+}

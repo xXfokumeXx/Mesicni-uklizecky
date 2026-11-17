@@ -27,3 +27,11 @@
 .field__select:hover {
   border-color: var(--muted);
 }
+
+/* posuvník (citlivost kamery, průhlednost tlačítek – 3.3) */
+.field__range {
+  width: 100%;
+  min-height: 32px;
+  accent-color: var(--hivis);
+}
+.field[hidden] { display: none; }

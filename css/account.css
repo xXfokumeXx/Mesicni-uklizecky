@@ -1,0 +1,120 @@
+/* Herní účet (3.3, U1): stav v hlavním menu vpravo nahoře a formuláře Vytvořit účet / Přihlásit / Profil. */
+.account-bar {
+  position: fixed;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  right: max(16px, env(safe-area-inset-right, 0px));
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 12px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  font: 500 14px / 1.3 var(--font-body);
+  color: var(--lb-muted, var(--muted));
+  background: var(--lb-panel, var(--panel));
+  border: 1px solid var(--lb-line, var(--panel-line));
+  border-radius: 8px;
+}
+.account-bar[hidden] { display: none; }
+.account-bar__state--in {
+  font-weight: 600;
+  color: var(--lb-text, var(--regolith));
+}
+.account-bar__state--in::before { content: "✓ "; color: var(--lb-green, var(--bot)); }
+
+.account-bar__link {
+  min-height: 32px;
+  padding: 0 4px;
+  font: 600 14px / 1 var(--font-body);
+  color: var(--hivis);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.account-bar__link:hover { text-decoration: underline; }
+
+/* formuláře */
+.account-form {
+  display: grid;
+  gap: 6px;
+  max-width: 420px;
+}
+.account-form[hidden] { display: none; }
+.account-form__lead { margin: 0 0 6px; color: var(--lb-text, var(--regolith)); }
+.account-form__label { margin-top: 6px; font-weight: 600; }
+.account-form__input { min-height: 44px; font-size: 16px; }          /* 16 px: iPhone při psaní nezvětšuje stránku */
+.account-form__hint,
+.account-form__note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--lb-muted, var(--muted));
+}
+.account-form__note { padding: 8px 10px; border-left: 3px solid var(--hivis); background: rgba(242, 179, 61, 0.06); }
+.account-form__state { min-height: 1.2em; margin: 0; font-size: 13px; color: var(--lb-muted, var(--muted)); }
+.account-form__state--ok { color: var(--lb-green, var(--bot)); }
+.account-form__state--bad { color: var(--danger); }
+.account-form__error {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: var(--regolith);
+  background: rgba(224, 101, 76, 0.16);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+}
+.account-form__error[hidden] { display: none; }
+.account-form__submit { justify-self: start; min-height: 44px; margin-top: 8px; padding: 0 22px; }
+.account-form__switch { margin: 6px 0 0; font-size: 14px; color: var(--lb-muted, var(--muted)); }
+.account-form__row { display: grid; gap: 6px; }
+.account-form__row[hidden] { display: none; }
+
+/* jméno účtu v menu nejde přepsat */
+.menu__name--locked { color: var(--lb-text, var(--regolith)); background: transparent; border-color: transparent; cursor: default; }
+
+/* užší okno a telefon: lišta účtu v toku stránky nad kartou hráče, ať nezakryje značku menu */
+@media (max-height: 500px), (max-width: 1100px) {
+  .account-bar { position: static; justify-content: flex-start; max-width: none; padding: 6px 10px; }
+}
+
+/* spor verzí slotu (U2) */
+.account-sync { z-index: 40; }
+.account-sync .modal__body { display: grid; gap: 10px; padding: 16px; }
+.account-sync__pick { display: grid; gap: 2px; justify-items: start; min-height: 56px; padding: 8px 14px; text-align: left; }
+.account-sync__pick span { font-size: 13px; color: var(--muted); }
+
+/* stav slotu vůči účtu (☁ / 💻) */
+.slot__cloud { margin-left: 6px; font: 600 12px / 1 var(--font-body); color: var(--muted); white-space: nowrap; }
+.slot__cloud--ok { color: var(--lb-green, var(--bot)); }
+.slot__cloud--warn { color: var(--hivis); }
+
+/* profil (U3): části E-mail / Heslo / Smazat účet, rozbalovací formuláře */
+.account-form__section {
+  margin: 18px 0 2px;
+  padding-top: 12px;
+  font: 600 var(--step--1) / 1.2 var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lb-muted, var(--muted));
+  border-top: 1px solid var(--lb-line, var(--panel-line));
+}
+.account-form__section--danger { color: var(--danger); }
+.account-form__more { display: grid; gap: 6px; }
+.account-form__more > summary {
+  min-height: 36px;
+  padding: 8px 0;
+  font-weight: 600;
+  color: var(--hivis);
+  cursor: pointer;
+}
+.account-form__more[hidden] { display: none; }
+.account-form__more--danger > summary { color: var(--danger); }
+.account-form__more[open] { padding-bottom: 6px; }
+.account-form__check { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.account-form__check input { width: 20px; height: 20px; }
+
+.account-privacy p { margin: 0 0 10px; line-height: 1.5; }
+.account-sync .modal__panel { max-height: 100%; }
+.account-sync .modal__body { min-height: 0; overflow-y: auto; }

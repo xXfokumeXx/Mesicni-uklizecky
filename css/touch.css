@@ -1,0 +1,364 @@
+/* Dotykové ovládání (3.3, M2) – vrstva z js/touch.js. Bez třídy body.is-touch se nic z toho neukáže. */
+.touch {
+  display: none;
+}
+
+.is-touch {
+  overscroll-behavior: none;          /* žádné „stáhni pro obnovení“ */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.is-touch .touch {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 2;                          /* nad HUD (1), pod toasty (20), menu (25) a okny (30) */
+  pointer-events: none;                /* na plátno propadá všechno kromě tlačítek */
+}
+
+/* ---------- joystick (plovoucí, kreslí se tam, kde je palec) ---------- */
+.touch__joy {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 120px;
+  height: 120px;
+  border: 2px solid rgba(228, 226, 218, 0.35);
+  border-radius: 50%;
+  background: rgba(18, 20, 26, 0.35);
+}
+.touch__joy[hidden] { display: none; }
+.touch__knob {
+  position: absolute;
+  left: 36px;
+  top: 36px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--regolith);
+  opacity: 0.75;
+}
+
+/* ---------- tlačítka ---------- */
+.touch__btn {
+  pointer-events: auto;
+  touch-action: none;
+  min-width: 52px;
+  height: 52px;
+  padding: 0 12px;
+  font: 600 22px / 1 var(--font-body);
+  color: var(--regolith);
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 50%;
+  opacity: var(--touch-opacity, 0.7);   /* Nastavení → Průhlednost tlačítek */
+  -webkit-tap-highlight-color: transparent;
+}
+.touch__btn[hidden] { display: none; }
+.touch__btn[data-down] {
+  opacity: 1;
+  transform: scale(0.94);
+  border-color: var(--hivis);
+}
+
+/* horní lišta: menu, mapa, úspěchy, chat (+ zoom na mapě) */
+.touch__top {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  display: flex;
+  gap: 8px;
+}
+.touch__btn--top {
+  min-width: 48px;
+  height: 48px;
+  font-size: 20px;
+  border-radius: var(--radius);
+}
+.touch__btn--map { display: none; }
+.touch--map .touch__btn--map { display: inline-block; }
+
+/* vpravo dole: nástroj, skok a velké tlačítko akce */
+.touch__side {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-items: end;
+  align-items: end;
+  gap: 8px 12px;
+}
+/* tlačítka podle situace (M3): řádky po dvou nad tlačítkem akce */
+.touch__group {
+  grid-column: 1 / 3;
+  display: flex;
+  flex-wrap: wrap-reverse;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 300px;
+}
+.touch__btn--text {
+  min-width: 64px;
+  padding: 0 12px;
+  font: 600 15px / 1 var(--font-body);
+  border-radius: 26px;
+}
+.touch--alt [data-act="zlom"] {
+  opacity: 1;
+  color: var(--hivis-ink);
+  background: var(--hivis);
+}
+.touch__btn--action {
+  grid-column: 1 / 3;
+  min-width: 140px;
+  max-width: min(260px, 34vw);       /* nesmí zakrýt hotbar (ten je na dotyku posunutý doleva) */
+  height: 72px;
+  padding: 0 18px;
+  font: 700 var(--step--1) / 1.2 var(--font-display);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--hivis-ink);
+  background: var(--hivis);
+  border: 0;
+  border-radius: 36px;
+  overflow: hidden;
+  display: -webkit-box;               /* dlouhá výzva (stavění) nejvýš na 3 řádky */
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+}
+.touch__btn--action[hidden] { display: none; }
+/* akce teď nejde potvrdit (stavba na špatném místě…) – text ukazuje proč */
+.touch__btn--action.touch__btn--off {
+  color: var(--regolith);
+  background: var(--surface-raised);
+  text-transform: none;
+  font: 600 var(--step--1) / 1.25 var(--font-body);
+  white-space: normal;
+}
+
+/* nastojato: výzva k otočení (hra stojí, když hraješ sám) */
+.touch__rotate {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  text-align: center;
+  color: var(--regolith);
+  background: var(--space);
+  pointer-events: auto;
+}
+.touch__rotate[hidden] { display: none; }
+.touch__rotate-icon { font-size: 48px; }
+.touch__rotate-text { margin: 0; font: 600 var(--step-2) / 1.2 var(--font-display); }
+
+/* ---------- dnešní HUD na dotyku ---------- */
+/* tlačítka kamery / zoomu a lišta Mapa – Menu nahrazuje horní lišta a gesta; výzvu E nahrazuje tlačítko akce */
+.is-touch .hud__controls,
+.is-touch .hud__prompt,
+.is-touch .chat__open,
+.is-touch .build-hud { display: none; }   /* řádek režimu kladiva mluví o klávesách – na dotyku stačí tlačítka a tlačítko akce */
+/* telefon naležato je nízký: rozložení HUD jako na počítači (ne pod sebou), pravý sloupec pod horní lištou */
+.is-touch .hud {
+  grid-template-columns: minmax(0, 240px) 1fr minmax(0, 220px);
+  grid-template-areas:
+    "stats  nav    players"
+    "chat   chat   ."
+    "prompt prompt prompt"
+    "hotbar hotbar hotbar"
+    "controls controls controls";
+  gap: 8px;
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+}
+.is-touch .hud__right { margin-top: 56px; }
+.is-touch .hud__hotbar { justify-self: start; margin-left: 18vw; }
+
+/* ---------- nastavení tlačítek (M4) ---------- */
+.touch__side,
+.touch__top { zoom: var(--touch-scale, 1); }          /* Nastavení → Velikost tlačítek */
+/* joystick vpravo (leváci): tlačítka vlevo, hotbar doprava */
+.touch--lefty .touch__side {
+  right: auto;
+  left: max(16px, env(safe-area-inset-left, 0px));
+  justify-items: start;
+}
+.touch--lefty .touch__group { justify-content: flex-start; }
+.is-lefty .hud__hotbar { justify-self: end; margin-left: 0; margin-right: 18vw; }
+
+/* ---------- okna na telefonu (M4): přes celou obrazovku ---------- */
+.is-touch .facility__keys { display: none; }          /* „E / Esc zavřít“ – na dotyku je křížek */
+.is-touch .facility__close,
+.is-touch .modal__close {
+  width: 48px;
+  height: 48px;
+  font-size: 30px;
+}
+/* záložky v jednom řádku, posouvají se prstem do stran */
+.is-touch .tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.is-touch .tabs::-webkit-scrollbar { display: none; }
+.is-touch .tabs__tab {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 16px;
+}
+.is-touch .facility__catalog,
+.is-touch .facility__detail,
+.is-touch .facility__body,
+.is-touch .modal__body { overscroll-behavior: contain; }
+.is-touch .field__select,
+.is-touch .segmented__option { min-height: 44px; }
+.is-touch .button { min-height: 44px; }
+
+@media (max-height: 560px), (max-width: 760px) {
+  .is-touch .facility,
+  .is-touch .modal {
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    place-items: stretch;               /* okno vyplní celou buňku – výška 100 % pak platí */
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);   /* řádek nesmí růst s obsahem (jinak okno přeteče obrazovku) */
+  }
+  .is-touch .facility__window,
+  .is-touch .modal__panel {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .is-touch .modal__body { flex: 1; min-height: 0; overflow-y: auto; }
+  .is-touch .modal__panel { overflow-y: auto; }        /* okna bez vlastní posuvné části (menu pauzy) */
+  .is-touch .facility__window::before { height: 4px; }
+  .is-touch .facility__header { padding: 4px 8px 4px 14px; }
+  .is-touch .facility__title { font-size: 1.15rem; }
+  .is-touch .facility__money { font-size: 1.1rem; }
+  .is-touch .facility__catalog { padding: 10px 12px; }
+  .is-touch .facility__detail { padding: 12px; }
+}
+
+/* ---------- stavební lišta na telefonu: pod horní lištou, karty se posouvají ---------- */
+.is-touch .buildbar {
+  top: calc(64px + env(safe-area-inset-top, 0px));
+  bottom: auto;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  width: min(960px, calc(100vw - 300px));
+  max-height: calc(100% - 64px - 110px);
+  grid-template-rows: auto minmax(0, 1fr);
+  transform: none;
+}
+.is-touch .buildbar__cats { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.is-touch .buildbar__cat { flex: none; min-height: 40px; }
+.is-touch .buildbar__cards {
+  max-height: none;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+}
+.is-touch .buildbar__img { width: 88px; height: 60px; }
+
+/* ---------- HUD na nízké obrazovce: menší panel stavu, zprávy pod horní lištou ---------- */
+.is-touch .toast { top: calc(64px + env(safe-area-inset-top, 0px)); }
+@media (max-height: 560px) {
+  .is-touch .hud__stats {
+    padding: 6px 10px;
+    gap: 2px 10px;
+    max-width: 230px;
+  }
+  .is-touch .stats__money-value { font-size: 1.3rem; }
+  .is-touch .stats__label { font-size: 12px; }
+  .is-touch .stats__value { font-size: 13px; }
+  .is-touch .stats__row .meter { height: 4px; }
+}
+
+/* nápověda dlouhým stiskem (title) */
+.touch__tip {
+  position: fixed;
+  z-index: 60;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 8px 12px;
+  font: 500 14px / 1.35 var(--font-body);
+  color: var(--regolith);
+  background: var(--surface-raised);
+  border: 1px solid var(--hivis);
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+.touch__tip[hidden] { display: none; }
+
+/* ---------- chat na dotyku (3.3, M4): nad klávesnicí, rychlé zprávy, křížek ---------- */
+.chat__quick,
+.chat__close { display: none; }
+.is-touch .chat--open {
+  position: fixed;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: calc(8px + var(--kb, 0px));
+  z-index: 26;
+  width: auto;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+}
+.is-touch .chat--open .chat__log { max-height: 30vh; }
+.is-touch .chat--open .chat__quick {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.chat__quick-btn {
+  flex: none;
+  min-height: 40px;
+  padding: 0 14px;
+  font: 600 14px / 1 var(--font-body);
+  color: var(--regolith);
+  background: var(--surface-raised);
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+}
+.is-touch .chat__close {
+  display: block;
+  width: 40px;
+  height: 40px;
+  font: 400 24px / 1 var(--font-body);
+  color: var(--muted);
+  background: none;
+  border: 0;
+}
+.is-touch .chat__input { font-size: 16px; }   /* iPhone: pod 16 px Safari při psaní stránku zvětší */
+.is-touch .chat__send { width: 40px; height: 40px; }
+
+/* telefon naležato (≥ 600 px široký, nízký): katalog a detail vedle sebe, každý se posouvá sám (ne detail až pod katalogem) */
+@media (max-height: 560px) and (min-width: 600px) {
+  .is-touch .facility__body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 280px);
+    overflow: hidden;
+  }
+  .is-touch .facility__catalog,
+  .is-touch .facility__detail { overflow-y: auto; }
+  .is-touch .facility__detail {
+    border-top: 0;
+    border-left: 1px solid var(--panel-line);
+  }
+  .is-touch .facility__grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}
+
+/* návod pro iPhone (celá obrazovka jen z ikony na ploše) */
+.menu__ios,
+.pause__ios {
+  margin: 4px 0 0;
+  font: 400 14px / 1.4 var(--font-body);
+  color: var(--muted);
+}
+.menu__ios[hidden],
+.pause__ios[hidden] { display: none; }

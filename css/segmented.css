@@ -27,3 +27,5 @@
   color: var(--hivis-ink);
   background: var(--hivis);
 }
+
+.segmented--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
