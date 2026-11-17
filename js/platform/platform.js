@@ -12,7 +12,7 @@ export async function connectPlatform() {
     return { error: 'Knihovnu Firebase se nepodařilo načíst. Zkontroluj připojení k internetu nebo blokování reklam a obnov stránku.' };
   }
   try {
-    return await createFirebasePlatform(FIREBASE_CONFIG);
+    return await createFirebasePlatform();
   } catch (e) {
     console.warn('Firebase', e);
     const code = String(e?.code || e?.message || '');

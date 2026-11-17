@@ -15,6 +15,7 @@
 // Šetření dat: presence se zapisuje po polích a jen to, co se změnilo. Tahy koštětem (pole `s`)
 // se ukládají jako samostatné položky podle pořadového čísla, takže se posílají jen nové tahy.
 
+import { firebaseApp, ensureUser } from './fbase.js';
 const KEYED = { s: true };                  // pole, jehož položky [seq, …] se zapisují zvlášť
 
 const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -54,13 +55,11 @@ function decodePresence(val) {
 
 const rand = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
 
-export async function createFirebasePlatform(config) {
-  const fb = window.firebase;
-  if (!fb?.initializeApp || !fb.auth || !fb.database) throw new Error('sdk');
-  if (!fb.apps.length) fb.initializeApp(config);
-  const auth = fb.auth();
-  if (!auth.currentUser) await auth.signInAnonymously();
-  const uid = auth.currentUser.uid;
+export async function createFirebasePlatform() {
+  const fb = firebaseApp();
+  if (!fb) throw new Error('sdk');
+  // 3.3: přihlášený herní účet se použije (stejné uid jako dřív – propojení), jinak anonymní; čeká na obnovu přihlášení
+  const uid = (await ensureUser()).uid;
   const database = fb.database();
   const me = `${uid}_${rand(5)}`;
 
