@@ -82,3 +82,9 @@
 @media (prefers-reduced-motion: reduce) {
   .menu .menu__moon-img--spin { animation: menu-moon-spin 900s linear infinite !important; }
 }
+
+/* kategorie v Novinkách (3.3) a tlačítko Novinky v lobby */
+.news__cat { margin: 10px 0 4px; font: 600 13px / 1.3 var(--font-display); letter-spacing: 0.04em; color: var(--hivis, #f2b33d); }
+.news__cat:first-of-type { margin-top: 2px; }
+.lobby-btn--news { white-space: nowrap; }
+.lobby-btn--news [data-ver-mm] { margin-left: 0.35em; }
