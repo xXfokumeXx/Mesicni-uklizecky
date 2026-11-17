@@ -1,0 +1,13 @@
+{
+  "name": "mesicni-zametacky-uklid",
+  "private": true,
+  "description": "Úklid neaktivních herních účtů a světů (tools/uklid-uctu.mjs) – Firebase Admin SDK, tarif Spark.",
+  "type": "module",
+  "scripts": {
+    "nanecisto": "node uklid-uctu.mjs --nanecisto",
+    "uklid": "node uklid-uctu.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  }
+}
