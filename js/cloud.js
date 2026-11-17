@@ -186,6 +186,7 @@ async function writeCloud(code, { full = false, sv = 0, extra = {}, quick = fals
       'meta/wu': net.uid || '',
       'meta/ws': SESSION,
       'meta/ver': VERSION,                                       // L-60: kterou verzí hry uloženo
+      'meta/posledni': window.firebase.database.ServerValue.TIMESTAMP,   // 3.3 (U4): serverový čas – úklid světů po 30 dnech
     };
     if (mapOk) {
       const packed = await packDust();

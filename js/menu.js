@@ -4,9 +4,12 @@ import { SUIT_COLORS, HELMET_PROPS, SKINS, propById, skinById } from './catalog.
 import { createAvatarShots } from './scene/avatarShots.js';
 import { createWardrobe } from './scene/wardrobe.js';
 import { profile, saveProfile, sanitizeName } from './profile.js';
-import { SLOTS, listSaves, deleteSave, lastSlot, hasV1Save, exportSlot, importSlot } from './storage.js';
+import { SLOTS, BACKUP_SLOT, listSaves, deleteSave, lastSlot, hasV1Save, exportSlot, importSlot } from './storage.js';
+import { cloudState, onCloudState, refreshCloudSlots, slotSyncState, deleteCloudSlot } from './cloudSave.js';
 import { SAVE_VERSION } from './state.js';
 import { net, initLobby, lobbyPeers, openWorlds, findWorld, setLobbyStatus, roomOnline, versionMismatchText } from './net.js';
+import { account, initAccount, nameFree, nameKey } from './account.js';
+import { initAccountUi } from './accountUi.js';
 import { VERSION, cmpVersion } from './version.js';
 import { createMenuMoon } from './scene/menuMoon.js';
 import { checkAccess, enterPassword, cloudMeta } from './cloud.js';
@@ -30,7 +33,7 @@ function fmtPlay(ms) {
 // ---------- přepínání obrazovek ----------
 
 function show(panel) {
-  for (const id of ['menu-home', 'menu-slots', 'menu-wardrobe', 'menu-lobby', 'menu-loading']) $(id).hidden = id !== panel;
+  for (const id of ['menu-home', 'menu-slots', 'menu-wardrobe', 'menu-lobby', 'menu-loading', 'menu-account']) $(id).hidden = id !== panel;
   $('menu-inner').hidden = panel === 'menu-lobby';                     // lobby je přes celou obrazovku
   $('menu').classList.toggle('menu--lobby', panel === 'menu-lobby');
   $('menu').classList.toggle('menu--compact', panel !== 'menu-home' && panel !== 'menu-lobby');
@@ -73,6 +76,10 @@ const avatar = (look, wave = false) => (shots ? shots.shot(look, { wave }) : { u
 
 function renderProfile() {
   $('menu-name').value = profile.name;
+  // 3.3 (U1): přihlášený hráč má jméno účtu, nejde ho změnit
+  $('menu-name').readOnly = !!account.user;
+  $('menu-name').title = account.user ? 'Jméno účtu nejde změnit.' : '';
+  $('menu-name').classList.toggle('menu__name--locked', !!account.user);
   $('menu-avatar').src = avatar(profile.look, true).url;
   $('menu-outfit').textContent = outfitName(profile.look);
   const nx = nextRank();
@@ -159,10 +166,24 @@ async function renderSlots() {
   $('slots-hint').textContent = slotMode === 'host'
     ? 'Vyber uloženou hru, kterou otevřeš ostatním, nebo začni novou. Svět se ukládá u tebe, peníze jsou společné.'
     : 'Pět slotů pro uložené hry. Hra se sama ukládá každých 30 s a při odchodu do menu.';
-  const saves = await listSaves();
+  const local = await listSaves();
   const v1 = hasV1Save();
   const last = lastSlot();
-  $('slot-list').innerHTML = SLOTS.map((id, i) => {
+  // 3.3 (U2): přihlášený hráč – sloty z účtu (i ty, které v tomto zařízení nejsou) a stav ☁ / 💻
+  const cloudMeta = id => cloudState.metas[id];
+  const fromCloud = (id, m) => m && { id, title: m.nazev, savedAt: m.ulozeno, money: m.money, done: m.done, total: m.total, playMs: m.playMs, planet: m.planeta, ver: m.verze, v: m.v, cloudOnly: true };
+  const saves = [...SLOTS, BACKUP_SLOT].map(id => local.find(x => x.id === id) || (account.user ? fromCloud(id, cloudMeta(id)) : null)).filter(Boolean);
+  const badge = sv => {
+    const st = slotSyncState(sv.id, sv.cloudOnly ? null : sv.rev);
+    if (!st) return '';
+    const [icon, text, cls] = {
+      ok: ['☁', 'v účtu', 'ok'], up: ['☁↑', 'nahraje se do účtu', 'warn'], down: ['☁↓', 'v účtu je novější – stáhne se', 'warn'],
+      local: ['💻', 'jen v tomto zařízení', ''], cloud: ['☁', 'jen v účtu – stáhne se', 'ok'], conflict: ['☁!', 'jiné než v účtu – zeptám se při načtení', 'warn'],
+    }[st];
+    return ` <span class="slot__cloud${cls ? ` slot__cloud--${cls}` : ''}" title="${text}">${icon} ${text}</span>`;
+  };
+  const ids = saves.some(x => x.id === BACKUP_SLOT) ? [...SLOTS, BACKUP_SLOT] : SLOTS;
+  $('slot-list').innerHTML = ids.map((id, i) => {
     const sv = saves.find(x => x.id === id);
     if (!sv) {
       return `
@@ -183,13 +204,13 @@ async function renderSlots() {
     return `
       <li class="slot${id === last ? ' slot--last' : ''}">
         <div class="slot__info">
-          <span class="slot__title">${esc(sv.title || `Slot ${i + 1}`)}${id === last ? ' <span class="slot__badge">naposledy</span>' : ''}${newer ? ' <span class="slot__badge">novější verze</span>' : ''}</span>
+          <span class="slot__title">${id === BACKUP_SLOT ? 'Záloha: ' : ''}${esc(sv.title || `Slot ${i + 1}`)}${id === last ? ' <span class="slot__badge">naposledy</span>' : ''}${newer ? ' <span class="slot__badge">novější verze</span>' : ''}${badge(sv)}</span>
           <span class="slot__meta">${pct.toLocaleString('cs-CZ')} % hexů · $${fmt(sv.money || 0)} · ${fmtPlay(sv.playMs)}</span>
           <span class="slot__meta">${newer ? `Uloženo ve verzi ${esc(sv.ver || sv.v)} – obnov stránku (Ctrl+F5).` : `Uloženo ${fmtDate(sv.savedAt)}${sv.ver ? ` · v${esc(sv.ver)}` : ''}`}</span>
         </div>
         <div class="slot__actions">
           <button class="button button--primary" type="button" data-load="${id}"${newer ? ' disabled' : ''}>${slotMode === 'host' ? 'Hostovat' : 'Načíst'}</button>
-          <button class="button" type="button" data-export="${id}" title="Uložit hru do souboru .json (záloha)">Export</button>
+          ${sv.cloudOnly ? '' : `<button class="button" type="button" data-export="${id}" title="Uložit hru do souboru .json (záloha)">Export</button>`}
           <button class="button button--danger" type="button" data-del="${id}">Smazat</button>
         </div>
       </li>`;
@@ -235,6 +256,7 @@ function bindSlots() {
         return;
       }
       await deleteSave(t.dataset.del);
+      if (account.user) await deleteCloudSlot(t.dataset.del).catch(() => { $('slots-hint').textContent = 'Z účtu se slot smazat nepodařilo – zkus to znovu.'; });
       renderSlots();
     }
   });
@@ -373,7 +395,7 @@ function bindLobby() {
     const { code, meta } = cloudOffer;
     enterWorld(code, () => hooks.onLaunch({ mode: 'host', cloud: code, planet: meta.pn === 'mars' ? 'mars' : 'moon', public: true }));
   });
-  $('lobby-host').addEventListener('click', () => { slotMode = 'host'; show('menu-slots'); renderSlots(); });
+  $('lobby-host').addEventListener('click', () => { slotMode = 'host'; show('menu-slots'); renderSlots(); if (account.user) refreshCloudSlots(); });
   $('lobby-more').addEventListener('click', () => {
     const box = $('lobby-people-box');
     box.hidden = !box.hidden;
@@ -453,13 +475,37 @@ export function initMenu(h) {
   } catch (e) { console.warn('[menu] Měsíc nejde vykreslit', e); }
   renderProfile();
   bindWardrobe();
-  $('menu-name').addEventListener('change', () => {
-    profile.name = sanitizeName($('menu-name').value) || profile.name;
+  $('menu-name').addEventListener('change', async () => {
+    if (account.user) { renderProfile(); return; }                  // jméno účtu se nemění
+    const name = sanitizeName($('menu-name').value) || profile.name;
+    // 3.3 (U1): jméno, které má zaregistrovaný účet, si hráč bez účtu nevezme
+    if (nameKey(name) !== nameKey(profile.name) && (await nameFree(name)) === false) {
+      $('menu-name').value = profile.name;
+      $('menu-name').title = `Jméno „${name}“ má zaregistrovaný účet.`;
+      $('menu-name').setCustomValidity?.(`Jméno „${name}“ má zaregistrovaný účet – vyber si jiné.`);
+      $('menu-name').reportValidity?.();
+      setTimeout(() => $('menu-name').setCustomValidity?.(''), 3000);
+      return;
+    }
+    profile.name = name;
     saveProfile();
     renderProfile();
     setLobbyStatus(net.lobbyStatus);
   });
-  $('menu-sp').addEventListener('click', () => { slotMode = 'sp'; show('menu-slots'); renderSlots(); });
+  let accUid;                                                         // uid účtu z minulé změny (undefined = ještě nic)
+  initAccountUi({ show, onChange: user => {
+    // přihlášení do jiného účtu / odhlášení, když už je připojený multiplayer: Firebase má jiné uid (nebo žádné) a zápisy
+    // pod starým by pravidla odmítla → stránka se načte znovu. Propojení anonymního hráče (registrace) uid nemění.
+    const uid = user?.uid || null;
+    const changed = accUid !== undefined && uid !== accUid;
+    accUid = uid;
+    if (changed && net.room && net.uid && uid !== net.uid) { location.reload(); return; }
+    renderProfile();
+    setLobbyStatus(net.lobbyStatus);
+  } });
+  initAccount();
+  $('menu-sp').addEventListener('click', () => { slotMode = 'sp'; show('menu-slots'); renderSlots(); if (account.user) refreshCloudSlots(); });
+  onCloudState(() => { if (!$('menu-slots').hidden) renderSlots(); });
   $('menu-mp').addEventListener('click', async () => {
     show('menu-lobby');
     renderLobby();

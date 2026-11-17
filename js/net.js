@@ -933,6 +933,7 @@ export async function joinWorld(w, onStatus) {
   net.world.onCancel?.(() => net.onKicked?.());
   setLobby({ scr: 'game', w: w.code });
   newGame('Multiplayer');
+  await personalHooks.pull?.(personalKey(w.code));          // 3.3: novější osobní postup z účtu (telefon × počítač)
   loadPersonal();
   mapAsk = Date.now() % 1e9; mapWanted = false; mapBusy = false;   // hostitel udělá snímek mapy hned (žádost sq)
   pushWorldPresence({ speed: 0, alt: 0, vr: 0, swept: 0, airborne: 0, toolWidth: 0.3, body: null }, 0);
@@ -1265,14 +1266,20 @@ export function reportParked(i) {
 // Osobní postup klienta v cizím světě (nástroje, boty, poloha) – v prohlížeči hráče.
 // Ukládá se u klienta i u hostitele: kdo svět převezme (nebo se k němu vrátí jako hráč), dostane své
 // vlastní vybavení a polohu, ne ty, které jsou ve stavu světa po předchozím hostiteli.
-const personalKey = (code = net.code) => `ms2_mp_${code}${PLANET.id === 'moon' ? '' : `_${PLANET.id}`}`;   // na Marsu od nuly
+export const personalKey = (code = net.code) => `ms2_mp_${code}${PLANET.id === 'moon' ? '' : `_${PLANET.id}`}`;   // na Marsu od nuly
+// 3.3 (U2): herní účet – osobní postup ve světě i v účtu (cloudSave.js): saved(klíč, text) po uložení,
+// pull(klíč) před načtením (stáhne z účtu, když je tam novější)
+export const personalHooks = { saved: null, pull: null };
 export function savePersonal() {
   if (net.mode === 'off' || !game.s || !net.code) return;
   const s = game.s;
   try {
-    localStorage.setItem(personalKey(), JSON.stringify({
+    const text = JSON.stringify({
       tools: s.tools, tool: s.tool, boots: s.boots, belt: s.belt, jetpack: s.jetpack, hammer: s.hammer ? 1 : 0, hotbar: s.hotbar, sel: s.sel, p: s.p, f: s.f,
-    }));
+      at: Date.now(),                                       // 3.3: novější vyhrává (zařízení × účet)
+    });
+    localStorage.setItem(personalKey(), text);
+    personalHooks.saved?.(personalKey(), text);
   } catch { /* nic */ }
 }
 // Moje osobní část světa code z prohlížeče do game.s. Vrací true, když jsem ji tu měl uloženou.

@@ -11,6 +11,9 @@ import { tangentTo } from './planet/vec.js';
 import { VERSION, cmpVersion } from './version.js';
 
 export const SLOTS = ['slot1', 'slot2', 'slot3', 'slot4', 'slot5'];
+export const BACKUP_SLOT = 'zaloha';                 // 3.3 (U2): záloha při sporu zařízení × účet (jiná verze téhož slotu)
+// 3.3 (U2): háček po úspěšném uložení slotu – herní účet nahraje slot do cloudu (cloudSave.js). (slot, rec) => void
+export const storageHooks = { afterSave: null };
 const DB_NAME = 'moonsweepers2', STORE = 'saves';
 const LAST_KEY = 'ms2_last_slot';
 const LS_PREFIX = 'ms2_save_';
@@ -125,7 +128,7 @@ async function allRecords() {
 // Seznam uložených her (jen popisy, bez map): [{ id, title, savedAt, money, done, total, playMs }]
 export async function listSaves() {
   const list = await allRecords();
-  return list.filter(r => SLOTS.includes(r.id) && r.meta).map(r => ({ id: r.id, ...r.meta, v: r.v || 2 }));
+  return list.filter(r => (SLOTS.includes(r.id) || r.id === BACKUP_SLOT) && r.meta).map(r => ({ id: r.id, ...r.meta, v: r.v || 2, rev: Number(r.s?.rev) || 0 }));
 }
 
 // ---------- export / import slotu (L-50) ----------
@@ -251,6 +254,7 @@ export async function saveGame(slot = game.slot, onFail) {
     if (ok) {
       game.slot = slot;
       try { localStorage.setItem(LAST_KEY, slot); } catch { /* nic */ }
+      try { storageHooks.afterSave?.(slot, rec); } catch (e) { console.warn('[slot] háček po uložení', e); }
     } else throw new Error('save');
     return true;
   } catch {
@@ -282,6 +286,13 @@ export async function loadGame(slot) {
     return false;
   }
 }
+
+// Celý záznam slotu (cloudSave.js: nahrání do účtu / stažení z účtu). Prázdný slot = null.
+export async function getSlotRecord(slot) {
+  const rec = await getRecord(slot);
+  return rec?.s ? rec : null;
+}
+export const putSlotRecord = rec => putRecord(rec);
 
 export async function deleteSave(slot) {
   await idb('readwrite', st => st.delete(slot));

@@ -5,6 +5,8 @@ import { SUIT_COLORS } from './catalog.js';
 
 const $ = id => document.getElementById(id);
 const MAX = 60, PEEK_MS = 5000;
+// Rychlé zprávy (3.3, M4): na dotyku řada tlačítek nad vstupem, klepnutí rovnou odešle
+const QUICK = ['Ahoj!', 'Pojď sem', 'Potřebuju baterii', 'Díky!', 'Jdu domů'];
 let hooks = null;
 let peekTimer = 0;
 const hhmm = t => new Date(t).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
@@ -24,6 +26,34 @@ export function initChat(h) {
     if (e.key === 'Escape') { input.value = ''; closeChat(); }
   });
   input.addEventListener('keyup', e => e.stopPropagation());
+
+  // dotyk: rychlé zprávy a křížek (Esc na telefonu není); CSS je ukáže jen s body.is-touch
+  const quick = document.createElement('div');
+  quick.className = 'chat__quick';
+  for (const text of QUICK) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chat__quick-btn';
+    b.textContent = text;
+    b.addEventListener('click', () => { hooks.send(text); input.value = ''; closeChat(); });
+    quick.append(b);
+  }
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'chat__close';
+  close.setAttribute('aria-label', 'Zavřít chat');
+  close.textContent = '×';
+  close.addEventListener('click', () => { input.value = ''; closeChat(); });
+  form.before(quick);
+  form.append(close);
+
+  // klávesnice telefonu zmenší viditelnou část stránky – vstup chatu se posune nad ni (--kb = výška klávesnice)
+  const vv = window.visualViewport;
+  if (vv) {
+    const fit = () => document.documentElement.style.setProperty('--kb', `${Math.max(0, innerHeight - vv.height - vv.offsetTop)}px`);
+    vv.addEventListener('resize', fit);
+    vv.addEventListener('scroll', fit);
+  }
 }
 
 // Na chvíli ukázat poslední zprávy (po nové zprávě).

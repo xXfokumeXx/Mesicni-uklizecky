@@ -1,5 +1,6 @@
 // Okno „Nastavení grafiky“: propojení ovládacích prvků s objektem settings.
-import { settings, saveSettings, matchPreset, PRESETS, PRESET_LABELS, DEFAULTS } from './settings.js';
+import { settings, saveSettings, matchPreset, PRESETS, PRESET_LABELS, GRAPHICS_DEFAULTS } from './settings.js';
+import { wantsTouch } from './touch.js';
 
 const $ = id => document.getElementById(id);
 
@@ -7,6 +8,7 @@ const PRESET_HINTS = {
   low: 'Pro slabší notebooky: nižší rozlišení, kratší dohled, bez stínů objektů, 30 snímků za sekundu.',
   medium: 'Vyvážená kvalita. Výchozí volba.',
   high: 'Ostrý obraz, daleký dohled a stíny z čelovky a světlometů. Pro výkonnější grafiku.',
+  mobile: 'Pro telefon a tablet: bez stínů objektů a částic, krátký dohled, 30 snímků za sekundu. Když hra nestíhá, sama sníží rozlišení.',
   custom: 'Vlastní kombinace nastavení.',
 };
 
@@ -24,6 +26,10 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
   const shadows = $('set-shadows');
   const lightShadows = $('set-lightshadows');
   const showFps = $('set-showfps');
+  const ctlButtons = [...modal.querySelectorAll('[data-ctl]')];
+  const sizeButtons = [...modal.querySelectorAll('[data-btnsize]')];
+  const joySide = $('set-joyside'), camSens = $('set-camsens'), btnOpacity = $('set-btnopacity'), vibrace = $('set-vibrace');
+  const canVibrate = typeof navigator.vibrate === 'function';      // iPhone vibrace z webu neumí → volba se neukáže
   let lastFocus = null;
 
   function render() {
@@ -43,6 +49,18 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
     shadows.checked = settings.shadows;
     lightShadows.checked = settings.lightShadows;
     showFps.checked = settings.showFps;
+    // ovládání (3.3, M4)
+    const seg = (buttons, key, val) => buttons.forEach(b => { const on = b.dataset[key] === val; b.classList.toggle('segmented__option--active', on); b.setAttribute('aria-pressed', String(on)); });
+    seg(ctlButtons, 'ctl', settings.ovladani);
+    seg(sizeButtons, 'btnsize', settings.btnSize);
+    joySide.value = settings.joySide;
+    camSens.value = String(settings.camSens);
+    $('set-camsens-out').textContent = `${String(settings.camSens).replace('.', ',')}×`;
+    btnOpacity.value = String(settings.btnOpacity);
+    $('set-btnopacity-out').textContent = `${settings.btnOpacity} %`;
+    vibrace.checked = settings.vibrace;
+    const touchOn = wantsTouch();
+    for (const f of modal.querySelectorAll('[data-touch-only]')) f.hidden = !touchOn || (f.hasAttribute('data-vibrate') && !canVibrate);
     $('settings-reload').hidden = settings.antialias === antialiasAtStart;
   }
 
@@ -80,12 +98,18 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
   shadows.addEventListener('change', () => change({ shadows: shadows.checked }));
   lightShadows.addEventListener('change', () => change({ lightShadows: lightShadows.checked }));
   showFps.addEventListener('change', () => change({ showFps: showFps.checked }));
+  for (const b of ctlButtons) b.addEventListener('click', () => change({ ovladani: b.dataset.ctl }));
+  for (const b of sizeButtons) b.addEventListener('click', () => change({ btnSize: b.dataset.btnsize }));
+  joySide.addEventListener('change', () => change({ joySide: joySide.value }));
+  camSens.addEventListener('input', () => change({ camSens: Number(camSens.value) }));
+  btnOpacity.addEventListener('input', () => change({ btnOpacity: Number(btnOpacity.value) }));
+  vibrace.addEventListener('change', () => change({ vibrace: vibrace.checked }));
 
   $('settings-open').addEventListener('click', open);
   $('settings-close').addEventListener('click', close);
   $('settings-done').addEventListener('click', close);
   $('settings-backdrop').addEventListener('click', close);
-  $('settings-reset').addEventListener('click', () => change({ ...DEFAULTS }));
+  $('settings-reset').addEventListener('click', () => change({ ...GRAPHICS_DEFAULTS }));
   $('settings-reload').addEventListener('click', async () => {
     await onReload();                     // uložení je asynchronní (komprese mapy)
     location.reload();

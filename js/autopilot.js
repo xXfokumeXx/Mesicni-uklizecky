@@ -162,7 +162,8 @@ export function autopilotDrive(dt, input, ctx) {
   if (ctx.empty) { off('Baterie je vybitá – autopilot vypnutý, vozidlo jede v nouzovém režimu.'); return null; }
   if (input.target) { off('Autopilot vypnutý – řídíš myší.'); return null; }
   const k = input.keys;
-  const w = !!(k.w || k.arrowup), sk = !!(k.s || k.arrowdown);
+  const ax = input.axis?.fwd || 0;                    // joystick (3.3): vychýlení přes půl = jako stisk W / S
+  const w = !!(k.w || k.arrowup) || ax > 0.5, sk = !!(k.s || k.arrowdown) || ax < -0.5;
   const pressW = w && !ap.kw, pressS = sk && !ap.ks;
   ap.kw = w; ap.ks = sk;
   if (pressW) ap.set = Math.min(1, ap.set + 0.25);

@@ -211,7 +211,7 @@ function walk(input, dt) {
       want = dir.map(c => c * Math.min(speed, dist * 4));
     }
   }
-  if (dir && m) want = norm(dir).map(c => c * speed);
+  if (dir && m) want = norm(dir).map(c => c * speed * Math.min(1, Math.abs(m.fwd)));   // joystick: malé vychýlení = pomalu (klávesy ±1)
 
   if (body.grounded) body.jet = false;
   stepBody(body, dt, want, body.jet ? 0.12 : undefined);   // po výstřelu jetpackem se ve vzduchu skoro neřídí

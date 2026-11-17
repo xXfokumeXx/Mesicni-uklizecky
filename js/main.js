@@ -20,6 +20,11 @@ import { MARKET, SUIT_COLORS, toolById } from './catalog.js';
 import { launchRocket, launchSeconds, ROCKET } from './rocket.js';
 import { initFacility, openFacility, facilityOpen, refreshFacility } from './facility.js';
 import { input, bindInput } from './input.js';
+import { setActionHandlers, setActionRules, runAction } from './actions.js';
+import { initTouch, updateTouch, touch, applyTouchSettings, vibrate, wantsTouch } from './touch.js';
+import { initCloudSave, syncSlotForLoad, flushSlot, flushPersonal } from './cloudSave.js';
+import { askSlotConflict } from './accountUi.js';
+import { personalKey, personalHooks } from './net.js';
 import { toggleAutopilot, autopilotMode, autopilotOff, takeAutopilotNote, setAutopilotMovers } from './autopilot.js';
 import { preloadModels } from './assets/models.js';
 import { initRocks, rocksTick, takeRockNote, ROCK_MODELS } from './rocks.js';
@@ -37,7 +42,7 @@ import { FIREBASE_DEV } from './firebase-config.js';
 import { VERSION, cmpVersion } from './version.js';
 import { initVersionUi } from './versionUi.js';
 import { fmt } from './format.js';
-import { settings, loadSettings, matchPreset } from './settings.js';
+import { settings, loadSettings, saveSettings, matchPreset, PRESETS } from './settings.js';
 import { initSettingsMenu } from './settingsMenu.js';
 import { createDebug } from './debug.js';
 import { energyTick, TICK as ENERGY_TICK, live as energyLive, swapEvents } from './energy.js';
@@ -309,6 +314,8 @@ function floatAtTool(text, kind) {
 // ---------- akce (E) ----------
 
 let action = null;
+let lastBuildType = null;
+let hopperWasFull = false;                                  // vibrace při zaplnění zásobníku                                    // dotyk: změna vybrané stavby → hologram před hráčem
 
 function doAction() {
   if (autopilotMode()) { autopilotOff(); toast('Autopilot vypnutý.', 2500); return; }   // E vypne autopilot (L-41)
@@ -331,7 +338,7 @@ function settle(result) {
     else if (r === 'built' && bld.type === 'depot' && (game.s.buildings || []).filter(b => b.type === 'depot').length === 1) {
       // L-25: doporučená první linka
       toast('První depo! Doporučená linka: vozidla → depo u pole dun → pás → Slinovna (v síti se solárem a baterií) → pás → Výkup. Pás: V → Logistika → Pás, klik na oranžovou zásuvku.', 12000);
-    } else if (r === 'built') toast('Postaveno. Stejnou stavbu můžeš hned postavit znovu, Esc = zrušit výběr.', 4000);
+    } else if (r === 'built') { vibrate(40); toast('Postaveno. Stejnou stavbu můžeš hned postavit znovu, Esc = zrušit výběr.', 4000); }
     else if (r === 'belted') toast('Pás postavený. Jakmile bude ve zdroji náklad, pojede po něm.', 4000);
     else if (r === 'unbelted') toast('Úsek pásu zbouraný, vrátilo se 60 % jeho ceny. Na volný konec pásu navážeš nový pás (V → Logistika → Pás).', 5000);
     else if (r === 'demolished') toast('Zbořeno. Vrátilo se 60 % ceny.', 3000);
@@ -376,6 +383,18 @@ function handleResult(r) {
   if (!r) return;
   action = { run: () => r };
   doAction();
+}
+
+// Mula s vylepšením navijáku při nesení vozidla: délka lana 8–20 m po 1 m
+function winchActive() {
+  const v = game.s.driving >= 0 ? game.s.vehicles[game.s.driving] : null;
+  return v?.type === 'mula' && (v.lv?.special | 0) > 0 && carrying();
+}
+function winch(d) {
+  if (!winchActive()) return;
+  const v = game.s.vehicles[game.s.driving];
+  v.ropeLen = Math.max(8, Math.min(20, (v.ropeLen || 12) + d));
+  toast(`Lano ${v.ropeLen} m`, 1200);
 }
 
 function cancel() {
@@ -683,6 +702,8 @@ function trackFps(now) {
   perf.frames = 0;
   perf.since = now;
   fpsEl.textContent = `${Math.round(fps)} FPS`;
+  if (!document.hidden) adaptScale(fps);
+  if (touch.on) return;                                     // na dotyku se o rozlišení stará adaptScale, bez rady „zkus Nízkou“
   if (perf.warned || document.hidden) return;
   perf.samples.push(fps);
   if (perf.samples.length < 16) return;
@@ -690,9 +711,31 @@ function trackFps(now) {
   const target = settings.fpsCap || 60;
   if (avg < target * 0.7 && matchPreset() !== 'low') {
     perf.warned = true;
-    toast(`Hra běží jen na ${Math.round(avg)} FPS. V menu Grafika zkus předvolbu Nízká.`, 9000);
+    toast(`Hra běží jen na ${Math.round(avg)} FPS. V Nastavení zkus předvolbu Nízká.`, 9000);
   }
   if (perf.samples.length > 40) perf.warned = true;
+}
+
+// Automatické rozlišení na dotyku (3.3, M5): pod 28 FPS déle než 5 s → o krok níž (až 50 %),
+// nad 55 FPS (s limitem snímků těsně pod limitem) déle než 20 s → o krok zpět, nejvýš na rozlišení z nastavení.
+// Nastavení se tím nemění (settings.scale = strop), mění se jen vykreslování.
+const SCALE_STEPS = [0.5, 0.7, 0.85, 1, 1.25];
+const adapt = { scale: 0, low: 0, high: 0 };
+function adaptScale(fps) {
+  if (!touch.on || !world) { adapt.scale = 0; return; }
+  if (!adapt.scale || adapt.scale > settings.scale) { adapt.scale = settings.scale; adapt.low = adapt.high = 0; }
+  const good = Math.min(55, (settings.fpsCap || 60) * 0.92);
+  adapt.low = fps < 28 ? adapt.low + 0.5 : 0;                 // trackFps měří po 0,5 s
+  adapt.high = fps > good ? adapt.high + 0.5 : 0;
+  let next = adapt.scale;
+  if (adapt.low >= 5) next = [...SCALE_STEPS].reverse().find(v => v < adapt.scale - 0.001) ?? adapt.scale;
+  else if (adapt.high >= 20) next = SCALE_STEPS.find(v => v > adapt.scale + 0.001 && v <= settings.scale + 0.001) ?? adapt.scale;
+  if (next === adapt.scale) return;
+  const down = next < adapt.scale;
+  adapt.scale = next;
+  adapt.low = adapt.high = 0;
+  world.setPixelRatio(next);
+  toast(down ? `Rozlišení sníženo na ${Math.round(next * 100)} % kvůli plynulosti` : `Rozlišení zase ${Math.round(next * 100)} %`, 2500);
 }
 
 // ---------- smyčka ----------
@@ -711,7 +754,11 @@ function frame(now) {
   debug?.frameStart(performance.now());
   const s = game.s;
   const eq = activeEquipment();
-  const paused = pause.isOpen && net.mode === 'sp';             // sám hráč může hru pozastavit
+  const paused = (pause.isOpen || touch.portrait) && net.mode === 'sp';   // sám hráč může hru pozastavit (i telefon nastojato)
+  updateTouch();
+  const full = eq.stats.hopper > 0 && (eq.item?.load || 0) >= eq.stats.hopper - 0.01;
+  if (full && !hopperWasFull) vibrate(120);                 // plný zásobník (jen dotyk, Android)
+  hopperWasFull = full;
 
   syncTerrainPatches();                                     // srovnaný terén pod stavbami (jen když se stavby změnily)
   if (!paused) {
@@ -737,6 +784,7 @@ function frame(now) {
     }
     // srážka s vozidlem jiného hráče → ragdoll
     if (net.mode !== 'off' && checkVehicleHits(movingVehicles(actors.vehicleRadius), actors.ragdollPose)) {
+      vibrate(250);
       toast(`Srazilo tě vozidlo! Letíš ${PLANET.id === 'moon' ? 'měsíční' : 'marťanskou'} gravitací…`, 4000);
       unlock('bowling');
       addAchStat('knocked', 1);
@@ -745,6 +793,7 @@ function frame(now) {
     trackJumps(dt);
     updatePlacing();
     {
+      if (input.touch && bld.type !== lastBuildType) { lastBuildType = bld.type; input.cursor = null; }
       const cur = hammerActive() && bld.mode && input.cursor && input.pick ? input.pick(input.cursor.x, input.cursor.y) : null;
       const pickMode = hammerActive() && (bld.mode === 'demolish' || bld.mode === 'cable') && input.cursor;
       const picked = pickMode ? actors.pickStructure(input.cursor.x, input.cursor.y, world.camera, canvas) : undefined;
@@ -813,7 +862,7 @@ function frame(now) {
   terrain.updateVisibility(world.camera.position);
   actors.update(rdt, now / 1000, playerFx, 45 + cam.distance * 2.5);
   rocks3d.update(focus);
-  { const rn = takeRockNote(); if (rn) toast(rn, 4000); }
+  { const rn = takeRockNote(); if (rn) { vibrate(60); toast(rn, 4000); } }   // náraz do kamene (vibrace jen dotyk)
   { if (s.driving >= 0) swapArmHint(s.vehicles[s.driving]); const an = takeArmNote(); if (an) toast(an, 4000); }   // Prachocuc: rameno narazilo / výměník s rameny dole
   updateBuildUi();
   placeHoldRing(input.cursor);
@@ -850,8 +899,9 @@ function backgroundStep() {
 // ---------- nastavení grafiky ----------
 
 function applySettings(next, before) {
+  applyTouchSettings();                                     // ovládání (3.3): dotyk / klávesnice, tlačítka
   if (!world) return;
-  if (next.scale !== before.scale) world.setPixelRatio(next.scale);
+  if (next.scale !== before.scale) { world.setPixelRatio(next.scale); adapt.scale = 0; }
   if (next.view !== before.view) terrain.setViewDistance(next.view);
   if (!next.particles && before.particles) particles.clear();
   if (next.shadows !== before.shadows || next.lightShadows !== before.lightShadows) {
@@ -920,12 +970,17 @@ async function saveNow(slot) {
   if (!slot) { toast('Svět uložený do cloudu.', 2500); return true; }
   const ok = await saveGame(slot, toast);
   if (ok) toast(slot && slot !== game.slot ? 'Uloženo.' : `Uloženo do slotu ${String(game.slot).replace('slot', '')}.`, 2500);
+  if (ok) flushSlot(slot);                                   // 3.3 (U2): i do herního účtu (bez účtu nic)
   return ok;
 }
 
 async function toMenu() {
   savePersonal();
   if (net.mode !== 'client') await saveGame(game.slot);
+  // 3.3 (U2): do herního účtu ještě před znovunačtením stránky (nejvýš 20 s, pak se pokračuje – místní kopie zůstává)
+  showLoading('Ukládám…');
+  if (net.code) flushPersonal(personalKey());
+  if (net.mode !== 'client' && game.slot) await Promise.race([flushSlot(game.slot), new Promise(r => setTimeout(r, 20000))]);
   if (net.mode === 'host') {
     showLoading('Ukládám svět do cloudu…');
     await saveWorldNow(true);
@@ -994,9 +1049,16 @@ function bindButtons() {
   on('cam-right', () => (map.active ? map.rotate(120, 0) : rotateHeading(-Math.PI / 4)));
   on('zoom-in', () => (map.active ? map.zoom(1 / 1.25) : cam.zoom(1 / 1.25)));
   on('zoom-out', () => (map.active ? map.zoom(1.25) : cam.zoom(1.25)));
+  // akce horní lišty v registru (actions.js) – volá je tlačítko, klávesa i dotyk
+  setActionHandlers({
+    mapa: { proved: () => { if (!modalOpen() && !chatOpen()) cycleView(); } },
+    uspechy: { proved: () => { if (!modalOpen() && !chatOpen() && !map.active) openFacility('trophies'); } },
+    chat: { proved: () => { if (!modalOpen() && !map.active) { input.release(); openChat(); } }, kdyPlati: () => net.mode !== 'off' },
+    menu: () => pause.open(),
+  });
   on('map-toggle', () => cycleView());
-  on('trophies-open', () => { if (!modalOpen() && !map.active) openFacility('trophies'); });
-  on('menu-open', () => pause.open());
+  on('trophies-open', () => runAction('uspechy'));
+  on('menu-open', () => runAction('menu'));
   on('chat-open', () => openChat());
   on('players-invite', () => copyInvite(null));
   on('btn-drone', () => { document.getElementById('btn-drone').blur(); orderBattery(); });   // objednat / zrušit baterii dronem (3.1)
@@ -1020,12 +1082,11 @@ function bindButtons() {
     if (e.target.matches?.('input, textarea, select')) return;
     if (e.key === 'Enter' && net.mode !== 'off' && !modalOpen() && !map.active) {
       e.preventDefault();
-      input.release();
-      openChat();
+      runAction('chat');
       return;
     }
-    if (e.key.toLowerCase() === 'm' && !modalOpen() && !chatOpen()) cycleView();
-    else if (e.key.toLowerCase() === 'u' && !modalOpen() && !chatOpen() && !map.active) openFacility('trophies');
+    if (e.key.toLowerCase() === 'm') runAction('mapa');
+    else if (e.key.toLowerCase() === 'u') runAction('uspechy');
     else if (e.key === 'Escape' && map.active && !modalOpen()) toggleMap(false);
   }, true);
   addEventListener('keydown', e => {
@@ -1035,13 +1096,21 @@ function bindButtons() {
 }
 
 function bindVisibility() {
-  let hiddenAt = 0;
+  let hiddenAt = 0, savedAt = 0;
+  const saveOnHide = () => {
+    if (Date.now() - savedAt < 2000) return;                  // visibilitychange i pagehide přijdou skoro naráz – stačí jednou
+    savedAt = Date.now();
+    savePersonal();
+    if (net.code) flushPersonal(personalKey());               // 3.3 (U2): osobní postup do herního účtu
+    if (net.mode !== 'client') saveGame(game.slot, toast).then(ok => { if (ok && game.slot) flushSlot(game.slot); });
+    if (net.mode === 'host') saveWorldOnHide();               // stav světa (a mapa) do cloudu (kdyby se karta zavřela)
+  };
+  // 3.3 (M5): telefon – zamčení, přepnutí do jiné aplikace; iPhone Safari někdy pošle jen pagehide (beforeunload vůbec)
+  addEventListener('pagehide', () => { if (running) saveOnHide(); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       hiddenAt = Date.now();
-      savePersonal();
-      if (net.mode !== 'client') saveGame(game.slot, toast);
-      if (net.mode === 'host') saveWorldOnHide();             // stav světa (a mapa) do cloudu (kdyby se karta zavřela)
+      saveOnHide();
     } else if (hiddenAt) {
       if (net.mode === 'sp') catchUp(hiddenAt);
       hiddenAt = 0;
@@ -1094,8 +1163,7 @@ function build() {
     zoom: f => {
       if (map.active) { map.zoom(f); return; }
       if (hammerActive() && bld.mode === 'build' && input.keys.r) { rotateBy((f > 1 ? -1 : 1) * (input.keys.shift ? 15 : 1), !!input.keys.shift); return; }
-      const av = game.s.driving >= 0 ? game.s.vehicles[game.s.driving] : null;   // Mula s navijákem: kolečko = délka lana 8–20 m
-      if (av?.type === 'mula' && (av.lv?.special | 0) > 0 && carrying()) { av.ropeLen = Math.max(8, Math.min(20, (av.ropeLen || 12) + (f > 1 ? 1 : -1))); toast(`Lano ${av.ropeLen} m`, 1200); return; }
+      if (winchActive()) { winch(f > 1 ? 1 : -1); return; }   // Mula s navijákem: kolečko = délka lana
       cam.zoom(f);
     },
     onAction: doAction,
@@ -1123,6 +1191,51 @@ function build() {
       const msg = toggleAutopilot(Math.abs(currentVehicleSpeed()) / Math.max(0.1, activeEquipment().stats.speed));
       if (msg) toast(msg, 6000);
     },
+  });
+  // dotyková tlačítka (touch.js, M3): akce, které na PC čte hra z držené klávesy, tu mají jen obsluhu bez účinku (drží input.keys)
+  const nop = () => {};
+  const driven = () => (game.s.driving >= 0 ? game.s.vehicles[game.s.driving] : null);
+  const inAir = () => !!driven() && isAirType(driven().type);
+  const inGround = () => !!driven() && !isAirType(driven().type);
+  setActionHandlers({
+    boost: nop, nahoru: nop, dolu: nop,
+    'otocit-vlevo': () => rotateBy(-15, true),                // klepnutí = 15°, podržení = plynule (klávesa , / .)
+    'otocit-vpravo': () => rotateBy(15, true),
+    zlom: () => { input.keys.alt = !input.keys.alt; },          // na dotyku přepínač (na PC se drží Alt)
+  });
+  setActionRules({                                           // dotyková tlačítka (touch.js) jen tam, kde akce dává smysl
+    skok: () => game.s.driving < 0 && !riding(),
+    nastroj: () => game.s.driving < 0 && !riding() && !!game.s.hammer,
+    stavet: () => hammerActive(),
+    bourat: () => hammerActive(),
+    'otocit-vlevo': () => hammerActive() && bld.mode === 'build',
+    'otocit-vpravo': () => hammerActive() && bld.mode === 'build',
+    zlom: () => hammerActive() && bld.mode === 'belt' && !!bld.beltFrom,
+    zrusit: () => (hammerActive() && (!!bld.mode || bld.menu)) || placing.active,
+    nahoru: inAir,
+    dolu: inAir,
+    boost: () => inGround() && (activeEquipment().stats.boost || 1) > 1,
+    autopilot: inGround,
+    rezim: () => !!driven() && hasArm(driven()),
+    'objednat-baterii': () => !document.getElementById('row-drone').hidden,
+    'jiny-cil': () => !hammerActive() && !!stationUpgradeNear(),
+  });
+  // Prst ve stavění (M3): klepnutí / tah jen posouvá hologram, konec pásu nebo výběr k bourání (input.cursor),
+  // stavba se potvrzuje tlačítkem akce (✓), ne puštěním prstu. Pás a kabel: klepnutí = bod / cíl, klik až po snímku,
+  // který podle nové polohy prstu přepočítá náhled (beltClick / connectNow berou stav z updateBuild).
+  input.buildDrag = () => hammerActive() && !!bld.mode;
+  input.touchTap = (x, y) => {
+    if (!hammerActive() || !bld.mode) return false;            // kladivo bez režimu: klepnutí na kotvu = kabel (input.capture)
+    input.cursor = { x, y };
+    if (bld.mode === 'belt' || bld.mode === 'cable') {
+      requestAnimationFrame(() => requestAnimationFrame(() => input.capture?.({ button: 0, clientX: x, clientY: y, pointerType: 'touch' })));
+    }
+    return true;
+  };
+  initTouch(canvas);
+  setActionHandlers({                                         // Mula s navijákem: lano − / + (na PC kolečko, na dotyku tlačítka)
+    'lano-minus': { proved: () => winch(-1), kdyPlati: winchActive },
+    'lano-plus': { proved: () => winch(1), kdyPlati: winchActive },
   });
   // autopilot: ostatní vozidla a hráči jako překážky (řízené jiným hráčem / chodící = pohyblivé)
   setAutopilotMovers(() => {
@@ -1215,6 +1328,13 @@ function launchError(text) {
 async function launch(spec) {
   if (launching) return;
   launching = true;
+  // 3.3 (U2): přihlášený hráč – slot z účtu, když je tam novější (nebo jen tam); při sporu dotaz. Bez účtu nic.
+  if (spec.action === 'load' && spec.slot && !spec.cloud && spec.mode !== 'client') {
+    showLoading('Kontroluji uložení v účtu…');
+    const r = await syncSlotForLoad(spec.slot, askSlotConflict);
+    if (r === 'cancel') { launching = false; location.reload(); return; }
+    if (r === 'offline') setTimeout(() => toast('Účet teď neodpovídá – hraješ z uložení v tomto zařízení.', 6000), 3000);
+  }
   // Hra z jiné planety (nebo nová hra na Měsíci, když stránka běží s Marsem) → znovu načíst s ní
   const want = spec.mode === 'client' ? (spec.world?.planet || 'moon') : spec.cloud ? (spec.planet || 'moon')
     : spec.action === 'load' ? (await savePlanet(spec.slot)) || 'moon' : 'moon';
@@ -1245,6 +1365,7 @@ async function launch(spec) {
     if (cmpVersion(cm?.ver, VERSION) > 0) { launchError(`Svět je uložený ve verzi ${cm.ver} – obnov stránku (Ctrl+F5).`); return; }
     const hadMap = await cloudHasMap(spec.cloud);
     if (!(await loadCloud(spec.cloud))) { launchError('Svět se z cloudu nepodařilo načíst.'); return; }
+    await personalHooks.pull?.(personalKey(spec.cloud));     // 3.3 (U2): novější osobní postup z herního účtu
     if (!loadPersonal(spec.cloud)) resetPersonal(game.s);     // moje vybavení a poloha, ne po předchozím hostiteli
     const cloudDone = hexes.doneCount;
     const handed = await takeHandoff(spec.cloud);             // převzetí hostitele: moje mapa z předchozí hry (F-10)
@@ -1428,7 +1549,9 @@ async function start() {
     toast('3D knihovnu se nepodařilo načíst. Zkontroluj připojení k internetu a obnov stránku.', 600000);
     return;
   }
-  loadSettings();
+  initCloudSave();                                          // 3.3 (U2): ukládání do herního účtu (háčky; bez účtu nic)
+  if (!loadSettings() && wantsTouch()) { Object.assign(settings, PRESETS.mobile); saveSettings(); }   // 1. spuštění na telefonu = Mobil (M5)
+  applyTouchSettings();                                     // třída is-touch už pro menu, šatnu a lobby (M4)
   loadProfile();
   settingsUi = initSettingsMenu({
     onChange: applySettings,

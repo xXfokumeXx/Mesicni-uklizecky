@@ -43,6 +43,10 @@ export function loadProfile() {
   if (!profile.name) profile.name = `Zametač-${Math.floor(100 + Math.random() * 900)}`;
 }
 
+// 3.3 (U2): háček po uložení profilu – herní účet ho pošle do cloudu (cloudSave.js)
+export const profileHooks = { afterSave: null };
+
 export function saveProfile() {
   try { localStorage.setItem(KEY, JSON.stringify(profile)); } catch { /* nic */ }
+  try { profileHooks.afterSave?.(); } catch { /* nic */ }
 }
