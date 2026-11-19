@@ -2,6 +2,13 @@
 
 Hra ukazuje posledních 5 verzí (okno Novinky: tlačítko v lobby nebo klik na číslo verze). Formát: nadpis `## verze · datum`, pod ním volitelně kategorie `### název` a body `- …` (krátce, pro hráče).
 
+## 3.3.5 · 19. 11. 2026
+### 🎮 Pepův Master controller patch
+- Joystick zůstává na místě a neujíždí za palcem. V Nastavení → Ovládání jde zvolit Pevný (stále v rohu) nebo Plovoucí (pod palcem).
+- Skok, nástroj a ostatní tlačítka mají pevné místo – už se neposouvají, když se objeví tlačítko akce.
+- Tlačítko akce se nespustí omylem, když se objeví pod palcem.
+- V nastavení jde ukázat rozložení všech tlačítek.
+
 ## 3.3.3 · 17. 11. 2026
 - Telefon: hlavní menu, lobby, sloty a šatna se vejdou na obrazovku bez posouvání.
 
