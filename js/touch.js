@@ -1,13 +1,16 @@
 // Dotykové ovládání (3.3, fáze M2 – předávka Update 3.3/PREDAVKA-MOBILNI-OVLADANI.md, části 3–6).
 // Prsty sledujeme přes Pointer Events podle pointerId (funguje i s perem). Myš dál obsluhuje input.js.
-//   levá polovina: plovoucí joystick (input.axis), pravá: klepnutí = jdi sem, tah = kamera, dva prsty = zoom a otočení,
+//   levá polovina: joystick (input.axis) – pevný v rohu nebo plovoucí pod palcem (3.3.5: střed se při držení nehýbe),
+//   pravá: klepnutí = jdi sem, tah = kamera, dva prsty = zoom a otočení,
 //   podržení 0,5 s = jdi a drž (cíl jde za prstem). Tlačítka volají akce z registru (actions.js).
 // Zapnutí: nastavení „ovladani“ (auto / dotyk / klavesnice), auto = hrubý ukazatel + dotyková obrazovka. Třída body.is-touch.
 import { input } from './input.js';
 import { holdAction, runAction, actionAvailable, actionInfo } from './actions.js';
 import { settings } from './settings.js';
 
-const JOY_R = 60;              // poloměr joysticku v px
+const JOY_R = 60;              // poloměr joysticku v px (× velikost tlačítek z nastavení)
+const JOY_GRAB = 1.8;          // pevný joystick: dotyk do 1,8× poloměru od středu ho chytí (nemusí se trefit knoflík)
+const ACTION_GUARD = 150;      // ms po objevení tlačítka akce, kdy klepnutí neplatí (palec tam už ležel)
 const DEAD = 0.12;             // mrtvá zóna (podíl poloměru)
 const TAP_MOVE = 10;           // klepnutí = prst se pohnul méně než o tolik px…
 const HOLD_MS = 500;           // …a podržení po této době = jdi a drž
@@ -16,7 +19,9 @@ const CAM_SPEED = 0.006;       // otáčení kamery na px (stejně jako myš)
 export const touch = { on: false, portrait: false };
 
 const pointers = new Map();    // pointerId → { role: 'joy' | 'look', x, y, sx, sy, t, moved }
-let joy = null;                // { id, cx, cy } – střed joysticku
+let joy = null;                // { id, cx, cy, r } – střed joysticku (během držení se nemění) a poloměr v px
+let actionShownAt = 0;         // kdy se naposledy objevilo tlačítko akce (ochrana proti omylu)
+let previewTimer = 0;          // náhled rozložení z nastavení
 let look = null;               // { id, hold, timer } – jeden prst vpravo
 let pinch = null;              // { a, b, dist, ang } – dva prsty
 let el = {};                   // prvky vrstvy
@@ -37,6 +42,8 @@ export function applyTouchSettings() {
   const on = wantsTouch();
   if (!el.root) { document.body.classList.toggle('is-touch', on); refreshFullUi(); return; }   // menu před startem hry: jen třída
   el.root.style.setProperty('--touch-scale', SIZES[settings.btnSize] || 1);
+  el.root.classList.toggle('touch--joy-fixed', settings.joyMode !== 'plovouci');
+  resetJoy();
   el.root.style.setProperty('--touch-opacity', Math.max(0.4, Math.min(1, (settings.btnOpacity || 70) / 100)));
   el.root.classList.toggle('touch--lefty', settings.joySide === 'right');
   document.body.classList.toggle('is-lefty', on && settings.joySide === 'right');
@@ -60,20 +67,32 @@ export function setTouch(on) {
 
 // ---------- vrstva s prvky ----------
 
-// Tlačítka vpravo nad tlačítkem akce, ukazují se podle actionAvailable (pravidla v main.js). [id, obsah, zpoždění podržení ms]
-// Se zpožděním: klepnutí = jeden krok akce (otočení o 15°), podržení déle = drží klávesu (plynulé otáčení).
+// Tlačítka vpravo (3.3.5): každé má PEVNÉ místo (slot), nic se neřadí za sebou. Když tlačítko není potřeba,
+// jeho slot zůstane prázdný a ostatní se nepohnou. Souřadnice v px od pravého (u leváků levého) a spodního okraje
+// vrstvy .touch__side (ta je 16 px od rohu bezpečné oblasti). Stejný slot sdílí jen tlačítka, která nikdy neplatí
+// zároveň (pravidla actionAvailable v main.js): chůze × kladivo × vozidlo × letoun.
+//   skok = roh (0, 0), akce = vlevo od skoku na stejné výšce (roste doleva), nástroj = nad skokem,
+//   řada 1 (y 88) a řada 2 (y 152) nad akcí: sloupce x 88 / 176 / 264, nad nástrojem x 10.
+const R1 = 88, R2 = 152, C1 = 88, C2 = 176, C3 = 264, C0 = 10;
+// [id, obsah, x, y, situace (pro náhled v nastavení), typ, zpoždění podržení ms]
+// se zpožděním: klepnutí = jeden krok (otočení o 15°), podržení = plynule
 const SIDE = [
-  ['nastroj', '🔨'], ['skok', '⤒'],
-  ['stavet', 'Stavět'], ['bourat', 'Bourat'],
-  ['otocit-vlevo', '⟲', 300], ['otocit-vpravo', '⟳', 300], ['zlom', 'Zlom'], ['zrusit', '✗'],
-  ['nahoru', '▲'], ['dolu', '▼'],
-  ['boost', 'Boost'], ['autopilot', 'Auto'], ['rezim', 'Ramena'], ['objednat-baterii', '🔋'],
-  ['lano-minus', 'Lano −'], ['lano-plus', 'Lano +'],
-  ['jiny-cil', 'Vylepšit'],
+  ['skok', '⤒', 0, 0, 'chuze kladivo', 'jump'],
+  ['nastroj', '🔨', C0, R1, 'chuze kladivo', 'round'],
+  ['objednat-baterii', '🔋', C0, R2, 'vozidlo', 'round'],
+  // chůze bez kladiva
+  ['jiny-cil', 'Vylepšit', C1, R1, 'chuze'],
+  // kladivo
+  ['stavet', 'Stavět', C1, R1, 'kladivo'], ['bourat', 'Bourat', C2, R1, 'kladivo'], ['zrusit', '✗', C3, R1, 'kladivo'],
+  ['otocit-vpravo', '⟳', C1, R2, 'kladivo', '', 300], ['otocit-vlevo', '⟲', C2, R2, 'kladivo', '', 300], ['zlom', 'Zlom', C3, R2, 'kladivo'],
+  // pozemní vozidlo
+  ['boost', 'Boost', C1, R1, 'vozidlo'], ['autopilot', 'Auto', C2, R1, 'vozidlo'], ['rezim', 'Ramena', C3, R1, 'vozidlo'],
+  // letoun
+  ['dolu', '▼', C1, R1, 'letoun'], ['nahoru', '▲', C1, R2, 'letoun'], ['lano-minus', 'Lano −', C2, R1, 'letoun'], ['lano-plus', 'Lano +', C2, R2, 'letoun'],
 ];
-const sideButton = ([id, text, delay]) => {
-  const long = text.length > 2 ? ' touch__btn--text' : '';
-  return `<button class="touch__btn${long}" type="button" data-act="${id}"${delay ? ` data-delay="${delay}"` : ''} aria-label="${actionInfo(id)?.nazev || id}" hidden>${text}</button>`;
+const sideButton = ([id, text, x, y, ctx, kind, delay]) => {
+  const cls = kind === 'jump' ? ' touch__btn--jump' : kind === 'round' ? ' touch__btn--round' : ' touch__btn--slot';
+  return `<button class="touch__btn${cls}" type="button" data-act="${id}" data-ctx="${ctx}" style="--sx:${x}px;--sy:${y}px"${delay ? ` data-delay="${delay}"` : ''} aria-label="${actionInfo(id)?.nazev || id}" hidden>${text}</button>`;
 };
 
 function build() {
@@ -91,9 +110,10 @@ function build() {
       <button class="touch__btn touch__btn--top touch__btn--map" type="button" data-zoom="1.25" aria-label="Oddálit">−</button>
     </nav>
     <div class="touch__side">
-      <div class="touch__group">${SIDE.map(sideButton).join('')}</div>
-      <button class="touch__btn touch__btn--action" type="button" data-act="akce"></button>
+      ${SIDE.map(sideButton).join('')}
+      <button class="touch__btn touch__btn--action" type="button" data-act="akce" data-ctx="chuze kladivo vozidlo letoun" style="--sx:88px;--sy:2px" hidden></button>
     </div>
+    <p class="touch__preview-label" aria-live="polite"></p>
     <div class="touch__rotate" hidden>
       <div class="touch__rotate-icon" aria-hidden="true">📱↻</div>
       <p class="touch__rotate-text">Otoč telefon naležato</p>
@@ -124,6 +144,7 @@ function build() {
     };
     b.addEventListener('pointerdown', e => {
       e.preventDefault();
+      if (b === el.action && performance.now() - actionShownAt < ACTION_GUARD) return;   // právě se objevilo pod palcem
       try { b.setPointerCapture(e.pointerId); } catch { /* nic */ }
       b.dataset.down = '1';
       if (delay) {                                        // klepnutí = krok, podržení = plynule
@@ -157,8 +178,16 @@ const touchText = s => TOUCH_TEXT.reduce((a, [re, to]) => a.replace(re, to), s);
 export function updateTouch() {
   if (!touch.on || !el.root) return;
   const prompt = el.prompt && !el.prompt.hidden ? touchText(el.promptText.textContent) : '';
-  if (el.action.textContent !== prompt) el.action.textContent = prompt;
-  el.action.hidden = !prompt;
+  if (el.action.textContent !== prompt) el.action.textContent = prompt;       // změna textu: na místě, bez animace
+  if (el.action.hidden === !!prompt) {
+    el.action.hidden = !prompt;
+    if (prompt) {                                        // objevilo se: plynule na svém místě, chvíli neplatí klepnutí
+      actionShownAt = performance.now();
+      el.action.classList.remove('touch__btn--pop');
+      void el.action.offsetWidth;                        // restart animace
+      el.action.classList.add('touch__btn--pop');
+    }
+  }
   el.action.classList.toggle('touch__btn--off', !!prompt && el.prompt.disabled);   // nejde potvrdit (důvod je v textu); držení dál funguje (bourání)
   const zlom = actionAvailable('zlom');
   if (!zlom && input.keys.alt && !altByKey) input.keys.alt = false;                // konec pásu: přepínač zlomu se vypne
@@ -170,7 +199,27 @@ export function updateTouch() {
   }
   const mapOn = el.mapBtn?.getAttribute('aria-pressed') === 'true';
   el.root.classList.toggle('touch--map', mapOn);
+  el.joy.hidden = !joy && (mapOn || !fixedJoy());       // pevný joystick je vidět pořád (kromě mapy)
   if (!input.enabled && (joy || look || pinch)) resetAll();       // otevřelo se okno / mapa: pustit joystick a kameru
+}
+
+// Nastavení → „Ukázat rozložení tlačítek“: postupně 4 situace po 1,5 s (nad oknem nastavení, tlačítka nejdou zmáčknout).
+// Tlačítka, která sdílí slot, se ve hře nikdy neukážou zároveň – proto náhled po situacích, ne všechno naráz.
+const PREVIEW = [['chuze', 'Chůze'], ['kladivo', 'Kladivo a stavění'], ['vozidlo', 'Vozidlo'], ['letoun', 'Letoun']];
+export const touchLayerReady = () => !!el.root && touch.on;
+export function previewTouchLayout() {
+  if (!touchLayerReady()) return false;
+  clearTimeout(previewTimer);
+  const label = el.root.querySelector('.touch__preview-label');
+  const step = i => {
+    for (const [c] of PREVIEW) el.root.classList.remove(`touch--pv-${c}`);
+    if (i >= PREVIEW.length) { el.root.classList.remove('touch--preview'); return; }
+    el.root.classList.add('touch--preview', `touch--pv-${PREVIEW[i][0]}`);
+    label.textContent = `Rozložení tlačítek: ${PREVIEW[i][1]}`;
+    previewTimer = setTimeout(() => step(i + 1), 1500);
+  };
+  step(0);
+  return true;
 }
 
 // ---------- otočení telefonu ----------
@@ -190,21 +239,45 @@ function resetAll() {
   pointers.clear();
   joy = look = pinch = null;
   input.axis = null;
-  if (el.joy) el.joy.hidden = true;
+  resetJoy();
+}
+
+// ---------- joystick ----------
+
+const fixedJoy = () => settings.joyMode !== 'plovouci';
+const joyRadius = () => JOY_R * (SIZES[settings.btnSize] || 1);
+
+// Do klidu: pevný zůstane na svém místě (knoflík uprostřed), plovoucí zmizí
+function resetJoy() {
+  if (!el.joy) return;
+  el.knob.style.transform = '';
+  el.joy.classList.remove('touch__joy--active');
+  if (fixedJoy()) { el.joy.style.transform = ''; el.joy.hidden = !!el.root?.classList.contains('touch--map'); }
+  else el.joy.hidden = true;
+}
+
+// Prst na straně joysticku: chytí ho? Pevný jen v aktivační oblasti kolem středu, plovoucí kdekoli (střed pod palcem).
+function grabJoy(x, y) {
+  const r = joyRadius();
+  if (fixedJoy()) {
+    const b = el.joy.getBoundingClientRect();
+    const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+    if (Math.hypot(x - cx, y - cy) > r * JOY_GRAB) return null;
+    return { cx, cy, r };
+  }
+  el.joy.style.transform = `translate(${x - r}px, ${y - r}px)`;
+  return { cx: x, cy: y, r };
 }
 
 function joyMove(p) {
+  const R = joy.r;
   let dx = p.x - joy.cx, dy = p.y - joy.cy;
   const d = Math.hypot(dx, dy);
-  if (d > JOY_R) {                                       // palec vyjel ven: střed jde za ním
-    joy.cx += dx * (1 - JOY_R / d); joy.cy += dy * (1 - JOY_R / d);
-    dx = p.x - joy.cx; dy = p.y - joy.cy;
-    el.joy.style.transform = `translate(${joy.cx - JOY_R}px, ${joy.cy - JOY_R}px)`;
-  }
+  if (d > R) { dx *= R / d; dy *= R / d; }               // palec vyjel ven: knoflík zůstane na okraji, STŘED SE NEHÝBE (3.3.5)
   el.knob.style.transform = `translate(${dx}px, ${dy}px)`;
-  const m = Math.min(1, Math.hypot(dx, dy) / JOY_R);
+  const m = Math.min(1, Math.hypot(dx, dy) / R);
   if (m <= DEAD) { input.axis = { fwd: 0, turn: 0 }; return; }
-  const k = (m - DEAD) / (1 - DEAD) / (m * JOY_R);       // kruhový výstup: směr × síla za mrtvou zónou
+  const k = (m - DEAD) / (1 - DEAD) / (m * R);           // kruhový výstup: směr × síla za mrtvou zónou
   input.axis = { fwd: -dy * k, turn: -dx * k };
 }
 
@@ -232,14 +305,16 @@ function onDown(e) {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* prst už není aktivní */ }
   const left = settings.joySide === 'right' ? e.clientX > innerWidth / 2 : e.clientX < innerWidth / 2;
   const p = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: 0 };
-  if (left && !joy) {
+  const grab = left && !joy ? grabJoy(p.x, p.y) : null;   // pevný: mimo aktivační oblast = kamera / klepnutí jako vpravo
+  if (grab) {
     p.role = 'joy';
     pointers.set(e.pointerId, p);
-    joy = { id: e.pointerId, cx: p.x, cy: p.y };
+    joy = { id: e.pointerId, ...grab };
     el.joy.hidden = false;
-    el.joy.style.transform = `translate(${p.x - JOY_R}px, ${p.y - JOY_R}px)`;
+    el.joy.classList.add('touch__joy--active');
     el.knob.style.transform = 'translate(0, 0)';
     input.axis = { fwd: 0, turn: 0 };
+    joyMove(p);                                            // pevný: dotyk vedle středu hned vychýlí
     return;
   }
   p.role = 'look';
@@ -295,7 +370,7 @@ function onUp(e) {
   if (p.role === 'joy') {
     joy = null;
     input.axis = null;
-    el.joy.hidden = true;
+    resetJoy();
     return;
   }
   if (pinch && (e.pointerId === pinch.a || e.pointerId === pinch.b)) { pinch = null; return; }

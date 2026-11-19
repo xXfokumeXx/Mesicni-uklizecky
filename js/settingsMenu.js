@@ -1,6 +1,6 @@
 // Okno „Nastavení grafiky“: propojení ovládacích prvků s objektem settings.
 import { settings, saveSettings, matchPreset, PRESETS, PRESET_LABELS, GRAPHICS_DEFAULTS } from './settings.js';
-import { wantsTouch } from './touch.js';
+import { wantsTouch, touchLayerReady, previewTouchLayout } from './touch.js';
 
 const $ = id => document.getElementById(id);
 
@@ -28,6 +28,7 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
   const showFps = $('set-showfps');
   const ctlButtons = [...modal.querySelectorAll('[data-ctl]')];
   const sizeButtons = [...modal.querySelectorAll('[data-btnsize]')];
+  const joyModeButtons = [...modal.querySelectorAll('[data-joymode]')];
   const joySide = $('set-joyside'), camSens = $('set-camsens'), btnOpacity = $('set-btnopacity'), vibrace = $('set-vibrace');
   const canVibrate = typeof navigator.vibrate === 'function';      // iPhone vibrace z webu neumí → volba se neukáže
   let lastFocus = null;
@@ -53,6 +54,7 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
     const seg = (buttons, key, val) => buttons.forEach(b => { const on = b.dataset[key] === val; b.classList.toggle('segmented__option--active', on); b.setAttribute('aria-pressed', String(on)); });
     seg(ctlButtons, 'ctl', settings.ovladani);
     seg(sizeButtons, 'btnsize', settings.btnSize);
+    seg(joyModeButtons, 'joymode', settings.joyMode);
     joySide.value = settings.joySide;
     camSens.value = String(settings.camSens);
     $('set-camsens-out').textContent = `${String(settings.camSens).replace('.', ',')}×`;
@@ -60,7 +62,7 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
     $('set-btnopacity-out').textContent = `${settings.btnOpacity} %`;
     vibrace.checked = settings.vibrace;
     const touchOn = wantsTouch();
-    for (const f of modal.querySelectorAll('[data-touch-only]')) f.hidden = !touchOn || (f.hasAttribute('data-vibrate') && !canVibrate);
+    for (const f of modal.querySelectorAll('[data-touch-only]')) f.hidden = !touchOn || (f.hasAttribute('data-vibrate') && !canVibrate) || (f.hasAttribute('data-touch-layer') && !touchLayerReady());
     $('settings-reload').hidden = settings.antialias === antialiasAtStart;
   }
 
@@ -100,6 +102,8 @@ export function initSettingsMenu({ onChange, onOpen, onClose, onReload, antialia
   showFps.addEventListener('change', () => change({ showFps: showFps.checked }));
   for (const b of ctlButtons) b.addEventListener('click', () => change({ ovladani: b.dataset.ctl }));
   for (const b of sizeButtons) b.addEventListener('click', () => change({ btnSize: b.dataset.btnsize }));
+  for (const b of joyModeButtons) b.addEventListener('click', () => change({ joyMode: b.dataset.joymode }));
+  $('set-touchpreview').addEventListener('click', () => previewTouchLayout());
   joySide.addEventListener('change', () => change({ joySide: joySide.value }));
   camSens.addEventListener('input', () => change({ camSens: Number(camSens.value) }));
   btnOpacity.addEventListener('input', () => change({ btnOpacity: Number(btnOpacity.value) }));

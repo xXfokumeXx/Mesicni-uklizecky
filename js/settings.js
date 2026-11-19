@@ -17,8 +17,9 @@ export const PRESETS = {
 export const PRESET_LABELS = { low: 'Nízká', medium: 'Střední', high: 'Vysoká', mobile: 'Mobil', custom: 'Vlastní' };
 
 // ovladani (3.3): 'auto' | 'dotyk' | 'klavesnice', joySide = strana joysticku, camSens = citlivost kamery prstem (0,5–2)
+// joyMode (3.3.5): 'pevny' = joystick stále v rohu | 'plovouci' = objeví se pod palcem (střed se při držení nehýbe)
 // btnSize 'mala' | 'stredni' | 'velka', btnOpacity 40–100 (%), vibrace = jen Android (navigator.vibrate)
-export const DEFAULTS = { ...PRESETS.medium, showFps: false, ovladani: 'auto', joySide: 'left', camSens: 1, btnSize: 'stredni', btnOpacity: 70, vibrace: true };
+export const DEFAULTS = { ...PRESETS.medium, showFps: false, ovladani: 'auto', joySide: 'left', joyMode: 'pevny', camSens: 1, btnSize: 'stredni', btnOpacity: 70, vibrace: true };
 // „Obnovit výchozí“ v okně nastavení vrací jen grafiku – ovládání si hráč nastavuje zvlášť
 export const GRAPHICS_DEFAULTS = { ...PRESETS.medium, showFps: false };
 
